@@ -1,0 +1,62 @@
+# CLAUDE.md — argus-mask
+
+Guidance for AI agents working in this repo. Human-facing usage lives in [README.md](README.md); this file is the orientation an agent needs to change code safely.
+
+## What this is
+
+A talking face for the Argus suite: audio in, facial animation frames out, rendered in a browser on any screen on the LAN
+
+Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus) (`argus-quarry` → `argus-curator` → `argus-lens` → `argus-forge` → `argus-proof`). Shared code — the target taxonomy, wire-schema versioning, and the local/remote model contract — lives in **argus-cortex**; import it rather than re-implementing.
+
+## Layout
+
+`src/argus_mask/` (the engine is pydantic, numpy, soxr and cortex; the CLI and the server are extras, imported lazily):
+
+- `arkit.py`: the 52 ARKit blendshape names, in the order every frame's weights use.
+- `models.py`: the wire contract (`StreamHeader`, `Frame`, `StreamEnd`, `SourceHello`, `FaceManifest`, `Health`) and `render_wire_schema()`. **This is the API surface**: change it, then run `make schema` and commit the result.
+- `audio.py`: `PcmDecoder` (bytes to mono float32, across chunk boundaries), `Resampler` (streaming, to 16 kHz), `read_wav`.
+- `drivers/`: the seam. `Driver` / `DriverSession` protocols, `energy.py` (CPU, deterministic), `a2f.py` (WebSocket client of the Audio2Face server; its protocol is in the module docstring).
+- `idle.py`: blinks, gaze and head sway, a function of the seed and the frame number.
+- `performance.py`: `Performer` joins resampler, driver and idle layer and stamps frames; `perform()` runs a whole clip.
+- `take.py`: take files (`.ndjson`) and `line()`, the one place a message becomes JSON.
+- `faces.py`: reads a `.glb` with the standard library, checks it against the contract, and `FaceStore` decides which faces may be served.
+- `config.py`: `Settings.from_env()` (`ARGUS_MASK_*`).
+- `client.py`: `push` and `say`, clients of the source socket.
+- `server/app.py`: `create_app()`. Routes, the two sockets, the `Stage` per face.
+- `viewer/`: the static viewer (`index.html`, `viewer.js`) and vendored three.js. No build step.
+- `cli.py`: Typer app; entry point `argus-mask`.
+
+`tests/helpers.py` builds every fixture in code: a one-triangle `.glb`, tone WAVs, a fake Audio2Face server, a fake TTS service, and `live_server()` for clients that need a real port.
+
+## Commands
+
+```bash
+make install   # uv venv + editable install with the "dev,server,cli" extras
+make test      # pytest --tb=short -q
+make lint      # ruff check + format --check (pinned ruff 0.15.16)
+make format    # ruff format + --fix
+make schema    # regenerate schema/mask-wire.schema.json after changing models.py
+```
+
+Run one test: `uv run --no-sync pytest tests/test_x.py::test_name -q`.
+
+## Conventions & gotchas
+
+- **Versioning is git-tag-derived** (`hatch-vcs`). Never hand-edit a version; `src/argus_mask/_version.py` is generated (gitignored). Tag `vX.Y.Z` to release.
+- **`src/` layout, `py.typed`, Pydantic v2, `structlog`.** Ruff line-length 120; keep it clean (`make lint`) before committing.
+- **Any endpoint that does something is a boundary.** There's no auth by default — treat reaching the port as host access. Gate state-changing routes behind the shared read-only / origin guards, and fence any caller-supplied path under a configured root.
+- Wire schemas are checked in and verified in CI — regenerate and commit when the types change, don't let the committed copy drift.
+- **Determinism is a feature.** The same audio, driver and seed must give a byte-identical take (`test_a_clip_gives_the_same_take_every_time`). Nothing in the engine may read the clock or an unseeded RNG. `drive` and `push` feed the same block size (`performance.BLOCK_MS`) so offline and live agree.
+- **Frame boundaries use integer arithmetic** (`frame * 16000 // fps`). Floating-point frame lengths drift at rates that do not divide the sample rate.
+- **Mask never falls back from `a2f` to `energy`.** A down driver refuses the source with the reason. A silent downgrade would look like a bad model.
+- **The server's own process uses no GPU**, so it does not take cortex's GPU lease. The Audio2Face server is a tenant outside the lease, like ComfyUI.
+- **WebSockets are outside `WriteGuard` and CORS.** Both sockets call the same `cross_site_refuse` predicate by hand (`cross_site()` in `server/app.py`). A new socket route must do the same.
+- **Free the face before telling the source it is done** (`stage.claimed = False`, then send `done`), or a source that reconnects at once is told the face is taken.
+- **The viewer handler uses an anyio task group, not bare asyncio tasks.** Bare tasks made the test client raise `CancelledError` on exit about one run in three.
+- **Faces carry provenance or are not served.** `curated` is refused until spec.md's 0.3 work defines it. No real person's face or voice goes in the repo or the tests.
+- **The viewer has no automated test.** After touching `viewer/`, run the server and `argus-mask push` a WAV, and watch a browser. `window.__mask` exposes its state.
+- Template-managed files (`Makefile`, `Dockerfile`, workflows) have local edits; `copier update` will ask about them.
+
+## CI / release
+
+CI runs via the shared [`argus-ci`](https://github.com/smk762/argus-ci) reusable workflow. Release publishes to PyPI (OIDC trusted publishing) + GHCR on `v*` tags. Run `copier update` to pull template (CI/release/tooling) changes.

@@ -1,0 +1,28 @@
+{
+  "id": "stock-01",
+  "name": "Stock head 01",
+  "phenotype": {
+    "gender": 1.0,
+    "age": 0.6,
+    "muscle": 0.5,
+    "weight": 0.5,
+    "proportions": 0.5,
+    "height": 0.5,
+    "cupsize": 0.5,
+    "firmness": 0.5,
+    "race": {"asian": 0.2, "caucasian": 0.6, "african": 0.2}
+  },
+  "assets": {
+    "skin": "skins/young_caucasian_male/young_caucasian_male.mhmat",
+    "eyes": "eyes/high-poly/high-poly.mhclo",
+    "eyebrows": "eyebrows/eyebrow001/eyebrow001.mhclo",
+    "eyelashes": "eyelashes/eyelashes01/eyelashes01.mhclo",
+    "teeth": "teeth/teeth_base/teeth_base.mhclo",
+    "tongue": "tongue/tongue01/tongue01.mhclo",
+    "hair": "hair/short02/short02.mhclo"
+  },
+  "bust": {"height_m": 0.40, "half_width_m": 0.23},
+  "max_texture_px": 2048,
+  "max_alpha_texture_px": 1024,
+  "max_triangles": 30000
+}

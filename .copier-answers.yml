@@ -1,0 +1,21 @@
+# Managed by Copier — do not edit by hand.
+# Run `copier update` in this repo to pull template changes.
+_commit: 939debb
+_src_path: gh:smk762/argus-pkg-template
+author: smk762
+cli_name: argus-mask
+description: 'A talking face for the Argus suite: audio in, facial animation frames
+    out, rendered in a browser on any screen on the LAN'
+dockerfile: Dockerfile
+github_owner: smk762
+has_cli: true
+has_server: true
+image_name: argus-mask
+package_name: argus_mask
+post_test: uv run --no-sync argus-mask schema --check
+project_name: argus-mask
+python_min: '3.11'
+ruff_pin: 0.15.16
+test_extras: dev,server,cli
+version_build_arg: false
+

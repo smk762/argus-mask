@@ -1,0 +1,463 @@
+{
+  "$defs": {
+    "AudioFormat": {
+      "description": "How PCM bytes are laid out.",
+      "properties": {
+        "channels": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "format": {
+          "default": "f32le",
+          "enum": [
+            "f32le",
+            "s16le"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "sample_rate": {
+          "maximum": 192000,
+          "minimum": 8000,
+          "title": "Sample Rate",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sample_rate"
+      ],
+      "title": "AudioFormat",
+      "type": "object"
+    },
+    "DriverHealth": {
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "name",
+        "available"
+      ],
+      "title": "DriverHealth",
+      "type": "object"
+    },
+    "DriverInfo": {
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "DriverInfo",
+      "type": "object"
+    },
+    "FaceManifest": {
+      "description": "``manifest.json`` in a face's directory.",
+      "properties": {
+        "blendshapes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Blendshapes",
+          "type": "array"
+        },
+        "framing": {
+          "$ref": "#/$defs/Framing"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "mask_version": {
+          "default": "1.0",
+          "title": "Mask Version",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelFile"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "model",
+        "provenance"
+      ],
+      "title": "FaceManifest",
+      "type": "object"
+    },
+    "Frame": {
+      "description": "One animation frame. ``t_ms`` is its time on the audio timeline.",
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/Head"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t_ms": {
+          "minimum": 0,
+          "title": "T Ms",
+          "type": "integer"
+        },
+        "type": {
+          "const": "frame",
+          "default": "frame",
+          "title": "Type",
+          "type": "string"
+        },
+        "weights": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Weights",
+          "type": "array"
+        }
+      },
+      "required": [
+        "seq",
+        "t_ms",
+        "weights"
+      ],
+      "title": "Frame",
+      "type": "object"
+    },
+    "Framing": {
+      "description": "Where the viewer's camera sits for this head. Metres; the head's origin is the model's.",
+      "properties": {
+        "distance": {
+          "default": 0.6,
+          "exclusiveMinimum": 0,
+          "title": "Distance",
+          "type": "number"
+        },
+        "fov": {
+          "default": 30.0,
+          "exclusiveMaximum": 120,
+          "exclusiveMinimum": 1,
+          "title": "Fov",
+          "type": "number"
+        },
+        "height": {
+          "default": 0.0,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "title": "Framing",
+      "type": "object"
+    },
+    "Head": {
+      "description": "Head rotation, in degrees.",
+      "properties": {
+        "pitch": {
+          "default": 0.0,
+          "title": "Pitch",
+          "type": "number"
+        },
+        "roll": {
+          "default": 0.0,
+          "title": "Roll",
+          "type": "number"
+        },
+        "yaw": {
+          "default": 0.0,
+          "title": "Yaw",
+          "type": "number"
+        }
+      },
+      "title": "Head",
+      "type": "object"
+    },
+    "Health": {
+      "properties": {
+        "driver": {
+          "$ref": "#/$defs/DriverHealth"
+        },
+        "faces": {
+          "title": "Faces",
+          "type": "integer"
+        },
+        "fps": {
+          "title": "Fps",
+          "type": "integer"
+        },
+        "free_vram_mb": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Free Vram Mb"
+        },
+        "live": {
+          "description": "Faces with a source connected",
+          "items": {
+            "type": "string"
+          },
+          "title": "Live",
+          "type": "array"
+        },
+        "read_only": {
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "driver",
+        "fps",
+        "read_only",
+        "faces"
+      ],
+      "title": "Health",
+      "type": "object"
+    },
+    "ModelFile": {
+      "properties": {
+        "file": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.glb$",
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256"
+      ],
+      "title": "ModelFile",
+      "type": "object"
+    },
+    "Provenance": {
+      "description": "Where a face came from. Required: a face without it is not served.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "stock",
+            "synthetic",
+            "curated"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "license": {
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "license"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "SourceHello": {
+      "description": "The first message a source sends on its socket: its audio format, and the idle layer's seed.",
+      "properties": {
+        "channels": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "format": {
+          "default": "f32le",
+          "enum": [
+            "f32le",
+            "s16le"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "sample_rate": {
+          "maximum": 192000,
+          "minimum": 8000,
+          "title": "Sample Rate",
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sample_rate"
+      ],
+      "title": "SourceHello",
+      "type": "object"
+    },
+    "StreamEnd": {
+      "description": "Closes a stream: the source went away and every frame has been sent.",
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "frames": {
+          "minimum": 0,
+          "title": "Frames",
+          "type": "integer"
+        },
+        "type": {
+          "const": "end",
+          "default": "end",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "frames",
+        "duration_ms"
+      ],
+      "title": "StreamEnd",
+      "type": "object"
+    },
+    "StreamHeader": {
+      "description": "Opens a stream. ``blendshapes`` is the order of every frame's weights.",
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioFormat"
+        },
+        "blendshapes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Blendshapes",
+          "type": "array"
+        },
+        "driver": {
+          "$ref": "#/$defs/DriverInfo"
+        },
+        "face_id": {
+          "title": "Face Id",
+          "type": "string"
+        },
+        "fps": {
+          "maximum": 120,
+          "minimum": 1,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "mask_version": {
+          "default": "1.0",
+          "title": "Mask Version",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "header",
+          "default": "header",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "face_id",
+        "session_id",
+        "fps",
+        "seed",
+        "blendshapes",
+        "audio",
+        "driver"
+      ],
+      "title": "StreamHeader",
+      "type": "object"
+    }
+  },
+  "title": "argus-mask wire contract"
+}

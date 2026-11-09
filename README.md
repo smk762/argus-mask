@@ -1,0 +1,153 @@
+# argus-mask
+
+A talking face for the Argus suite. Audio goes in; a stream of facial animation frames comes out; a browser page renders a rigged head from those frames, in step with the audio, on any screen on the LAN.
+
+Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](spec.md).
+
+```
+audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN device)
+(file, agent,     drive + sync         flat panel │ Looking Glass HLD
+ TTS output)          │
+                      ▼
+               Audio2Face server (external, by URL)
+```
+
+## Status
+
+Built and tested: the engine, the `energy` driver, faces, the server, the viewer's `flat` and `hld` tiers, and the CLI.
+
+Not built yet:
+
+- **The Audio2Face server** (`a2f/`). The `a2f` driver is its client and is tested against a fake. Until the server exists, the only driver that runs is `energy`, which moves the mouth from loudness and nothing more.
+- **The Looking Glass Go tier** (0.2), and faces built from argus-curator output (0.3).
+
+## Quick start
+
+```bash
+make install
+make head        # downloads the stock head into assets/stock-01 (5 MB, CC0)
+uv run argus-mask serve --assets-dir assets
+```
+
+Open `http://127.0.0.1:8109/`, click once to allow sound, then from another terminal:
+
+```bash
+uv run argus-mask push hello.wav --face stock-01
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `argus-mask inspect <face>` | Checks a face directory or a `.glb`: which of the 52 ARKit shapes it has, triangles, texture sizes. `--write-manifest` writes `manifest.json` beside a `.glb`; it needs `--kind`, `--source` and `--license`, and takes `--distance`, `--height` and `--fov` for the camera framing. |
+| `argus-mask drive <audio.wav> --out take.ndjson` | Audio to a take file, offline. The same audio, driver and seed give the same file. |
+| `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
+| `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
+| `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
+| `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
+
+## Faces
+
+A face is a directory under the assets root holding a `.glb` and a `manifest.json`.
+
+- **Model:** glTF 2.0 binary, with morph targets named for the 52 ARKit blendshapes (`jawOpen`, `eyeBlinkLeft`, …). Missing shapes are reported and ignored. Textures must be PNG or JPEG; the viewer loads no KTX2 or meshopt decoder.
+- **Manifest:** id, name, the model's file name and sha256, the shapes found, camera framing, and provenance.
+- **Provenance is required.** `kind` is `stock` or `synthetic`, with a `source` and a `license`. A face with no provenance is not served. `curated` is refused until faces from curator are designed.
+- A face is also refused when its manifest id differs from its directory name, or its model no longer matches the recorded sha256. `inspect` says why.
+
+No real person's likeness belongs in this repo, its fixtures or its examples.
+
+### The stock head
+
+The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
+
+### Your own head
+
+```bash
+mkdir -p assets/my-head && cp /path/to/head.glb assets/my-head/
+uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
+    --kind stock --source "where it came from" --license "CC0-1.0" \
+    --distance 0.9 --height -0.08
+```
+
+## Viewer
+
+`GET /` serves the viewer. URL parameters:
+
+| Parameter | Values |
+|---|---|
+| `face` | a face id; default: the first one the server lists |
+| `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
+| `bg` | a CSS colour, or `transparent` (flat tier) |
+| `hud` | `0` hides the status line |
+
+Lip sync runs on the page's audio clock: audio plays 250 ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
+
+Browsers start audio only after a click or key press. A kiosk can waive that; for Chromium, start it with `--autoplay-policy=no-user-gesture-required`.
+
+## Serving the LAN
+
+The server speaks plain HTTP and WebSocket, and binds localhost by default. To put the viewer on other machines:
+
+1. Bind an address your TLS proxy can reach: `argus-mask serve --host <address>`.
+2. Proxy to it with TLS. Caddy forwards WebSocket upgrades without extra configuration.
+3. Name the proxy's origin in `ARGUS_MASK_CORS_ORIGINS`, for example `https://mask.example.org`.
+
+Both sockets refuse a browser whose `Origin` is neither the server's own host nor in that list. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ARGUS_MASK_ASSETS_DIR` | `assets` | Root of the faces |
+| `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
+| `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
+| `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say` only |
+| `ARGUS_MASK_FPS` | `30` | Animation frames per second |
+| `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
+| `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect |
+
+With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
+
+## Speech from a TTS service
+
+`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL` and streams the reply into the face. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+
+```bash
+export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
+argus-mask say "Hello from the other side of the room." --face my-head -p emotion=neutral
+```
+
+## Wire
+
+`schema/mask-wire.schema.json` is the contract. A viewer socket carries:
+
+- one `header` (JSON): session, fps, seed, the order of the blendshape weights, the audio format;
+- `frame` messages (JSON): `seq`, `t_ms` on the audio timeline, `weights`, `head` rotation in degrees;
+- audio chunks (binary): 8 bytes of little-endian float64 giving the chunk's start in ms, then mono `f32le` PCM;
+- one `end` (JSON).
+
+A take file is the same header, frames and end, one JSON object per line.
+
+A source socket takes one JSON hello (`sample_rate`, `channels`, `format`, optional `seed`), then binary PCM, then `{"type": "end"}`. Sources should send no faster than real time plus about a second; a viewer that falls 2048 messages behind is dropped.
+
+## Develop
+
+```bash
+make install   # venv + editable install with every extra
+make test
+make lint
+make schema    # after changing models.py
+```
+
+Tests use fake Audio2Face and TTS services and a one-triangle `.glb` built in code. The viewer is not covered by CI; check it by hand with `argus-mask push`.
+
+## CI / Release
+
+- **CI** runs via the shared [`argus-ci`](https://github.com/smk762/argus-ci) reusable workflow, plus `argus-mask schema --check`.
+- **Release** publishes to PyPI (OIDC trusted publishing) and GHCR on `v*` tags.
+- Versioning is derived from git tags via `hatch-vcs`: tag `vX.Y.Z` to cut a release.
+
+This repo was scaffolded from [`argus-pkg-template`](https://github.com/smk762/argus-pkg-template). Run `copier update` to pull template changes.
+
+The viewer vendors [three.js](https://threejs.org) (MIT); its licence is in `src/argus_mask/viewer/vendor/LICENSE-three`.

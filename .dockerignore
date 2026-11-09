@@ -1,0 +1,15 @@
+# NOTE: .git is deliberately *not* ignored -- hatch-vcs reads the version from
+# git history at build time. Set `version_build_arg` if you want it excluded.
+.github
+.venv
+venv
+dist
+build
+*.egg-info
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov

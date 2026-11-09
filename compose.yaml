@@ -1,0 +1,27 @@
+# argus-mask: the server and its bundled viewer. The Audio2Face server, a TTS service and the TLS
+# proxy run elsewhere and are reached by URL (see .env.example).
+#
+#   cp .env.example .env   # then edit
+#   docker compose up --build
+#
+# Published on 127.0.0.1 only by default. To serve screens on the LAN, set MASK_PUBLISH to an
+# address your TLS proxy can reach and name the proxy's origin in CORS_ORIGINS.
+
+services:
+  mask:
+    image: ghcr.io/smk762/argus-mask:${MASK_TAG:-latest}
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${MASK_PUBLISH:-127.0.0.1:8109}:8109"
+    environment:
+      ARGUS_MASK_DRIVER: ${DRIVER:-energy}
+      ARGUS_MASK_A2F_URL: ${A2F_URL:-}
+      ARGUS_MASK_FPS: ${FPS:-30}
+      ARGUS_MASK_CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ARGUS_MASK_READ_ONLY: ${READ_ONLY:-0}
+    volumes:
+      - ${ASSETS_DIR:-./assets}:/assets:ro
+    extra_hosts:
+      # Reach services on the host (the Audio2Face server) the same way on Linux as on Docker Desktop.
+      - "host.docker.internal:host-gateway"
