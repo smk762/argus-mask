@@ -350,6 +350,14 @@ def editor(
     blender_user: Path | None = Option(
         None, "--blender-user", help="Blender's user directory with MPFB and its asset packs (BLENDER_USER_RESOURCES)"
     ),
+    server_url: str | None = Option(
+        None,
+        "--server-url",
+        help="The argus-mask server, for checks and tests; default: ARGUS_MASK_SERVER_URL or :8109",
+    ),
+    viewer_url: str | None = Option(
+        None, "--viewer-url", help="The origin screens open the viewer at (a TLS proxy on a LAN); default: the server's"
+    ),
 ) -> None:
     """Run the face editor: build heads from presets with headless Blender and MPFB."""
     from dataclasses import replace
@@ -373,6 +381,13 @@ def editor(
         ed = replace(ed, blender=blender)
     if blender_user is not None:
         ed = replace(ed, blender_user=blender_user)
+    try:
+        if server_url is not None:
+            ed = replace(ed, server_url=server_url.rstrip("/"))
+        if viewer_url is not None:
+            ed = replace(ed, viewer_url=viewer_url.rstrip("/"))
+    except ConfigError as exc:
+        raise _fail(str(exc)) from exc
     uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)
 
 

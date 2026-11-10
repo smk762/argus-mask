@@ -91,6 +91,7 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
 | `hud` | `0` hides the status line |
+| `kiosk` | `1` for a dedicated screen: no status line, no cursor, full screen on the first tap |
 | `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
 | `quality` | the look: `low`, `medium` (default) or `high`. See below. |
 | `ibl`, `shadows`, `skin`, `cornea`, `ao`, `smaa`, `dof`, `grain`, `bloom` | `1` or `0`: one effect on or off over the profile |
@@ -112,6 +113,8 @@ Lip sync runs on the page's audio clock: audio plays `buffer` ms behind arrival 
 
 Browsers start audio only after a click or key press. A kiosk can waive that; for Chromium, start it with `--autoplay-policy=no-user-gesture-required`.
 
+Until then the viewer says so: a full-screen **Tap to start**. One tap or key press turns the sound on and fills the screen, and a **● Ready** pill shows briefly once the screen is connected and can be heard. `kiosk=1` is for dedicated screens: no status line, no cursor, full screen on that first tap; started with the flag above, it needs no tap at all. The viewer tells the server its state on its socket (`audio`, `display`, `kiosk`; never media), and `/health` lists it under `screens`, per face.
+
 ## Serving the LAN
 
 The server speaks plain HTTP and WebSocket, and binds localhost by default. To put the viewer on other machines:
@@ -129,6 +132,8 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 A build is a preview, kept in `assets/.preview/`, which the server never lists. **Export** copies the preview on show into `assets/<id>`, and it is on the server's `/faces` at once. **Download preset** saves the form as a `.json` preset, the same format as `scripts/stock_heads/`, and **Open preset…** loads one.
 
 **Saved faces** (`/faces.html`, linked from the editor) shows every face in the assets root and every preview as a card with a thumbnail. **Review** opens it in 3D with its provenance; **Remix** opens its preset in the editor under a new id, so the original is untouched; **Rename** changes its name or id (the export and the preview together); **Delete** moves it to `assets/.trash/`, which the server skips, so moving it back restores it. Stock and hand-added faces can be reviewed, not changed.
+
+**On screen…** (beside Export, and on each exported face's card) takes a face to a screen. The editor checks that the server is up and lists the face, and says plainly if it does not (the usual cause: the server and the editor were started on different assets directories). It builds the viewer link at the screens' origin, with display, quality, kiosk, status line and background, to open, copy, or show as a QR code for a tablet or panel to scan. It shows which screens are watching and whether they can be heard ("1 screen ready", "1 screen, no sound yet: tap it"), plays a test chime through the server's own source socket (refused, like any source, by a read-only server), and gives the `argus-mask say … --face <id>` command to speak from a terminal. The editor reaches the server at `ARGUS_MASK_SERVER_URL` (`--server-url`, default `http://127.0.0.1:8109`) and hands out links at `ARGUS_MASK_VIEWER_URL` (`--viewer-url`: the TLS proxy on a LAN; default, the server's).
 
 It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
 
@@ -160,6 +165,8 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
 | `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
 | `ARGUS_MASK_BUILD_CACHE` | `40` | Builds the editor keeps (about 6 MB each), so undo and repeats skip Blender; `0` keeps none |
+| `ARGUS_MASK_SERVER_URL` | `http://127.0.0.1:8109` | How the editor reaches the server, to check a face and send a test |
+| `ARGUS_MASK_VIEWER_URL` | the server URL | The origin screens open the viewer at (the TLS proxy, on a LAN); the editor's links point here |
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 

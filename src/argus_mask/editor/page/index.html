@@ -121,6 +121,7 @@
   }
   @media (hover: none) { #peek { display: none !important; } }
 </style>
+<script src="./qr/qrcode.js"></script>  <!-- qrcode-generator 1.4.4, MIT: QR codes for screen links -->
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
@@ -138,6 +139,7 @@
     <input type="file" id="open-file" accept=".json,application/json" hidden>
     <button type="button" id="download" title="Download the form as a preset .json file">Download</button>
     <button type="button" id="export" disabled title="Copy the preview into assets/, where the server serves it">Export</button>
+    <button type="button" id="onscreen" disabled title="Open the exported face on a screen, and check it is ready to speak">On screen…</button>
     <button type="submit" class="primary" id="build" title="Build a preview (Ctrl+Enter)">Build</button>
   </header>
   <div id="banner" hidden></div>

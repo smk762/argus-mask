@@ -56,6 +56,7 @@ Run one test: `uv run --no-sync pytest tests/test_x.py::test_name -q`.
 - **Mask never falls back from `a2f` to `energy`.** A down driver refuses the source with the reason. A silent downgrade would look like a bad model.
 - **The server's own process uses no GPU**, so it does not take cortex's GPU lease. The Audio2Face server is a tenant outside the lease, like ComfyUI.
 - **WebSockets are outside `WriteGuard` and CORS.** Both sockets call the same `cross_site_refuse` predicate by hand (`cross_site()` in `server/app.py`). A new socket route must do the same.
+- **A viewer may speak on its socket, once: its state.** `ViewerStatus` (`audio`, `display`, `kiosk`), at most 1 KB, anything else ignored; the server keeps the latest per viewer as `Health.screens`. Never media, never a command. A socket client that never reports (`record`) is not a screen.
 - **Audio is held until frames cover it** (`held` / `release()` in the source handler). Drivers answer late; sending audio on arrival would put the sound ahead of the mouth by the driver's lag.
 - **Free the face before telling the source it is done** (`stage.claimed = False`, then send `done`), or a source that reconnects at once is told the face is taken.
 - **The viewer handler uses an anyio task group, not bare asyncio tasks.** Bare tasks made the test client raise `CancelledError` on exit about one run in three.

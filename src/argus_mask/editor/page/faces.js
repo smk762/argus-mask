@@ -3,6 +3,7 @@
 // Everything the server sends is put on the page as text, never as HTML.
 
 import { Stage } from './stage.js';
+import { openScreen, screensText } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -92,6 +93,11 @@ function card(row) {
   );
   if (copy) info.append(el('div', { className: 'meta', textContent: `${when(copy.updated)} · ${mb(copy.bytes)}` }));
   if (row.refused) info.append(el('div', { className: 'refused', textContent: `Not served: ${row.refused}` }));
+  if (row.export && !row.refused) {  // served: say who is watching it, kept current by watchScreens()
+    const line = el('div', { className: 'meta screens' });
+    line.dataset.face = row.id;
+    info.append(line);
+  }
 
   const editable = [row.export, row.preview].some((c) => c && c.editable);
   const notMine = 'Only faces the editor made can be changed here.';
@@ -108,13 +114,33 @@ function card(row) {
   del.onclick = () => remove(row);
 
   if (copy) thumbnail(row, img, wait);
-  return el('div', { className: 'card' }, shot, info, el('div', { className: 'actions' }, review, remix, rename, del));
+  const onScreen = el('button', { type: 'button', textContent: 'On screen…', disabled: !row.export || Boolean(row.refused),
+    title: row.export ? 'Open it on a screen, and check it is ready to speak' : 'Only an exported face is served' });
+  onScreen.onclick = () => openScreen(row.id, copy ? copy.name : row.id);
+  return el('div', { className: 'card' }, shot, info, el('div', { className: 'actions' }, review, onScreen, remix, rename, del));
 }
 
 async function load() {
   rows = await json('/saved');
   render();
   status(`${rows.length} face${rows.length === 1 ? '' : 's'}.`);
+  watchScreens();
+}
+
+// Which exported faces a screen is watching, and whether it will be heard: every few seconds.
+let screensTimer = null;
+async function watchScreens() {
+  clearTimeout(screensTimer);
+  let reply = null;
+  try { reply = await json('/screens'); } catch { /* the editor itself went away */ }
+  for (const line of document.querySelectorAll('.screens')) {
+    if (!reply || !reply.server_ok) { line.textContent = 'Server not answering'; line.className = 'meta screens'; continue; }
+    const t = screensText(reply.screens[line.dataset.face]);
+    line.textContent = t.text;
+    line.className = `meta screens${t.ready ? ' ready' : ''}`;
+  }
+  clearTimeout(screensTimer);   // again: a load() during the await started its own round
+  screensTimer = setTimeout(watchScreens, 4000);
 }
 
 // ---- review --------------------------------------------------------------------------------
