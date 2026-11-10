@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MPFB, about ten seconds a build, with a posed preview. Skin, hair, clothes and a hat are picked from thumbnails. It offers only assets an installed pack licenses, writes their
   licences into the face's provenance, replaces only faces it made, and is behind the write guards. Blender, MPFB and
   the asset packs are the user's to install; none ships.
-- **A second stock preset**, `stock-02`: a female head, about 25, short brown hair. Not published yet.
+- **A second stock preset**, `stock-02`: a female head, about 25, short brown hair, in the same crew uniform as
+  `stock-01` (suits02 pack, CC0). Not published yet.
 - **The Audio2Face server** (`a2f/`): NVIDIA's Audio2Face-3D SDK behind the `a2f` driver's protocol, in its own
   Docker image. It downloads its model and builds a TensorRT engine for the host's card on first start, and holds
   about 0.5 GB of VRAM. `docker compose --profile a2f` runs it beside mask. The image is built locally, not published.

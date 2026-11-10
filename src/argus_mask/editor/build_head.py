@@ -7,14 +7,15 @@ Run it headless, inside Blender, with MPFB enabled and its asset packs installed
         --preset scripts/stock_heads/stock-01.json --out assets/stock-01/head.glb
 
 The preset is the recipe: the MakeHuman phenotype, which skin, hair, eyes and
-so on, where the bust is cut, and the size budget. The same preset, Blender,
+so on, what the bust wears, where it is cut, and the size budget. The same preset, Blender,
 MPFB and asset packs build the same head. A second file, ``<out>.recipe.json``,
 records what was actually used, for the face manifest's provenance.
 
 What it does, in order:
 
 1. refuses a preset that is not an adult;
-2. creates the human and adds the skin and the body parts;
+2. creates the human and adds the skin, the body parts and the clothes (the
+   body under a garment is removed, as MakeHuman does);
 3. bakes the modelling shape keys, loads MPFB's ARKit face units
    (``faceunits01``) and interpolates them onto the eyes, lashes, brows, teeth
    and tongue, because glTF cannot drive one mesh's morph targets from another;
@@ -49,6 +50,9 @@ from mathutils.bvhtree import BVHTree
 ADULT_AGE = 0.5
 
 BODY_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue", "hair")
+# ``assets.clothes`` is a list of garments. Each is named in the model after its asset (the mhclo's
+# base name), so ``texture_gain`` and ``blend_parts`` can refer to it.
+CLOTHES = "clothes"
 # Parts that must carry the face shapes. Hair may stay static.
 MOVING_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue")
 PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", "cupsize", "firmness")
@@ -87,9 +91,16 @@ def load_preset(path: str) -> dict:
     for key in ("skin", *MOVING_PARTS):
         if not assets.get(key):
             raise RecipeError(f"{path}: assets.{key} is required")
-    clothes = assets.get("clothes") or []
+    clothes = assets.get(CLOTHES) or []
+    if isinstance(clothes, str):
+        clothes = assets[CLOTHES] = [clothes]
     if not isinstance(clothes, list) or not all(isinstance(c, str) and c for c in clothes):
         raise RecipeError(f"{path}: assets.clothes must be a list of clothes assets")
+    names = [asset_name(c) for c in clothes]
+    if clash := [n for n in names if n in BODY_PARTS]:
+        raise RecipeError(f"{path}: a garment cannot be called {clash[0]!r}")
+    if len(set(names)) != len(names):
+        raise RecipeError(f"{path}: assets.clothes lists the same garment twice")
     return preset
 
 
@@ -116,14 +127,21 @@ def resolve_asset(services, fragment: str) -> str:
     raise RecipeError(f"asset {fragment!r} is not installed: is the asset pack that holds it in MPFB's data directory?")
 
 
+def asset_name(fragment: str) -> str:
+    """``clothes/suit01/suit01.mhclo`` to ``suit01``."""
+    return os.path.splitext(os.path.basename(fragment))[0]
+
+
 def mesh_children(basemesh) -> dict[str, object]:
-    """The body-part objects hanging off the basemesh, by part name."""
+    """The body-part and garment objects hanging off the basemesh: body parts by part name, garments
+    by asset name (tagged when the garment is added, not read back from MPFB's object name)."""
     found = {}
     for obj in bpy.data.objects:
         if obj.type == "MESH" and obj is not basemesh and obj.parent is basemesh:
-            kind = str(obj.get("MPFB_GEN_object_type") or "").lower()
-            # One of each body part, but perhaps several clothes: those carry their own key, set when added.
-            found[str(obj.get("argus_part") or kind or obj.name)] = obj
+            kind = str(obj.get("argus_garment") or obj.get("MPFB_GEN_object_type") or "").lower() or obj.name
+            if kind in found:
+                raise RecipeError(f"two parts are both called {kind!r}")
+            found[kind] = obj
     return found
 
 
@@ -466,11 +484,15 @@ def build(preset: dict, out: str) -> dict:
             )
     # Clothes are fitted like the body parts. MPFB also hides the skin under them (the delete group,
     # baked below with the masks), which saves the triangles the clothes add.
-    for ref in assets.get("clothes") or []:
+    for garment in assets.get(CLOTHES) or []:
         worn = human.add_mhclo_asset(
-            resolve_asset(services, ref), basemesh, asset_type="Clothes", subdiv_levels=0, material_type="GAMEENGINE"
+            resolve_asset(services, garment),
+            basemesh,
+            asset_type="Clothes",
+            subdiv_levels=0,
+            material_type="GAMEENGINE",
         )
-        worn["argus_part"] = "clothes-" + os.path.splitext(os.path.basename(ref))[0]
+        worn["argus_garment"] = asset_name(garment)
 
     # The order MPFB's own "export copy" uses: bake the modelling keys, then load the face units onto
     # the finished shape, carry them to the child meshes, and only then drop the helper geometry the
