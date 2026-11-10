@@ -765,3 +765,10 @@ def test_editor_settings_from_env(monkeypatch, tmp_path) -> None:
     with pytest.raises(ValueError, match="between"):
         EditorSettings.from_env()
     assert os.environ["ARGUS_MASK_BLENDER_USER"] == str(tmp_path)
+
+
+def test_the_triangle_budget_is_35k() -> None:
+    assert Preset.model_validate(preset(max_triangles=35_000)).max_triangles == 35_000
+    assert Preset.model_validate(preset()).max_triangles == 35_000  # the default is the whole budget
+    with pytest.raises(ValidationError, match="max_triangles"):
+        Preset.model_validate(preset(max_triangles=35_001))
