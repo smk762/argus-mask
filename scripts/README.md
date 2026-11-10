@@ -1,6 +1,6 @@
 # Building a stock head
 
-`build_stock_head.py` builds a head for argus-mask with [MPFB](https://static.makehumancommunity.org/mpfb.html), the MakeHuman plugin for Blender, and exports it as a `.glb` with the 52 ARKit face shapes. It runs headless. A preset under `stock_heads/` is the whole recipe, so another synthetic head is another preset.
+`src/argus_mask/editor/build_head.py` builds a head for argus-mask with [MPFB](https://static.makehumancommunity.org/mpfb.html), the MakeHuman plugin for Blender, and exports it as a `.glb` with the 52 ARKit face shapes. It runs headless. A preset under `stock_heads/` is the whole recipe, so another synthetic head is another preset.
 
 Blender and MPFB are authoring tools. Nothing in the package imports them, and neither is needed to run argus-mask.
 
@@ -44,7 +44,7 @@ From the repo root:
 
 ```bash
 export BLENDER_USER_RESOURCES=$WORK/user
-$WORK/blender/blender -b -P scripts/build_stock_head.py -- \
+$WORK/blender/blender -b -P src/argus_mask/editor/build_head.py -- \
     --preset scripts/stock_heads/stock-01.json --out assets/stock-01/head.glb
 ```
 
@@ -55,7 +55,7 @@ Then write the manifest. The provenance must say enough to rebuild the head:
 ```bash
 argus-mask inspect assets/stock-01/head.glb --write-manifest \
     --id stock-01 --name "Stock head 01" --kind stock \
-    --source "Built with scripts/build_stock_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets and faceunits01" \
+    --source "Built with src/argus_mask/editor/build_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets and faceunits01" \
     --license "CC0-1.0" \
     --distance 0.9 --height -0.08 \
     --notes "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out."
@@ -74,7 +74,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | Field | Meaning |
 |---|---|
 | `phenotype` | MakeHuman's macro settings, each 0 to 1: `gender`, `age`, `muscle`, `weight`, `proportions`, `height`, `cupsize`, `firmness`, and `race` (`asian`, `caucasian`, `african`). |
-| `assets` | Paths under MPFB's data directory: `skin` (`.mhmat`), and `eyes`, `eyebrows`, `eyelashes`, `teeth`, `tongue`, `hair` (`.mhclo`). Hair is optional. |
+| `assets` | Paths under MPFB's data directory: `skin` (`.mhmat`), and `eyes`, `eyebrows`, `eyelashes`, `teeth`, `tongue`, `hair` (`.mhclo`). Hair is optional. `clothes` is a list of up to three `.mhclo` paths under `clothes/` (an outfit, a hat); MPFB hides the skin under them, so they add few triangles. The system pack's clothes are CC0. |
 | `bust` | Where the body is cut: `height_m` below the top of the head, `half_width_m` either side of the centre line. |
 | `max_texture_px` | Cap for opaque textures, stored as JPEG. |
 | `max_alpha_texture_px` | Cap for textures with real transparency (hair, lashes, brows), stored as PNG. |

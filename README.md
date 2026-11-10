@@ -53,6 +53,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 | `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
 | `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
+| `argus-mask editor` | The face editor (port 8111): build heads from presets with Blender. See [Face editor](#face-editor). |
 | `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
 
 ## Faces
@@ -105,6 +106,23 @@ The server speaks plain HTTP and WebSocket, and binds localhost by default. To p
 
 Both sockets refuse a browser whose `Origin` is neither the server's own host nor in that list. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
 
+### Face editor
+
+`argus-mask editor` is a page for making heads: pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails, set sex, age, build and ancestry with sliders, press **Build**, and the head appears in a preview about ten seconds later, ready to rest, open, smile or talk. It writes the face into the same assets root the server reads, so it is on `/faces` at once.
+
+It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
+
+```bash
+argus-mask editor --assets-dir assets \
+    --blender $WORK/blender/blender --blender-user $WORK/user    # BLENDER_USER_RESOURCES
+```
+
+- **Only licensed assets.** The editor offers the assets that an installed pack lists with a licence, and writes each part's licence and author into the face's provenance (`kind: synthetic`). An asset from a CC-BY pack shows up in the licence line.
+- **Adults only.** Age starts at 25 (MakeHuman's 0.5); the recipe refuses less.
+- **It only replaces its own faces.** Each face it builds keeps its `preset.json` beside the model; a directory without one (a stock head, a face added by hand) is never overwritten.
+- **Builds go one at a time.** A failed build leaves nothing behind, and the face that was there stays.
+- **Keep it local.** A build starts Blender. The editor binds `127.0.0.1`, and `/build` is behind the same origin and read-only guards as the server's writes.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -115,7 +133,11 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 | `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say` only |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
-| `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect |
+| `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect. The editor refuses builds. |
+| `ARGUS_MASK_BLENDER` | `blender` | The editor's Blender binary |
+| `ARGUS_MASK_BLENDER_USER` | `$BLENDER_USER_RESOURCES` | Blender's user directory, holding MPFB and its asset packs |
+| `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
+| `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>argus-mask face editor</title>
+<style>
+  :root { --bg: #101216; --panel: #171a20; --line: #2a303a; --text: #e6e9ee; --dim: #9aa4b2; --accent: #6ea8fe; --bad: #f28b82; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  body { display: grid; grid-template-columns: minmax(320px, 440px) 1fr; }
+  #form { overflow-y: auto; height: 100vh; padding: 16px; background: var(--panel); border-right: 1px solid var(--line); }
+  #preview { position: relative; height: 100vh; }
+  #preview canvas { display: block; width: 100%; height: 100%; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  h2 { font-size: 13px; margin: 18px 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  label.row { display: grid; grid-template-columns: 110px 1fr 54px; align-items: center; gap: 8px; margin: 4px 0; }
+  label.row output { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=text], select { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair label { display: grid; gap: 4px; color: var(--dim); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+  .tile { border: 2px solid transparent; border-radius: 8px; background: var(--bg); padding: 3px; cursor: pointer; color: var(--dim); font-size: 11px; text-align: center; overflow: hidden; }
+  .tile img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 5px; display: block; background: #222; }
+  .tile .none { width: 100%; aspect-ratio: 1; display: grid; place-items: center; border-radius: 5px; background: #222; }
+  .tile.on { border-color: var(--accent); color: var(--text); }
+  .tile span { display: block; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--dim); }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #5b6472; background: #1c2129; color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: progress; }
+  #actions { position: sticky; bottom: -16px; margin: 18px -16px -16px; padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  #status { color: var(--dim); font-size: 12px; }
+  #status.bad, #banner { color: var(--bad); }
+  #banner { margin-bottom: 10px; }
+  #poses { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 6px; }
+  #poses button.on { border-color: var(--accent); }
+  #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); text-align: center; padding: 24px; }
+  #credits { position: absolute; left: 12px; top: 10px; right: 12px; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 760px) { body { grid-template-columns: 1fr; } #form, #preview { height: auto; } #preview { height: 70vh; } }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<form id="form" autocomplete="off">
+  <h1>Face editor</h1>
+  <div id="banner" hidden></div>
+  <div class="pair">
+    <label>Start from<select id="start"></select></label>
+    <label>Id<input type="text" id="id" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required></label>
+  </div>
+  <div class="pair" style="margin-top:8px"><label style="grid-column: 1 / 3">Name<input type="text" id="name" maxlength="80" required></label></div>
+
+  <h2>Body</h2>
+  <div id="sliders"></div>
+
+  <div id="parts"></div>
+
+  <details>
+    <summary>Advanced: mouth and budgets</summary>
+    <div id="advanced"></div>
+  </details>
+
+  <div id="actions">
+    <button type="submit" class="primary" id="build">Build</button>
+    <span id="status"></span>
+  </div>
+</form>
+<div id="preview">
+  <div id="empty">Build a face to see it here.<br>A build takes about ten seconds.</div>
+  <div id="credits"></div>
+  <div id="poses" hidden></div>
+</div>
+<script type="module" src="./editor.js"></script>
+</body>
+</html>

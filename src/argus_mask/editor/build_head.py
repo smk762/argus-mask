@@ -3,7 +3,7 @@
 Run it headless, inside Blender, with MPFB enabled and its asset packs installed
 (see scripts/README.md):
 
-    blender -b -P scripts/build_stock_head.py -- \
+    blender -b -P src/argus_mask/editor/build_head.py -- \
         --preset scripts/stock_heads/stock-01.json --out assets/stock-01/head.glb
 
 The preset is the recipe: the MakeHuman phenotype, which skin, hair, eyes and
@@ -87,6 +87,9 @@ def load_preset(path: str) -> dict:
     for key in ("skin", *MOVING_PARTS):
         if not assets.get(key):
             raise RecipeError(f"{path}: assets.{key} is required")
+    clothes = assets.get("clothes") or []
+    if not isinstance(clothes, list) or not all(isinstance(c, str) and c for c in clothes):
+        raise RecipeError(f"{path}: assets.clothes must be a list of clothes assets")
     return preset
 
 
@@ -119,7 +122,8 @@ def mesh_children(basemesh) -> dict[str, object]:
     for obj in bpy.data.objects:
         if obj.type == "MESH" and obj is not basemesh and obj.parent is basemesh:
             kind = str(obj.get("MPFB_GEN_object_type") or "").lower()
-            found[kind or obj.name] = obj
+            # One of each body part, but perhaps several clothes: those carry their own key, set when added.
+            found[str(obj.get("argus_part") or kind or obj.name)] = obj
     return found
 
 
@@ -188,7 +192,10 @@ def seat_tongue(tongue, *, flatten: float, drop_m: float, front_m: float = 0.015
     new = old.copy()
     new[:, 2] = floor + (old[:, 2] - floor) * flatten - drop_m
     deltas = {name: absolute[name] - old for name in names}
-    report = {"top_before_mm": round(float(old[:, 2].max()) * 1000, 1), "top_after_mm": round(float(new[:, 2].max()) * 1000, 1)}
+    report = {
+        "top_before_mm": round(float(old[:, 2].max()) * 1000, 1),
+        "top_after_mm": round(float(new[:, 2].max()) * 1000, 1),
+    }
     if "jawOpen" in deltas:
         tip = old[:, 1] <= old[:, 1].min() + front_m
         fall = deltas["jawOpen"][tip].mean(axis=0)
@@ -214,7 +221,11 @@ def lower_upper_teeth(teeth, drop_m: float) -> dict:
     new = old.copy()
     new[upper, 2] -= drop_m
     rewrite_keys(teeth, new, deltas)
-    return {"upper_vertices": int(upper.sum()), "edge_before_mm": round(float(old[upper, 2].min()) * 1000, 1), "edge_after_mm": round(float(new[upper, 2].min()) * 1000, 1)}
+    return {
+        "upper_vertices": int(upper.sum()),
+        "edge_before_mm": round(float(old[upper, 2].min()) * 1000, 1),
+        "edge_after_mm": round(float(new[upper, 2].min()) * 1000, 1),
+    }
 
 
 def scale_shapes(objects, factors: dict[str, float]) -> None:
@@ -321,7 +332,11 @@ def unlink_alpha(image) -> None:
         if not material.node_tree:
             continue
         for link in list(material.node_tree.links):
-            if link.from_node.type == "TEX_IMAGE" and link.from_node.image is image and link.from_socket.name == "Alpha":
+            if (
+                link.from_node.type == "TEX_IMAGE"
+                and link.from_node.image is image
+                and link.from_socket.name == "Alpha"
+            ):
                 material.node_tree.links.remove(link)
 
 
@@ -413,7 +428,12 @@ def patch_glb(path: str, blended: set[str]) -> dict:
 def build(preset: dict, out: str) -> dict:
     mpfb = find_mpfb()
     services = importlib.import_module(mpfb.__name__ + ".services")
-    human, targets, faces, export = services.HumanService, services.TargetService, services.FaceService, services.ExportService
+    human, targets, faces, export = (
+        services.HumanService,
+        services.TargetService,
+        services.FaceService,
+        services.ExportService,
+    )
     if not faces.is_faceunits01_installed(force_recheck=True):
         raise RecipeError("MPFB's faceunits01 asset pack is not installed: it holds the ARKit face shapes")
 
@@ -422,13 +442,35 @@ def build(preset: dict, out: str) -> dict:
 
     phenotype = {k: float(preset["phenotype"][k]) for k in PHENOTYPE_KEYS}
     phenotype["race"] = {k: float(preset["phenotype"]["race"][k]) for k in RACE_KEYS}
-    basemesh = human.create_human(mask_helpers=True, detailed_helpers=True, extra_vertex_groups=True, feet_on_ground=True, scale=0.1, macro_detail_dict=phenotype)
+    basemesh = human.create_human(
+        mask_helpers=True,
+        detailed_helpers=True,
+        extra_vertex_groups=True,
+        feet_on_ground=True,
+        scale=0.1,
+        macro_detail_dict=phenotype,
+    )
 
     assets = preset["assets"]
-    human.set_character_skin(resolve_asset(services, assets["skin"]), basemesh, skin_type="GAMEENGINE", material_instances=False)
+    human.set_character_skin(
+        resolve_asset(services, assets["skin"]), basemesh, skin_type="GAMEENGINE", material_instances=False
+    )
     for part in BODY_PARTS:
         if assets.get(part):
-            human.add_mhclo_asset(resolve_asset(services, assets[part]), basemesh, asset_type=part, subdiv_levels=0, material_type="GAMEENGINE")
+            human.add_mhclo_asset(
+                resolve_asset(services, assets[part]),
+                basemesh,
+                asset_type=part,
+                subdiv_levels=0,
+                material_type="GAMEENGINE",
+            )
+    # Clothes are fitted like the body parts. MPFB also hides the skin under them (the delete group,
+    # baked below with the masks), which saves the triangles the clothes add.
+    for ref in assets.get("clothes") or []:
+        worn = human.add_mhclo_asset(
+            resolve_asset(services, ref), basemesh, asset_type="Clothes", subdiv_levels=0, material_type="GAMEENGINE"
+        )
+        worn["argus_part"] = "clothes-" + os.path.splitext(os.path.basename(ref))[0]
 
     # The order MPFB's own "export copy" uses: bake the modelling keys, then load the face units onto
     # the finished shape, carry them to the child meshes, and only then drop the helper geometry the
@@ -436,7 +478,9 @@ def build(preset: dict, out: str) -> dict:
     targets.bake_targets(basemesh)
     faces.load_targets(basemesh, load_microsoft_visemes=False, load_meta_visemes=False, load_arkit_faceunits=True)
     faces.interpolate_targets(basemesh)
-    export.bake_modifiers_remove_helpers(basemesh, bake_masks=True, bake_subdiv=False, remove_helpers=True, also_proxy=True)
+    export.bake_modifiers_remove_helpers(
+        basemesh, bake_masks=True, bake_subdiv=False, remove_helpers=True, also_proxy=True
+    )
     for modifier in list(basemesh.modifiers):
         basemesh.modifiers.remove(modifier)
 
@@ -465,7 +509,9 @@ def build(preset: dict, out: str) -> dict:
 
     # Origin: on the centre line, at eye height, halfway through the skull. The viewer turns the head
     # about the origin, and looks at it from +Z (glTF) with the camera the manifest's framing describes.
-    skull = [basemesh.matrix_world @ v.co for v in basemesh.data.vertices if (basemesh.matrix_world @ v.co).z > eye_z - 0.03]
+    skull = [
+        basemesh.matrix_world @ v.co for v in basemesh.data.vertices if (basemesh.matrix_world @ v.co).z > eye_z - 0.03
+    ]
     centre_y = (min(p.y for p in skull) + max(p.y for p in skull)) / 2
     for obj in objects:
         obj.location.y -= centre_y
@@ -483,13 +529,19 @@ def build(preset: dict, out: str) -> dict:
     mouth = preset.get("mouth") or {}
     mouth_report = {}
     if "tongue" in parts and ("tongue_flatten" in mouth or "tongue_drop_mm" in mouth):
-        mouth_report["tongue"] = seat_tongue(parts["tongue"], flatten=float(mouth.get("tongue_flatten", 1.0)), drop_m=float(mouth.get("tongue_drop_mm", 0.0)) / 1000)
+        mouth_report["tongue"] = seat_tongue(
+            parts["tongue"],
+            flatten=float(mouth.get("tongue_flatten", 1.0)),
+            drop_m=float(mouth.get("tongue_drop_mm", 0.0)) / 1000,
+        )
     if "teeth" in parts and mouth.get("upper_teeth_drop_mm"):
         mouth_report["upper_teeth"] = lower_upper_teeth(parts["teeth"], float(mouth["upper_teeth_drop_mm"]) / 1000)
     shape_scale = {str(k): float(v) for k, v in (preset.get("shape_scale") or {}).items()}
     scale_shapes(objects, shape_scale)
     if mouth.get("cavity_shade"):
-        mouth_report["shade"] = shade_mouth(basemesh, parts.get("teeth"), parts.get("tongue"), float(mouth["cavity_shade"]))
+        mouth_report["shade"] = shade_mouth(
+            basemesh, parts.get("teeth"), parts.get("tongue"), float(mouth["cavity_shade"])
+        )
     for obj in objects:
         for polygon in obj.data.polygons:
             polygon.use_smooth = True
@@ -500,15 +552,28 @@ def build(preset: dict, out: str) -> dict:
     if total > budget:
         raise RecipeError(f"{total} triangles is over the budget of {budget}: {counts}")
 
-    shapes = {obj.name: [k.name for k in obj.data.shape_keys.key_blocks[1:]] if obj.data.shape_keys else [] for obj in objects}
+    shapes = {
+        obj.name: [k.name for k in obj.data.shape_keys.key_blocks[1:]] if obj.data.shape_keys else [] for obj in objects
+    }
     still = [kind for kind in MOVING_PARTS if kind in parts and not shapes[kind]]
 
     drop_normal_maps()
     workdir = tempfile.mkdtemp(prefix="argus-mask-head-")
     max_px = int(preset.get("max_texture_px", 2048))
-    gains = {image: float(gain) for kind, gain in (preset.get("texture_gain") or {}).items() if kind in parts for image in part_images(parts[kind])}
+    gains = {
+        image: float(gain)
+        for kind, gain in (preset.get("texture_gain") or {}).items()
+        if kind in parts
+        for image in part_images(parts[kind])
+    }
     textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains)
-    blended = {slot.material.name for kind in preset.get("blend_parts") or [] if kind in parts for slot in parts[kind].material_slots if slot.material}
+    blended = {
+        slot.material.name
+        for kind in preset.get("blend_parts") or []
+        if kind in parts
+        for slot in parts[kind].material_slots
+        if slot.material
+    }
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     bpy.ops.export_scene.gltf(
@@ -550,7 +615,9 @@ def build(preset: dict, out: str) -> dict:
         "mouth": mouth_report,
         "shape_scale": shape_scale,
         "textures": textures,
-        "materials": [{"name": m.get("name"), "alphaMode": m.get("alphaMode", "OPAQUE")} for m in doc.get("materials", [])],
+        "materials": [
+            {"name": m.get("name"), "alphaMode": m.get("alphaMode", "OPAQUE")} for m in doc.get("materials", [])
+        ],
         "extent_m": {"below_eyes": round(-lowest, 3), "above_eyes": round(highest, 3)},
         "bytes": os.path.getsize(out),
     }
@@ -570,19 +637,19 @@ def read_mpfb_version(mpfb) -> str:
 
 def main() -> None:
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
-    parser = argparse.ArgumentParser(prog="build_stock_head.py", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="build_head.py", description=__doc__.split("\n\n")[0])
     parser.add_argument("--preset", required=True, help="a recipe under scripts/stock_heads/")
     parser.add_argument("--out", required=True, help="the .glb to write")
     args = parser.parse_args(argv)
     try:
         recipe = build(load_preset(args.preset), args.out)
     except RecipeError as exc:
-        print(f"build_stock_head: {exc}", file=sys.stderr)
+        print(f"build_head: {exc}", file=sys.stderr)
         sys.exit(2)
     with open(os.path.splitext(args.out)[0] + ".recipe.json", "w", encoding="utf-8") as handle:
         json.dump(recipe, handle, indent=2)
         handle.write("\n")
-    print("build_stock_head: wrote", args.out)
+    print("build_head: wrote", args.out)
     print(json.dumps(recipe, indent=2))
 
 

@@ -258,7 +258,7 @@ class FaceStore:
         refused: dict[str, str] = {}
         if not self.root.is_dir():
             return accepted, refused
-        for directory in sorted(p for p in self.root.iterdir() if p.is_dir()):
+        for directory in sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")):
             try:
                 accepted.append(self.load(directory.name)[0])
             except FaceError as exc:

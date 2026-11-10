@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+import ast
+import asyncio
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+from starlette.testclient import TestClient
+
+from argus_mask.config import EditorSettings, Settings
+from argus_mask.editor.builder import SCRIPT, Builder, BuildError, Busy
+from argus_mask.editor.library import AssetLibrary
+from argus_mask.editor.preset import ADULT_AGE, Preset
+from argus_mask.faces import FaceStore
+from argus_mask.server.app import create_app
+from tests.helpers import make_face, make_glb
+
+REPO = Path(__file__).resolve().parent.parent
+STOCK_PRESETS = sorted((REPO / "scripts" / "stock_heads").glob("stock-*[0-9].json"))
+
+# Stands in for Blender: reads the argv build_head.py would get, and does what FAKE_BLENDER says.
+FAKE_BLENDER = """#!{python}
+import json, os, pathlib, sys, time
+argv = sys.argv[1:]
+log = os.environ.get("FAKE_BLENDER_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write(json.dumps({{"argv": argv, "user": os.environ.get("BLENDER_USER_RESOURCES")}}) + "\\n")
+mode = os.environ.get("FAKE_BLENDER", "ok")
+rest = argv[argv.index("--") + 1:]
+out = pathlib.Path(rest[rest.index("--out") + 1])
+if mode == "refuse":
+    print("build_head: phenotype.age is too young", file=sys.stderr); sys.exit(2)
+if mode == "crash":
+    print("Traceback: something broke", file=sys.stderr); sys.exit(3)
+if mode == "sleep":
+    time.sleep(30)
+if mode == "silent":
+    sys.exit(0)
+out.write_bytes(pathlib.Path(os.environ["FAKE_BLENDER_GLB"]).read_bytes())
+recipe = {{"blender": "4.5.15 LTS", "mpfb": "2.0.18", "triangles_total": 1, "bytes": out.stat().st_size}}
+out.with_suffix(".recipe.json").write_text(json.dumps(recipe))
+"""
+
+PACK = {
+    "s1": {"type": "skins", "license": "CC0", "author": "makehuman_system"},
+    "e1": {"type": "eyes", "license": "CC0", "author": "makehuman_system"},
+    "b1": {"type": "eyebrows", "license": "CC0", "author": "makehuman_system"},
+    "l1": {"type": "eyelashes", "license": "CC0", "author": "makehuman_system"},
+    "t1": {"type": "teeth", "license": "CC0", "author": "makehuman_system"},
+    "g1": {"type": "tongue", "license": "CC0", "author": "makehuman_system"},
+    "h1": {"type": "hair", "license": "CC0", "author": "makehuman_system"},
+}
+BY_PACK = {"h2": {"type": "hair", "license": "CC-BY 4.0", "author": "Some Artist"}}
+CLOTHES_PACK = {
+    "top1": {"type": "clothes", "license": "CC0", "author": "makehuman_system"},
+    "hat1": {"type": "clothes", "license": "CC0", "author": "makehuman_system"},
+    "shoes1": {"type": "clothes", "license": "CC0", "author": "makehuman_system"},
+}
+CLOTHES_TAGS = {"top1": ["Female", "Casual"], "hat1": ["Hats"], "shoes1": ["Shoes"]}
+
+
+def make_library(root: Path) -> Path:
+    """An MPFB data directory: licensed assets, one CC-BY hair, one unlicensed hair, and the face units."""
+    data = root / "mpfb" / "data"
+    dirs = {"skins": ["s1"], "eyes": ["e1"], "eyebrows": ["b1"], "eyelashes": ["l1"], "teeth": ["t1"]}
+    dirs |= {"tongue": ["g1"], "hair": ["h1", "h2", "rogue"]}
+    for directory, names in dirs.items():
+        for name in names:
+            sub = data / directory / name
+            sub.mkdir(parents=True)
+            (sub / f"{name}{'.mhmat' if directory == 'skins' else '.mhclo'}").write_text("# asset\n")
+            (sub / f"{name}.thumb").write_bytes(b"\x89PNG\r\n\x1a\nthumb")
+    for name, tags in CLOTHES_TAGS.items():
+        sub = data / "clothes" / name
+        sub.mkdir(parents=True)
+        (sub / f"{name}.mhclo").write_text("".join(f"tag {t}\n" for t in tags) + f"name {name}\n")
+        (sub / f"{name}.thumb").write_bytes(b"\x89PNG\r\n\x1a\nthumb")
+    (data / "eyes" / "materials").mkdir()  # eye colours: not an asset of the eyes part
+    (data / "packs").mkdir()
+    (data / "packs" / "system.json").write_text(json.dumps(PACK))
+    (data / "packs" / "by.json").write_text(json.dumps(BY_PACK))
+    (data / "packs" / "clothes.json").write_text(json.dumps(CLOTHES_PACK))
+    (data / "packs" / "faceunits01.json").write_text(json.dumps({"jawOpen": {"type": "target", "license": "CC0"}}))
+    return data
+
+
+def preset(**changes) -> dict:
+    body = {
+        "id": "my-face",
+        "name": "My face",
+        "phenotype": {
+            "gender": 0.0,
+            "age": 0.5,
+            "muscle": 0.5,
+            "weight": 0.5,
+            "proportions": 0.5,
+            "height": 0.5,
+            "cupsize": 0.5,
+            "firmness": 0.5,
+            "race": {"asian": 0.2, "caucasian": 0.6, "african": 0.2},
+        },
+        "assets": {
+            "skin": "skins/s1/s1.mhmat",
+            "eyes": "eyes/e1/e1.mhclo",
+            "eyebrows": "eyebrows/b1/b1.mhclo",
+            "eyelashes": "eyelashes/l1/l1.mhclo",
+            "teeth": "teeth/t1/t1.mhclo",
+            "tongue": "tongue/g1/g1.mhclo",
+            "hair": "hair/h1/h1.mhclo",
+        },
+        "mouth": {"tongue_flatten": 0.6, "upper_teeth_drop_mm": 2.5, "cavity_shade": 0.02},
+    }
+    body.update(changes)
+    return body
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    """A fake Blender, an asset library and an empty assets root."""
+    blender = tmp_path / "blender"
+    blender.write_text(FAKE_BLENDER.format(python=sys.executable))
+    blender.chmod(blender.stat().st_mode | stat.S_IXUSR)
+    glb = tmp_path / "fixture.glb"
+    glb.write_bytes(make_glb())
+    log = tmp_path / "blender.log"
+    monkeypatch.setenv("FAKE_BLENDER_GLB", str(glb))
+    monkeypatch.setenv("FAKE_BLENDER_LOG", str(log))
+    monkeypatch.setenv("FAKE_BLENDER", "ok")
+    user = tmp_path / "user"
+    data = make_library(tmp_path)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    editor = EditorSettings(blender=str(blender), blender_user=user, mpfb_data=data, build_timeout_s=20)
+    return {"editor": editor, "assets": assets, "log": log, "data": data}
+
+
+@pytest.fixture
+def client(rig):
+    from argus_mask.editor.app import create_editor_app
+
+    with TestClient(create_editor_app(Settings(assets_dir=rig["assets"]), rig["editor"])) as c:
+        yield c
+
+
+def calls(rig) -> list[dict]:
+    log: Path = rig["log"]
+    return [json.loads(ln) for ln in log.read_text().splitlines()] if log.exists() else []
+
+
+def leftovers(assets: Path) -> list[str]:
+    return [p.name for p in assets.iterdir() if p.name.startswith(".")]
+
+
+# ---- the preset ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", STOCK_PRESETS, ids=lambda p: p.stem)
+def test_the_stock_presets_are_valid_presets(path) -> None:
+    Preset.model_validate_json(path.read_text())
+
+
+def test_the_editor_and_the_recipe_agree_on_the_adult_line() -> None:
+    tree = ast.parse(SCRIPT.read_text())
+    values = [
+        node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "ADULT_AGE" for t in node.targets)
+    ]
+    assert values == [ADULT_AGE]
+
+
+def test_a_preset_below_the_adult_line_is_refused() -> None:
+    body = preset()
+    body["phenotype"]["age"] = 0.49
+    with pytest.raises(ValidationError, match="age"):
+        Preset.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "ref", ["skins/../../etc/passwd.mhmat", "/etc/s1.mhmat", "skins/s1/s1.blend", "skins/.hidden/x.mhmat"]
+)
+def test_an_asset_reference_is_a_plain_name_under_a_part(ref) -> None:
+    body = preset()
+    body["assets"]["skin"] = ref
+    with pytest.raises(ValidationError):
+        Preset.model_validate(body)
+
+
+def test_a_preset_has_no_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        Preset.model_validate(preset(script="import os"))
+
+
+# ---- the library ---------------------------------------------------------------------------
+
+
+def test_the_library_offers_only_assets_with_a_stated_licence(tmp_path) -> None:
+    library = AssetLibrary(make_library(tmp_path))
+    found = library.scan()
+    assert [a.name for a in found["hair"]] == ["h1", "h2"]  # "rogue" is in no pack
+    assert [a.name for a in found["eyes"]] == ["e1"]  # eyes/materials is not an eye mesh
+    assert found["skin"][0].ref == "skins/s1/s1.mhmat" and found["skin"][0].license == "CC0-1.0"
+    assert found["hair"][1].license == "CC-BY 4.0" and found["hair"][1].author == "Some Artist"
+    assert library.has_faceunits()
+
+
+def test_clothes_are_outfits_and_hats_and_never_shoes(tmp_path) -> None:
+    found = AssetLibrary(make_library(tmp_path)).scan()["clothes"]
+    assert [(a.name, a.slot) for a in found] == [("hat1", "hat"), ("top1", "outfit")]
+    assert found[1].ref == "clothes/top1/top1.mhclo" and found[1].public()["slot"] == "outfit"
+
+
+def test_clothes_are_each_listed_once_and_few() -> None:
+    body = preset()
+    body["assets"]["clothes"] = ["clothes/top1/top1.mhclo"] * 2
+    with pytest.raises(ValidationError, match="twice"):
+        Preset.model_validate(body)
+    body["assets"]["clothes"] = [f"clothes/c{i}/c{i}.mhclo" for i in range(4)]
+    with pytest.raises(ValidationError):
+        Preset.model_validate(body)
+
+
+def test_an_unconfigured_library_is_empty() -> None:
+    library = AssetLibrary(None)
+    assert all(v == [] for v in library.scan().values()) and not library.has_faceunits()
+
+
+# ---- building ------------------------------------------------------------------------------
+
+
+def test_a_build_becomes_a_face_the_server_serves(client, rig) -> None:
+    reply = client.post("/build", json=preset())
+    assert reply.status_code == 200, reply.text
+    manifest = reply.json()["manifest"]
+    assert manifest["id"] == "my-face" and manifest["provenance"]["kind"] == "synthetic"
+    assert manifest["provenance"]["license"] == "CC0-1.0"
+    assert "hair h1" in manifest["provenance"]["notes"] and "not a real person" in manifest["provenance"]["notes"]
+    assert len(manifest["blendshapes"]) == 52
+
+    face_dir = rig["assets"] / "my-face"
+    assert sorted(p.name for p in face_dir.iterdir()) == [
+        "head.glb",
+        "head.recipe.json",
+        "manifest.json",
+        "preset.json",
+    ]
+    assert leftovers(rig["assets"]) == []
+
+    # Blender got the recipe, the user directory and a non-zero exit on a Python error.
+    [call] = calls(rig)
+    assert call["argv"][:5] == ["-b", "--python-exit-code", "3", "-P", str(SCRIPT)]
+    assert call["user"] == str(rig["editor"].blender_user)
+
+    with TestClient(create_app(Settings(assets_dir=rig["assets"]))) as server:
+        assert [f["id"] for f in server.get("/faces").json()] == ["my-face"]
+    assert [p["id"] for p in client.get("/presets").json()] == ["my-face"]
+    assert client.get("/face/my-face/model").content[:4] == b"glTF"
+
+
+def test_a_cc_by_asset_is_in_the_licence(client) -> None:
+    body = preset()
+    body["assets"]["hair"] = "hair/h2/h2.mhclo"
+    manifest = client.post("/build", json=body).json()["manifest"]
+    assert manifest["provenance"]["license"] == "CC-BY 4.0 AND CC0-1.0"
+    assert "Some Artist" in manifest["provenance"]["notes"]
+
+
+def test_clothes_go_into_the_build_and_the_credits(client, rig) -> None:
+    body = preset()
+    body["assets"]["clothes"] = ["clothes/top1/top1.mhclo", "clothes/hat1/hat1.mhclo"]
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 200, reply.text
+    notes = reply.json()["manifest"]["provenance"]["notes"]
+    assert "clothes top1 (clothes, makehuman_system, CC0-1.0)" in notes and "clothes hat1" in notes
+    sent = json.loads((rig["assets"] / "my-face" / "preset.json").read_text())
+    assert sent["assets"]["clothes"] == body["assets"]["clothes"]
+
+
+@pytest.mark.parametrize("ref", ["clothes/shoes1/shoes1.mhclo", "clothes/nothere/nothere.mhclo", "hair/h1/h1.mhclo"])
+def test_clothes_not_in_the_library_never_reach_blender(client, rig, ref) -> None:
+    body = preset()
+    body["assets"]["clothes"] = [ref]
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 422 and "clothes" in reply.json()["detail"]
+    assert calls(rig) == []
+
+
+def test_hair_is_optional(client) -> None:
+    body = preset()
+    del body["assets"]["hair"]
+    assert client.post("/build", json=body).status_code == 200
+
+
+@pytest.mark.parametrize("ref", ["hair/rogue/rogue.mhclo", "hair/nothere/nothere.mhclo", "skins/s1/s1.mhmat"])
+def test_an_asset_not_in_the_library_never_reaches_blender(client, rig, ref) -> None:
+    body = preset()
+    body["assets"]["hair"] = ref
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 422 and "hair" in reply.json()["detail"]
+    assert calls(rig) == []
+
+
+def test_the_recipe_refusing_is_reported_and_leaves_nothing(client, rig, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_BLENDER", "refuse")
+    reply = client.post("/build", json=preset())
+    assert reply.status_code == 422 and reply.json()["detail"] == "phenotype.age is too young"
+    assert list(rig["assets"].iterdir()) == []
+
+
+@pytest.mark.parametrize("mode", ["crash", "silent"])
+def test_a_failed_build_leaves_nothing(client, rig, monkeypatch, mode) -> None:
+    monkeypatch.setenv("FAKE_BLENDER", mode)
+    reply = client.post("/build", json=preset())
+    assert reply.status_code == 500
+    assert list(rig["assets"].iterdir()) == []
+
+
+def test_a_failed_rebuild_keeps_the_face_that_was_there(client, rig, monkeypatch) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    monkeypatch.setenv("FAKE_BLENDER", "crash")
+    assert client.post("/build", json=preset()).status_code == 500
+    assert FaceStore(rig["assets"]).load("my-face")[0].id == "my-face"
+    assert leftovers(rig["assets"]) == []
+
+
+def test_a_rebuild_replaces_the_editors_own_face(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    reply = client.post("/build", json=preset(name="Renamed"))
+    assert reply.status_code == 200 and reply.json()["manifest"]["name"] == "Renamed"
+    assert FaceStore(rig["assets"]).load("my-face")[0].name == "Renamed"
+    assert leftovers(rig["assets"]) == []
+
+
+def test_the_editor_never_replaces_a_face_it_did_not_make(client, rig) -> None:
+    make_face(rig["assets"], "stock-01")
+    before = (rig["assets"] / "stock-01" / "manifest.json").read_text()
+    reply = client.post("/build", json=preset(id="stock-01"))
+    assert reply.status_code == 409 and "did not make" in reply.json()["detail"]
+    assert (rig["assets"] / "stock-01" / "manifest.json").read_text() == before
+    assert calls(rig) == []
+    assert client.get("/face/stock-01").status_code == 404  # nor shows it
+
+
+def test_a_cross_site_build_is_refused(client, rig) -> None:
+    reply = client.post("/build", json=preset(), headers={"Origin": "https://elsewhere.example"})
+    assert reply.status_code == 403
+    assert calls(rig) == []
+
+
+def test_a_read_only_editor_does_not_build(rig) -> None:
+    from argus_mask.editor.app import create_editor_app
+
+    app = create_editor_app(Settings(assets_dir=rig["assets"], read_only=True), rig["editor"])
+    with TestClient(app) as c:
+        assert c.post("/build", json=preset()).status_code == 403
+        assert c.get("/health").json()["read_only"] is True
+    assert calls(rig) == []
+
+
+def test_health_says_why_it_cannot_build(rig, tmp_path) -> None:
+    from argus_mask.editor.app import create_editor_app
+
+    for editor, why in [
+        (EditorSettings(blender=str(tmp_path / "no-blender"), mpfb_data=rig["data"]), "Blender not found"),
+        (EditorSettings(blender=rig["editor"].blender), "not set"),
+        (EditorSettings(blender=rig["editor"].blender, mpfb_data=tmp_path / "nowhere"), "does not exist"),
+    ]:
+        with TestClient(create_editor_app(Settings(assets_dir=rig["assets"]), editor)) as c:
+            health = c.get("/health").json()
+            assert health["ready"] is False and why in health["reason"]
+            assert c.post("/build", json=preset()).status_code in (422, 500)
+
+
+def test_library_routes(client) -> None:
+    library = client.get("/library").json()
+    assert [a["name"] for a in library["hair"]] == ["h1", "h2"]
+    assert client.get("/library/hair/h1/thumb").content.startswith(b"\x89PNG")
+    assert client.get("/library/clothes/top1/thumb").status_code == 200
+    assert client.get("/library/clothes/shoes1/thumb").status_code == 404
+    assert [a["slot"] for a in library["clothes"]] == ["hat", "outfit"]
+    for bad in ["/library/hair/rogue/thumb", "/library/nope/h1/thumb", "/library/hair/..%2F..%2Fpacks/thumb"]:
+        assert client.get(bad).status_code == 404
+
+
+def test_the_page_and_three_are_served(client) -> None:
+    assert "Face editor" in client.get("/").text
+    assert client.get("/editor.js").status_code == 200
+    assert client.get("/vendor/three.module.js").status_code == 200
+
+
+# ---- the builder on its own ----------------------------------------------------------------
+
+
+def builder_for(rig, **kw) -> Builder:
+    ed = rig["editor"]
+    return Builder(
+        blender=ed.blender,
+        blender_user=ed.blender_user,
+        library=AssetLibrary(ed.data_dir),
+        assets_dir=rig["assets"],
+        **kw,
+    )
+
+
+async def test_one_build_at_a_time(rig, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_BLENDER", "sleep")
+    builder = builder_for(rig, timeout_s=5)
+    first = asyncio.create_task(builder.build(Preset.model_validate(preset())))
+    await asyncio.sleep(0.2)
+    with pytest.raises(Busy):
+        await builder.build(Preset.model_validate(preset(id="other")))
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert leftovers(rig["assets"]) == []
+
+
+async def test_a_build_that_hangs_is_stopped(rig, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_BLENDER", "sleep")
+    builder = builder_for(rig, timeout_s=0.5)
+    with pytest.raises(BuildError, match="was stopped"):
+        await builder.build(Preset.model_validate(preset()))
+    assert not builder.busy and list(rig["assets"].iterdir()) == []
+
+
+def test_editor_settings_from_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("BLENDER_USER_RESOURCES", raising=False)
+    monkeypatch.setenv("ARGUS_MASK_BLENDER_USER", str(tmp_path))
+    ed = EditorSettings.from_env()
+    assert ed.data_dir == tmp_path / "extensions/.user/user_default/mpfb/data"
+    monkeypatch.setenv("ARGUS_MASK_BUILD_TIMEOUT_S", "1")
+    with pytest.raises(ValueError, match="between"):
+        EditorSettings.from_env()
+    assert os.environ["ARGUS_MASK_BLENDER_USER"] == str(tmp_path)

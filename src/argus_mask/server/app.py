@@ -107,19 +107,8 @@ class _DriverProbe:
         self._at = float("-inf")
 
 
-def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
-    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
-    cfg = settings or Settings.from_env()
-    driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
-    store = FaceStore(cfg.assets_dir)
-    stages: dict[str, Stage] = {}
-    app = FastAPI(
-        title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
-    )
-    app.state.settings = cfg
-    app.state.driver = driver
-    app.state.stages = stages
-
+def install_guards(app: FastAPI, cfg: Settings) -> Callable:
+    """The write guards and CORS every mask app uses. Returns the origin predicate, for the sockets to call."""
     wildcard = "*" in cfg.cors_origins
     named = [o for o in cfg.cors_origins if o != "*"]
     origin_refusal = cross_site_refuse(named)
@@ -134,6 +123,23 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    return origin_refusal
+
+
+def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
+    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
+    cfg = settings or Settings.from_env()
+    driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
+    store = FaceStore(cfg.assets_dir)
+    stages: dict[str, Stage] = {}
+    app = FastAPI(
+        title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
+    )
+    app.state.settings = cfg
+    app.state.driver = driver
+    app.state.stages = stages
+
+    origin_refusal = install_guards(app, cfg)
 
     def stage_for(face_id: str) -> Stage:
         return stages.setdefault(face_id, Stage(face_id))
