@@ -800,7 +800,7 @@ def on_screen(rig):
 
     make_face(rig["assets"], "stock-01")
 
-    def editor(server_url: str, *, read_only: bool = False, **server):
+    def editor(server_url: str):
         ed = replace(rig["editor"], server_url=server_url, viewer_url="https://mask.example.org")
         return TestClient(create_editor_app(Settings(assets_dir=rig["assets"]), ed))
 

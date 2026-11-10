@@ -61,6 +61,8 @@ export function openScreen(faceId, name = faceId) {
   const opts = { ...DEFAULTS, ...store.get('screen', {}) };
   let viewer = '';
   let server = '';
+  let listed = false;
+  let readOnly = false;
 
   const stateBox = el('div', { className: 'state' }, el('span', { textContent: 'Asking the server…' }));
   const display = el('select', {}, ...['flat', 'hld'].map((v) => el('option', { value: v, textContent: v === 'hld' ? 'hld (portrait panel)' : 'flat' })));
@@ -111,7 +113,9 @@ export function openScreen(faceId, name = faceId) {
   copyBtn.onclick = copy(link, copyBtn);
   sayBtn.onclick = copy(say, sayBtn);
   qrBtn.onclick = () => { qrBox.hidden = !qrBox.hidden; if (!qrBox.hidden) drawQr(); };
+  let testing = false;
   testBtn.onclick = async () => {
+    testing = true;
     testBtn.disabled = true;
     testNote.textContent = 'Sending…';
     try {
@@ -120,7 +124,8 @@ export function openScreen(faceId, name = faceId) {
     } catch (err) {
       testNote.textContent = err.message;
     } finally {
-      testBtn.disabled = false;
+      testing = false;
+      testBtn.disabled = !listed || readOnly;
     }
   };
 
@@ -144,8 +149,11 @@ export function openScreen(faceId, name = faceId) {
   const poll = async () => {
     let s;
     try { s = await json(`/screen/${encodeURIComponent(faceId)}`); } catch (err) { s = { hint: err.message }; }
+    const changed = (s.viewer || viewer) !== viewer || (s.server || server) !== server;
     viewer = s.viewer || viewer;
     server = s.server || server;
+    listed = Boolean(s.listed);
+    readOnly = Boolean(s.read_only);
     const lines = [];
     if (s.server_ok) lines.push(el('span', { className: 'ok', textContent: `Server ${s.server}: up${s.read_only ? ', read-only (it will not speak)' : ''}` }));
     if (s.listed) {
@@ -153,15 +161,19 @@ export function openScreen(faceId, name = faceId) {
       lines.push(el('span', { className: t.ready ? 'ok' : 'warn', textContent: t.text }));
     }
     if (s.hint) lines.push(el('span', { className: 'bad', textContent: s.hint }));
+    if (viewer && /^https?:\/\/(127\.|localhost\b|\[::1\])/.test(viewer)) {
+      lines.push(el('span', { className: 'warn', textContent: `The link opens ${viewer}: only this machine can reach it. Start the editor with --viewer-url for a screen on the LAN.` }));
+    }
     stateBox.replaceChildren(...lines);
     for (const b of [openBtn, copyBtn, qrBtn]) b.disabled = !s.listed;
-    testBtn.disabled = !s.listed || s.read_only;
-    refresh();
+    if (!testing) testBtn.disabled = !listed || readOnly;
+    if (changed) refresh();
   };
   const close = () => { clearTimeout(timer); timer = null; dialog.close(); dialog.remove(); };
   closeBtn.onclick = close;
   dialog.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   const loop = async () => { await poll(); if (dialog.isConnected) timer = setTimeout(loop, 2000); };
   dialog.showModal();
+  refresh();
   loop();
 }

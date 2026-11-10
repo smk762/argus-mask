@@ -377,7 +377,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             # A viewer says only what state it is in (ViewerStatus); anything else, or too big, is ignored.
             while (message := await ws.receive())["type"] != "websocket.disconnect":
                 text = message.get("text")
-                if not text or len(text) > MAX_STATUS_BYTES:
+                if not text or len(text) > MAX_STATUS_BYTES or len(text.encode()) > MAX_STATUS_BYTES:
                     continue
                 try:
                     status = ViewerStatus.model_validate_json(text)

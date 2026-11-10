@@ -176,6 +176,7 @@ function unlockAudio() {
     }
     if (state.audio !== was) report();
   };
+  audio.onstatechange = settle;   // suspended later (an interruption, a hidden tab): say so, not "ready"
   audio.resume().then(settle, settle);
   settle();
 }
@@ -282,10 +283,13 @@ function announce() {
 }
 
 // The one gesture a browser needs: sound on, and full screen (a page cannot ask for either unprompted).
+// Outside a kiosk, only the gesture that turns sound on goes full screen: a later tap must not pull
+// back into full screen someone who left it.
 function start() {
+  const first = state.audio !== 'running';
   unlockAudio();
   const root = document.documentElement;
-  if (!document.fullscreenElement && root.requestFullscreen) root.requestFullscreen().catch(() => {});
+  if ((first || KIOSK) && !document.fullscreenElement && root.requestFullscreen) root.requestFullscreen().catch(() => {});
 }
 
 // ---- drawing -------------------------------------------------------------------------------

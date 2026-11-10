@@ -267,16 +267,17 @@ def create_editor_app(
     async def on_server(face_id: str) -> dict:
         """What the server says about a face: is it up, does it list the face, which screens watch it."""
         status, health, why = await asyncio.to_thread(server_get, ed.server_url, "/health")
+        up = status == 200 and isinstance(health, dict)
         out = {
             "server": ed.server_url,
             "viewer": ed.viewer,
-            "server_ok": status == 200,
-            "reason": why,
-            "read_only": bool(health and health.get("read_only")),
+            "server_ok": up,
+            "reason": why if why or up else f"{ed.server_url}/health is not an argus-mask server's",
+            "read_only": bool(up and health.get("read_only")),
             "listed": False,
             "screens": [],
         }
-        if status == 200 and isinstance(health, dict):
+        if up:
             out["screens"] = (health.get("screens") or {}).get(face_id, [])
             listed, _, _ = await asyncio.to_thread(server_get, ed.server_url, f"/face/{face_id}")
             out["listed"] = listed == 200

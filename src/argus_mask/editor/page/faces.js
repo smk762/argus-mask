@@ -139,6 +139,7 @@ async function watchScreens() {
     line.textContent = t.text;
     line.className = `meta screens${t.ready ? ' ready' : ''}`;
   }
+  clearTimeout(screensTimer);   // again: a load() during the await started its own round
   screensTimer = setTimeout(watchScreens, 4000);
 }
 
