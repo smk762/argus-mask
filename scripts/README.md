@@ -58,7 +58,7 @@ argus-mask inspect assets/stock-01/head.glb --write-manifest \
     --source "Built with scripts/build_stock_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets and faceunits01" \
     --license "CC0-1.0" \
     --distance 0.9 --height -0.08 \
-    --notes "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person."
+    --notes "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out."
 ```
 
 `--distance` and `--height` set the camera framing; the default (0.6 m) is too close for a bust. The model's origin is on the centre line at eye height, halfway through the skull, and the face looks down +Z. A rebuild changes the model's sha256, so write the manifest again after each one.
@@ -79,6 +79,13 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | `max_texture_px` | Cap for opaque textures, stored as JPEG. |
 | `max_alpha_texture_px` | Cap for textures with real transparency (hair, lashes, brows), stored as PNG. |
 | `max_triangles` | The build fails above this. |
+| `mouth.tongue_flatten` | Squashes the tongue's rest shape toward its underside: 1 leaves it, 0.6 makes it 60% as tall. Setting this (or `tongue_drop_mm`) also makes the whole tongue drop with its tip under `jawOpen`. |
+| `mouth.tongue_drop_mm` | Lowers the tongue's rest shape by this much more. |
+| `mouth.upper_teeth_drop_mm` | Lowers the upper teeth, so their edge shows below the upper lip in an open mouth. |
+| `mouth.cavity_shade` | How dark the back of the mouth gets, as a multiplier on its texture (0.02 is nearly black). Leave it out for no shading. |
+| `shape_scale` | Face shapes to exaggerate or soften, by name: `{"mouthPucker": 1.5}` moves every vertex 1.5 times as far. |
+| `texture_gain` | Brightness multiplier for a part's texture, by part: `{"teeth": 1.3}`. |
+| `blend_parts` | Parts whose transparency stays blended (soft edges) instead of becoming a cut-out. Only for parts that lie flat on the skin: `["eyebrows", "eyelashes"]`. |
 
 **Adults only.** `phenotype.age` below 0.5 is refused. On MakeHuman's scale 0.5 is about 25 years and 0.35 about 18, but below 0.5 the mesh blends in the child target, so the recipe starts at the young-adult target and goes no lower.
 
@@ -88,7 +95,18 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 - Removes MakeHuman's helper geometry, cuts the bust with three planes, and centres the head.
 - Converts opaque textures to JPEG and drops normal maps.
 - Exports without Draco, meshopt or KTX2, with sparse morph targets and no morph normals.
-- Rewrites blended materials as alpha cut-outs (`MASK`, cutoff 0.35). Blended hair and lashes sort wrongly against the face in a real-time renderer.
+- Rewrites blended materials as alpha cut-outs (`MASK`, cutoff 0.35), because blended hair sorts wrongly against itself and the face in a real-time renderer. Parts listed in `blend_parts` stay blended.
+- Fixes the mouth, which MakeHuman's assets leave wrong for speech (see below).
+
+## The mouth
+
+As MPFB fits them, three things make an open mouth look wrong, and the `mouth` settings correct each:
+
+- **The tongue fills the opening.** MakeHuman's tongue is a dome as tall as the palate, higher than the lower teeth all the way round. The jaw shapes reach it as the jaw's own rotation, so its back half, near the hinge, barely moves when the mouth opens. Seen from the front, the dome still reaches the upper lip. The recipe flattens the rest shape so it lies below the crowns of the lower teeth, and under `jawOpen` moves the whole tongue as its tip moves. `tongueOut` keeps the full, raised shape MPFB gave it.
+- **The upper teeth never show.** Their edge sits level with the lip's, while the lower teeth stand clear of the lower lip, so only lower teeth are seen. The recipe lowers the upper teeth.
+- **The back of the mouth is lit like a cheek.** The viewer has no shadows. The recipe writes a vertex colour that darkens the head's mouth lining, the molars and the back of the tongue with depth behind the lips. It finds the lining by casting rays forward from the vertices around the mouth: the ones that hit the face are inside.
+
+The lips are slightly parted at rest, and a thin line of teeth shows through. That is MakeHuman's neutral face, not something the recipe adds.
 
 ## Licences of what goes into `stock-01`
 

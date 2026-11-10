@@ -203,8 +203,14 @@ def say(
     tts_url: str = Option("", "--tts-url", help="The TTS stream endpoint; default: ARGUS_MASK_TTS_URL"),
     param: list[str] = Option([], "--param", "-p", help="Extra field for the TTS request, key=value (repeatable)"),
     seed: int = Option(0, "--seed", help="Seed of the idle layer"),
+    stream: bool = Option(
+        False, "--stream", help="Forward audio as the TTS generates it (only for a service faster than real time)"
+    ),
 ) -> None:
-    """Speak text through a TTS service into a running server. The text goes to that service and nowhere else."""
+    """Speak text through a TTS service into a running server. The text goes to that service and nowhere else.
+
+    The whole utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
+    """
     from argus_mask import client
 
     body: dict[str, object] = {}
@@ -226,7 +232,9 @@ def say(
                     tts_url or _settings().tts_url,
                     body,
                     seed=seed,
+                    stream=stream,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
+                    on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
                 )
             )
         )

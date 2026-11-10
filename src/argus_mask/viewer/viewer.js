@@ -5,6 +5,7 @@
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
 //   ?bg=<css colour> background for the flat tier, or "transparent"
 //   ?hud=0           hide the status line
+//   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -13,7 +14,8 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
-const BUFFER_S = 0.25;        // how far behind arrival the audio plays; absorbs network jitter
+const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
+const BUFFER_S = Math.min(2, Math.max(0.05, (Number.isFinite(BUFFER_MS) ? BUFFER_MS : 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
 const RESYNC_S = 0.05;        // after an underrun, how soon the late audio starts
 const RELAX_PER_S = 6;        // how fast the face settles when a stream ends
 const HLD = { width: 1080, height: 1920 };

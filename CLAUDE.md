@@ -26,6 +26,10 @@ Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus) (`
 - `viewer/`: the static viewer (`index.html`, `viewer.js`) and vendored three.js. No build step.
 - `cli.py`: Typer app; entry point `argus-mask`.
 
+`a2f/` is the Audio2Face server: a separate Docker image, not part of the Python package, not linted or tested by CI. `server.py` (Python, the network) supervises `worker/main.cpp` (C++, the SDK). Its contract is the protocol in `drivers/a2f.py`'s docstring; `a2f/check.py` checks a running container against it. Read `a2f/README.md` before building: the build needs about 25 GB of free Docker disk.
+
+`scripts/` holds the stock head recipe (a Blender script, not importable here) and `fetch_stock_head.py`.
+
 `tests/helpers.py` builds every fixture in code: a one-triangle `.glb`, tone WAVs, a fake Audio2Face server, a fake TTS service, and `live_server()` for clients that need a real port.
 
 ## Commands
@@ -51,6 +55,7 @@ Run one test: `uv run --no-sync pytest tests/test_x.py::test_name -q`.
 - **Mask never falls back from `a2f` to `energy`.** A down driver refuses the source with the reason. A silent downgrade would look like a bad model.
 - **The server's own process uses no GPU**, so it does not take cortex's GPU lease. The Audio2Face server is a tenant outside the lease, like ComfyUI.
 - **WebSockets are outside `WriteGuard` and CORS.** Both sockets call the same `cross_site_refuse` predicate by hand (`cross_site()` in `server/app.py`). A new socket route must do the same.
+- **Audio is held until frames cover it** (`held` / `release()` in the source handler). Drivers answer late; sending audio on arrival would put the sound ahead of the mouth by the driver's lag.
 - **Free the face before telling the source it is done** (`stage.claimed = False`, then send `done`), or a source that reconnects at once is told the face is taken.
 - **The viewer handler uses an anyio task group, not bare asyncio tasks.** Bare tasks made the test client raise `CancelledError` on exit about one run in three.
 - **Faces carry provenance or are not served.** `curated` is refused until spec.md's 0.3 work defines it. No real person's face or voice goes in the repo or the tests.

@@ -14,12 +14,11 @@ audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN devic
 
 ## Status
 
-Built and tested: the engine, the `energy` driver, faces, the server, the viewer's `flat` and `hld` tiers, and the CLI.
+Built and tested: the engine, both drivers, faces, the server, the viewer's `flat` and `hld` tiers, the CLI, and the Audio2Face server in [a2f/](a2f/README.md).
 
-Not built yet:
+Not built yet: the Looking Glass Go tier (0.2), and faces built from argus-curator output (0.3).
 
-- **The Audio2Face server** (`a2f/`). The `a2f` driver is its client and is tested against a fake. Until the server exists, the only driver that runs is `energy`, which moves the mouth from loudness and nothing more.
-- **The Looking Glass Go tier** (0.2), and faces built from argus-curator output (0.3).
+Not yet seen by a person: the stock head speaking on a real screen with sound. Its mouth was tuned from still frames of real Audio2Face output.
 
 ## Quick start
 
@@ -34,6 +33,16 @@ Open `http://127.0.0.1:8109/`, click once to allow sound, then from another term
 ```bash
 uv run argus-mask push hello.wav --face stock-01
 ```
+
+That uses the `energy` driver, which moves the mouth from loudness and nothing more. For real lip sync, run the Audio2Face server (an NVIDIA GPU with about 1 GB of VRAM to spare) and point mask at it:
+
+```bash
+docker build -t argus-mask-a2f a2f/      # once; see a2f/README.md for what it needs
+docker run -d --name a2f --gpus all -p 127.0.0.1:8110:8110 -v a2f-data:/data argus-mask-a2f
+ARGUS_MASK_DRIVER=a2f ARGUS_MASK_A2F_URL=http://127.0.0.1:8110 uv run argus-mask serve --assets-dir assets
+```
+
+Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a2f` and `A2F_URL=http://a2f:8110` in `.env`.
 
 ## Commands
 
@@ -80,8 +89,9 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
 | `hud` | `0` hides the status line |
+| `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
 
-Lip sync runs on the page's audio clock: audio plays 250 ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
+Lip sync runs on the page's audio clock: audio plays `buffer` ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
 
 Browsers start audio only after a click or key press. A kiosk can waive that; for Chromium, start it with `--autoplay-policy=no-user-gesture-required`.
 
@@ -109,9 +119,18 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 
+## Drivers
+
+| Driver | Needs | What you get |
+|---|---|---|
+| `energy` | nothing | The jaw opens with loudness and the mouth widens on hissy sounds. No lip shapes. For tests and for hosts with no NVIDIA GPU. |
+| `a2f` | the [Audio2Face server](a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
+
+Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances and a slow head sway, from a seed, so a take replays identically.
+
 ## Speech from a TTS service
 
-`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL` and streams the reply into the face. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL`, waits for the whole reply, then plays it into the face at the speed of speech. The wait is deliberate: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
@@ -124,7 +143,7 @@ argus-mask say "Hello from the other side of the room." --face my-head -p emotio
 
 - one `header` (JSON): session, fps, seed, the order of the blendshape weights, the audio format;
 - `frame` messages (JSON): `seq`, `t_ms` on the audio timeline, `weights`, `head` rotation in degrees;
-- audio chunks (binary): 8 bytes of little-endian float64 giving the chunk's start in ms, then mono `f32le` PCM;
+- audio chunks (binary): 8 bytes of little-endian float64 giving the chunk's start in ms, then mono `f32le` PCM. The server sends a chunk only once frames reach its end, so a driver that answers late delays the sound, never the mouth;
 - one `end` (JSON).
 
 A take file is the same header, frames and end, one JSON object per line.
@@ -140,7 +159,7 @@ make lint
 make schema    # after changing models.py
 ```
 
-Tests use fake Audio2Face and TTS services and a one-triangle `.glb` built in code. The viewer is not covered by CI; check it by hand with `argus-mask push`.
+Tests use fake Audio2Face and TTS services and a one-triangle `.glb` built in code. The viewer is not covered by CI; check it by hand with `argus-mask push`. The real Audio2Face server has its own live check, `a2f/check.py`, run by hand against a running container.
 
 ## CI / Release
 

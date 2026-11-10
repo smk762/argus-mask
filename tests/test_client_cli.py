@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 
@@ -10,6 +11,7 @@ from argus_mask import client
 from argus_mask.cli import app
 from argus_mask.config import ConfigError, Settings
 from argus_mask.drivers import DriverError, build_driver
+from argus_mask.performance import blocks
 from argus_mask.server.app import create_app
 from tests.helpers import fake_a2f, fake_tts, live_server, make_face, make_glb, tone, write_wav
 
@@ -86,6 +88,30 @@ def test_push_plays_a_file_into_a_running_server(server, tmp_path) -> None:
     assert refused.exit_code == 1 and "no face 'nobody'" in refused.output
 
 
+async def test_a_source_paces_from_its_first_chunk_not_from_connecting(tmp_path, monkeypatch) -> None:
+    """A TTS model is slow to produce its first audio; the rest must still go out at the speed of speech."""
+    import time
+
+    from argus_mask.models import AudioFormat
+
+    monkeypatch.setattr(client, "LEAD_S", 0.2)
+    make_face(tmp_path / "assets", "test-head")
+    with live_server(create_app(Settings(assets_dir=tmp_path / "assets"))) as url:
+        sent_at: list[float] = []
+
+        async def slow_start():
+            await asyncio.sleep(0.5)  # the "model" thinking
+            for block in blocks(tone(1.0, 16000), 16000):
+                sent_at.append(time.monotonic())
+                yield block.astype("<f4").tobytes()
+
+        done = await client.send(url, "test-head", AudioFormat(sample_rate=16000), slow_start())
+    assert done["frames"] == 30
+    # 1.0 s of audio with a 0.2 s lead takes about 0.8 s to send once the first chunk is out. Before the
+    # fix, the 0.5 s wait counted as time already spent and everything went out at once.
+    assert sent_at[-1] - sent_at[0] > 0.6
+
+
 def test_say_streams_tts_audio_into_the_server(server) -> None:
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
         result = runner.invoke(
@@ -106,8 +132,13 @@ def test_say_streams_tts_audio_into_the_server(server) -> None:
             ],
         )
     assert result.exit_code == 0, result.output
-    assert "done: 30 frames, 1.00s" in result.output  # the audio arrived whole, at the rate the service stated
+    assert "speech: 1.00s, playing" in result.output and "done: 30 frames, 1.00s" in result.output
     assert seen == [{"speed": 1.1, "emotion": "calm", "text": "Hello there."}]
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, _):
+        streamed = runner.invoke(
+            app, ["say", "Hello again.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
+        )
+    assert streamed.exit_code == 0 and "done: 30 frames, 1.00s" in streamed.output
 
 
 def test_say_reports_a_tts_error_and_a_missing_url(server, monkeypatch) -> None:

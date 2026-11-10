@@ -129,12 +129,15 @@ def free_port() -> int:
 
 
 @contextmanager
-def fake_a2f(*, names: list[str] | None = None, fail_after: int | None = None, fps: int = 30) -> Iterator[str]:
+def fake_a2f(
+    *, names: list[str] | None = None, fail_after: int | None = None, lag_frames: int = 0, stall: bool = False
+) -> Iterator[str]:
     """An Audio2Face server speaking the ``/drive`` protocol. jawOpen follows the frame number.
 
     ``names`` is the blendshape order it announces (default: ARKit's, reversed, so a
     client that ignores the order is caught). ``fail_after`` makes it send an error
-    after that many frames.
+    after that many frames. ``lag_frames`` holds its answers that many frames behind
+    the audio, as the real model does; ``stall`` makes it answer nothing until the end.
     """
     import websockets
     from websockets.http11 import Response
@@ -178,7 +181,7 @@ def fake_a2f(*, names: list[str] | None = None, fail_after: int | None = None, f
         async for message in ws:
             if isinstance(message, bytes):
                 have += len(message) // 4
-                if not await emit(have * rate_fps // rate):
+                if not stall and not await emit(max(0, have * rate_fps // rate - lag_frames)):
                     return
             elif json.loads(message).get("end"):
                 if await emit(-(-have * rate_fps // rate)):

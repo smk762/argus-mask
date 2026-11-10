@@ -22,6 +22,10 @@
     "hair": "hair/short02/short02.mhclo"
   },
   "bust": {"height_m": 0.40, "half_width_m": 0.23},
+  "mouth": {"tongue_flatten": 0.6, "tongue_drop_mm": 0.0, "upper_teeth_drop_mm": 2.5, "cavity_shade": 0.02},
+  "shape_scale": {"mouthPucker": 1.5},
+  "texture_gain": {"teeth": 1.3},
+  "blend_parts": ["eyebrows", "eyelashes"],
   "max_texture_px": 2048,
   "max_alpha_texture_px": 1024,
   "max_triangles": 30000
