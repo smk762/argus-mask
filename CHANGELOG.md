@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The viewer's audio buffer is tunable (`?buffer=<ms>`, default 250).
 - The stock head lock points at revision 2 of `stock-01`, with the mouth fixes.
 
+- **`say` speaks Wyoming** (`--tts-url wyoming://host:port`, `-p voice=…`), the protocol of Home Assistant's TTS
+  servers and agent-composer's XTTS and Miso bridges, beside the HTTP PCM stream it already understood.
+- `say` says it is waiting for the TTS service, and Ctrl-C stops the wait at once instead of hanging on the socket.
+
 ### Fixed
 
 - **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the

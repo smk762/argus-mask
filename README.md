@@ -130,11 +130,18 @@ Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances 
 
 ## Speech from a TTS service
 
-`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL`, waits for the whole reply, then plays it into the face at the speed of speech. The wait is deliberate: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+`say` asks a TTS service for the speech and plays it into the face at the speed of speech. The whole utterance is fetched first: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated, and Ctrl-C stops the wait at once. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+
+Two kinds of service, told apart by the URL:
+
+- **`http(s)://…`**: an endpoint that takes `{"text": …}` and streams raw PCM, stating the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Miso TTS's `/synthesise/stream` is one. Extra request fields go in with `-p key=value`.
+- **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p voice=<name>` picks the voice (`-p language=…` and `-p speaker=…` also pass through). Audio must be 16-bit.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
-argus-mask say "Hello from the other side of the room." --face my-head -p emotion=neutral
+argus-mask say "Hello from the other side of the room." --face stock-01 -p emotion=neutral
+
+argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 -p "voice=Claribel Dervla"
 ```
 
 ## Wire

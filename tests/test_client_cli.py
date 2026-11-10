@@ -13,7 +13,7 @@ from argus_mask.config import ConfigError, Settings
 from argus_mask.drivers import DriverError, build_driver
 from argus_mask.performance import blocks
 from argus_mask.server.app import create_app
-from tests.helpers import fake_a2f, fake_tts, live_server, make_face, make_glb, tone, write_wav
+from tests.helpers import fake_a2f, fake_tts, fake_wyoming, live_server, make_face, make_glb, tone, write_wav
 
 runner = CliRunner()
 
@@ -186,3 +186,33 @@ def test_settings_reject_an_unknown_driver_and_read_the_environment(monkeypatch)
     cfg = Settings.from_env()
     assert (cfg.driver, cfg.fps, cfg.read_only) == ("a2f", 60, True)
     assert cfg.cors_origins == ("https://mask.example", "http://localhost:3000")
+
+
+async def test_cancelling_say_while_the_tts_thinks_returns_at_once(server) -> None:
+    """Ctrl-C must not leave the process waiting on the TTS socket until the service gives up."""
+    import time
+
+    with fake_tts(tone(1.0), stall_s=5.0) as (tts_url, _):
+        task = asyncio.ensure_future(client.say(server, "test-head", tts_url, {"text": "slow"}))
+        await asyncio.sleep(0.4)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The cut socket ends the reader thread at once; `_cancellable` would otherwise wait up to 2 s for it.
+        assert time.monotonic() - started < 1.0
+
+
+def test_say_speaks_through_a_wyoming_server(server) -> None:
+    with fake_wyoming(tone(1.0, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", "Hello there.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "voice=0"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "speech: 1.00s, playing" in result.output and "done: 30 frames, 1.00s" in result.output
+    assert seen == [{"text": "Hello there.", "voice": {"name": "0"}}]
+    with fake_wyoming(tone(0.5), error="no such voice") as (tts_url, _):
+        failed = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert failed.exit_code == 1 and "no such voice" in failed.output
+    bad = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", "ftp://x"])
+    assert bad.exit_code == 1 and "wyoming://" in bad.output

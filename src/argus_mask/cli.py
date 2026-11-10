@@ -193,6 +193,8 @@ def push(
         )
     except (AudioError, OSError, client.ClientError) as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
 
 
 @app.command()
@@ -235,11 +237,16 @@ def say(
                     stream=stream,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
                     on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
+                    on_wait=lambda: typer.echo(
+                        "waiting for the TTS service (a cold model takes a minute or two)", err=True
+                    ),
                 )
             )
         )
     except client.ClientError as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
 
 
 @app.command()
