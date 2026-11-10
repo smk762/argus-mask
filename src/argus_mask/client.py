@@ -29,6 +29,8 @@ from argus_mask.performance import blocks
 
 LEAD_S = 1.0  # how far ahead of real time a source may run
 TTS_TIMEOUT_S = 180.0  # the first byte waits for a cold model to load
+SAY_LEAD_MS = 150  # silence before a TTS utterance: the output device is awake before the first sound
+SAY_TAIL_MS = 300  # silence after: the mouth closes while the sound is still live, and nothing clips the last word
 _FORMATS = {"pcm_f32le": "f32le", "f32le": "f32le", "pcm_s16le": "s16le", "s16le": "s16le"}
 
 
@@ -291,6 +293,26 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
     return WyomingReply(sock, fmt, buffer)
 
 
+def voiced(body: dict, voice: str, tts_url: str) -> dict:
+    """*body* with *voice* as its voice, unless it already names one.
+
+    A Wyoming server takes a voice name as it is. The HTTP contract has two fields: ``speaker``
+    for one of the service's own speakers (Miso numbers them) and ``voice_clone_id`` for a
+    stored clone. A number goes to the first, any other name to the second, with the
+    ``clone:`` prefix agent-composer's bridges use dropped, so the same name works on both.
+    """
+    if not voice or any(k in body for k in ("voice", "name", "speaker", "voice_clone_id")):
+        return body
+    body = dict(body)
+    if tts_url.startswith("wyoming://"):
+        body["voice"] = voice
+    elif voice.isdigit():
+        body["speaker"] = voice
+    else:
+        body["voice_clone_id"] = voice.removeprefix("clone:")
+    return body
+
+
 def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
     """Ask the TTS service at *tts_url* for *body*'s speech; the reply, with the audio format it declared."""
     if tts_url.startswith("wyoming://"):
@@ -374,15 +396,21 @@ async def say(
     fmt = reply.fmt
     frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
     block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+    # TTS models start speaking on their first sample. A little silence either side gives the output
+    # device time to wake before the first sound, and the mouth time to close before the stream ends.
+    lead = bytes(fmt.sample_rate * SAY_LEAD_MS // 1000 * frame_bytes)
+    tail = bytes(fmt.sample_rate * SAY_TAIL_MS // 1000 * frame_bytes)
 
     if stream:
 
         async def streamed() -> AsyncIterator[bytes]:
+            yield lead
             try:
                 while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
                     yield data
             except OSError as exc:
                 raise ClientError(f"the TTS stream broke: {exc}") from exc
+            yield tail
 
         try:
             return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
@@ -403,8 +431,10 @@ async def say(
         on_audio(len(whole) / frame_bytes / fmt.sample_rate)
 
     async def buffered() -> AsyncIterator[bytes]:
+        yield lead
         for start in range(0, len(whole), block):
             yield whole[start : start + block]
+        yield tail
 
     return await send(base, face_id, fmt, buffered(), seed=seed, on_ready=on_ready)
 

@@ -30,7 +30,7 @@ if (params.get('hud') === '0') hudEl.hidden = true;
 // What a test (or a curious operator in the console) can read.
 const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
-  streamsEnded: 0, underruns: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
+  streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
 };
 
 function notice(text, button, onClick) {
@@ -156,6 +156,12 @@ function playChunk(startMs, samples) {
     state.underruns += 1;
     anchor = { clock: now + RESYNC_S, t: startMs };
     when = anchor.clock;
+  }
+  if (audio && audio.state !== 'running' && samples.length) {
+    // The browser paused the context (a tab switch, an interrupted output device). The chunk is
+    // lost; count it so a clipped start can be told from a clipped reply, and ask for the clock back.
+    state.audioDropped += 1;
+    audio.resume().catch(() => {});
   }
   if (audio && audio.state === 'running' && samples.length) {
     const buffer = audio.createBuffer(1, samples.length, sampleRate);

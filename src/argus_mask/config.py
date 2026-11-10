@@ -26,6 +26,7 @@ class Settings:
     driver: str = "energy"
     a2f_url: str = ""
     tts_url: str = ""
+    tts_voice: str = ""
     fps: int = DEFAULT_FPS
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
     read_only: bool = False
@@ -54,6 +55,7 @@ class Settings:
             driver=_env("DRIVER", "energy").lower() or "energy",
             a2f_url=_env("A2F_URL"),
             tts_url=_env("TTS_URL"),
+            tts_voice=_env("TTS_VOICE"),
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
             read_only=read_only,

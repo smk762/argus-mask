@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`say` speaks Wyoming** (`--tts-url wyoming://host:port`, `-p voice=…`), the protocol of Home Assistant's TTS
   servers and agent-composer's XTTS and Miso bridges, beside the HTTP PCM stream it already understood.
 - `say` says it is waiting for the TTS service, and Ctrl-C stops the wait at once instead of hanging on the socket.
+- **`say --voice`** and `ARGUS_MASK_TTS_VOICE`: the voice to ask the TTS service for, a stored clone's name or a
+  speaker number, put in the field each kind of service expects.
+- `say` pads the utterance with 150 ms of silence before and 300 ms after, so a waking output device does not eat the
+  first syllable and the mouth closes before the stream ends.
+- The viewer counts audio chunks that arrived while the browser had paused its audio clock (`__mask.audioDropped`) and
+  asks for the clock back, so a clipped start can be told from a clipped reply.
 
 ### Fixed
 

@@ -113,6 +113,7 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 | `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
 | `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
 | `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say` only |
+| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` asks for: a stored clone's name, or a speaker number |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
 | `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect |
@@ -135,14 +136,19 @@ Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances 
 Two kinds of service, told apart by the URL:
 
 - **`http(s)://…`**: an endpoint that takes `{"text": …}` and streams raw PCM, stating the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Miso TTS's `/synthesise/stream` is one. Extra request fields go in with `-p key=value`.
-- **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p voice=<name>` picks the voice (`-p language=…` and `-p speaker=…` also pass through). Audio must be 16-bit.
+- **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p language=…` and `-p speaker=…` pass through. Audio must be 16-bit.
+
+`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers. Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
-argus-mask say "Hello from the other side of the room." --face stock-01 -p emotion=neutral
+export ARGUS_MASK_TTS_VOICE=inara-nobility
+argus-mask say "Hello from the other side of the room." --face stock-01
 
-argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 -p "voice=Claribel Dervla"
+argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 --voice "Claribel Dervla"
 ```
+
+`say` puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
 
 ## Wire
 

@@ -203,6 +203,9 @@ def say(
     face_id: str = Option(..., "--face", help="The face to animate"),
     url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
     tts_url: str = Option("", "--tts-url", help="The TTS stream endpoint; default: ARGUS_MASK_TTS_URL"),
+    voice: str = Option(
+        "", "--voice", help="The TTS voice: a clone's name or a speaker number; default: ARGUS_MASK_TTS_VOICE"
+    ),
     param: list[str] = Option([], "--param", "-p", help="Extra field for the TTS request, key=value (repeatable)"),
     seed: int = Option(0, "--seed", help="Seed of the idle layer"),
     stream: bool = Option(
@@ -225,13 +228,16 @@ def say(
         except ValueError:
             body[key] = value
     body["text"] = text
+    settings = _settings()
+    tts_url = tts_url or settings.tts_url
+    body = client.voiced(body, voice or settings.tts_voice, tts_url)
     try:
         _report(
             asyncio.run(
                 client.say(
                     url,
                     face_id,
-                    tts_url or _settings().tts_url,
+                    tts_url,
                     body,
                     seed=seed,
                     stream=stream,

@@ -132,13 +132,41 @@ def test_say_streams_tts_audio_into_the_server(server) -> None:
             ],
         )
     assert result.exit_code == 0, result.output
-    assert "speech: 1.00s, playing" in result.output and "done: 30 frames, 1.00s" in result.output
+    # The utterance is 1.00 s; the take is longer by the silence put either side of it.
+    assert "speech: 1.00s, playing" in result.output and "done: 44 frames, 1.45s" in result.output
     assert seen == [{"speed": 1.1, "emotion": "calm", "text": "Hello there."}]
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, _):
         streamed = runner.invoke(
             app, ["say", "Hello again.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
         )
-    assert streamed.exit_code == 0 and "done: 30 frames, 1.00s" in streamed.output
+    assert streamed.exit_code == 0 and "done: 44 frames, 1.45s" in streamed.output
+
+
+def test_say_picks_the_voice(server, monkeypatch) -> None:
+    def spoken(*args: str) -> dict:
+        with fake_tts(tone(0.2, 24000), 24000) as (tts_url, seen):
+            result = runner.invoke(
+                app, ["say", "Hi.", "--face", "test-head", "--url", server, "--tts-url", tts_url, *args]
+            )
+        assert result.exit_code == 0, result.output
+        return seen[0]
+
+    monkeypatch.delenv("ARGUS_MASK_TTS_VOICE", raising=False)
+    assert spoken() == {"text": "Hi."}
+    # A name is a stored clone, a number one of the service's own speakers; agent-composer's prefix is dropped.
+    assert spoken("--voice", "inara-nobility") == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("--voice", "clone:inara-nobility") == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("--voice", "1") == {"text": "Hi.", "speaker": "1"}
+    # An explicit field wins over the default voice.
+    monkeypatch.setenv("ARGUS_MASK_TTS_VOICE", "inara-nobility")
+    assert spoken() == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("-p", "speaker=0") == {"text": "Hi.", "speaker": 0}
+    assert spoken("--voice", "2") == {"text": "Hi.", "speaker": "2"}
+    # A Wyoming server takes the name as it is.
+    with fake_wyoming(tone(0.2, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(app, ["say", "Hi.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert result.exit_code == 0, result.output
+    assert seen == [{"text": "Hi.", "voice": {"name": "inara-nobility"}}]
 
 
 def test_say_reports_a_tts_error_and_a_missing_url(server, monkeypatch) -> None:
@@ -209,7 +237,7 @@ def test_say_speaks_through_a_wyoming_server(server) -> None:
             app, ["say", "Hello there.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "voice=0"]
         )
     assert result.exit_code == 0, result.output
-    assert "speech: 1.00s, playing" in result.output and "done: 30 frames, 1.00s" in result.output
+    assert "speech: 1.00s, playing" in result.output and "done: 44 frames, 1.45s" in result.output
     assert seen == [{"text": "Hello there.", "voice": {"name": "0"}}]
     with fake_wyoming(tone(0.5), error="no such voice") as (tts_url, _):
         failed = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
