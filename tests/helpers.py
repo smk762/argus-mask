@@ -207,12 +207,13 @@ def fake_a2f(
 
 @contextmanager
 def fake_tts(
-    pcm: np.ndarray, rate: int = 24000, *, status: int = 200, break_after: int | None = None
+    pcm: np.ndarray, rate: int = 24000, *, status: int = 200, break_after: int | None = None, stall_s: float = 0.0
 ) -> Iterator[tuple[str, list[dict]]]:
     """A TTS service that streams *pcm* as chunked ``pcm_f32le`` with the format in headers.
 
     Yields its URL and the list of request bodies it received. ``break_after``
-    drops the connection after that many bytes.
+    drops the connection after that many bytes. ``stall_s`` sends the headers and
+    then nothing for that long, like a model that is still generating.
     """
     seen: list[dict] = []
     payload = pcm.astype("<f4").tobytes()
@@ -239,6 +240,9 @@ def fake_tts(
             self.send_header("X-Channels", "1")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
+            self.wfile.flush()
+            if stall_s:
+                time.sleep(stall_s)
             sent = 0
             step = rate // 4 * 4  # 250 ms
             for start in range(0, len(payload), step):
@@ -260,6 +264,77 @@ def fake_tts(
         server.shutdown()
         server.server_close()
         thread.join(5)
+
+
+@contextmanager
+def fake_wyoming(pcm: np.ndarray, rate: int = 24000, *, error: str | None = None) -> Iterator[tuple[str, list[dict]]]:
+    """A Wyoming TTS server: answers ``describe``, and ``synthesize`` with *pcm* as 16-bit chunks.
+
+    Yields its URL and the synthesize requests it received. ``error`` makes it answer
+    an ``error`` event instead of audio.
+    """
+    seen: list[dict] = []
+    payload = (np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes()
+
+    def event(kind: str, data: dict | None = None, body: bytes = b"") -> bytes:
+        head: dict = {"type": kind}
+        if data is not None:
+            head["data"] = data
+        if body:
+            head["payload_length"] = len(body)
+        return json.dumps(head).encode() + b"\n" + body
+
+    def serve(conn: socket.socket) -> None:
+        with conn:
+            buf = b""
+            while True:
+                while b"\n" not in buf:
+                    more = conn.recv(65536)
+                    if not more:
+                        return
+                    buf += more
+                line, _, buf = buf.partition(b"\n")
+                head = json.loads(line)
+                if head["type"] == "describe":
+                    conn.sendall(event("info", {"tts": [{"name": "fake", "voices": [{"name": "0"}]}]}))
+                elif head["type"] == "synthesize":
+                    seen.append(head.get("data") or {})
+                    if error:
+                        conn.sendall(event("error", {"text": error}))
+                        return
+                    conn.sendall(event("audio-start", {"rate": rate, "width": 2, "channels": 1, "timestamp": 0}))
+                    step = rate // 4 * 2
+                    for start in range(0, len(payload), step):
+                        conn.sendall(
+                            event(
+                                "audio-chunk", {"rate": rate, "width": 2, "channels": 1}, payload[start : start + step]
+                            )
+                        )
+                    conn.sendall(event("audio-stop", {"timestamp": 0}))
+                    return
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(0.2)
+    stop = threading.Event()
+
+    def accept_loop() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except TimeoutError:
+                continue
+            threading.Thread(target=serve, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=accept_loop, daemon=True)
+    thread.start()
+    try:
+        yield f"wyoming://127.0.0.1:{listener.getsockname()[1]}", seen
+    finally:
+        stop.set()
+        thread.join(2)
+        listener.close()
 
 
 @contextmanager

@@ -39,12 +39,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the asset packs are the user's to install; none ships.
 - **A second stock preset**, `stock-02`: a female head, about 25, short brown hair, in the same crew uniform as
   `stock-01` (suits02 pack, CC0). Not published yet.
+- **`argus-mask record`**: waits for the next session on a face and renders it to a video (MP4 or WebM), offline and
+  frame-exact, in a headless browser, muxed with the session's audio; the take and WAV are written beside it. The
+  viewer gets a `?record=1` mode posed from outside. Needs the `record` extra (playwright, imageio-ffmpeg).
 - **The Audio2Face server** (`a2f/`): NVIDIA's Audio2Face-3D SDK behind the `a2f` driver's protocol, in its own
   Docker image. It downloads its model and builds a TensorRT engine for the host's card on first start, and holds
   about 0.5 GB of VRAM. `docker compose --profile a2f` runs it beside mask. The image is built locally, not published.
 
 - The viewer's audio buffer is tunable (`?buffer=<ms>`, default 250).
 - The stock head lock points at revision 2 of `stock-01`, with the mouth fixes.
+- **Clothes.** A preset's `assets.clothes` lists garments; the body under them is removed and they are cut with the
+  bust. `stock-01` revision 3 wears `thegreatengineer_galactic_warrior_uniform` from the MakeHuman community's
+  suits02 pack (CC0): a high-collared crew tunic, since a bust in nothing looked undressed.
+
+- **`say` speaks Wyoming** (`--tts-url wyoming://host:port`, `-p voice=…`), the protocol of Home Assistant's TTS
+  servers and agent-composer's XTTS and Miso bridges, beside the HTTP PCM stream it already understood.
+- `say` says it is waiting for the TTS service, and Ctrl-C stops the wait at once instead of hanging on the socket.
+- **`say --voice`** and `ARGUS_MASK_TTS_VOICE`: the voice to ask the TTS service for, a stored clone's name or a
+  speaker number, put in the field each kind of service expects.
+- **`say --pause`**: the text goes to the TTS service one sentence at a time, with 300 ms of silence between
+  sentences and 600 ms between paragraphs, so sentences no longer run into each other; `--pause 0` sends it whole.
+- `say` pads the utterance with 150 ms of silence before and 300 ms after, so a waking output device does not eat the
+  first syllable and the mouth closes before the stream ends.
+- The viewer counts audio chunks that arrived while the browser had paused its audio clock (`__mask.audioDropped`) and
+  asks for the clock back, so a clipped start can be told from a clipped reply.
 
 ### Fixed
 

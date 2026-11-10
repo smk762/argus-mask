@@ -36,7 +36,18 @@ DATA=$BLENDER_USER_RESOURCES/extensions/.user/user_default/mpfb/data
 mkdir -p $DATA
 python3 -m zipfile -e makehuman_system_assets_cc0.zip $DATA
 python3 -m zipfile -e faceunits01.zip $DATA
+
+# Clothes: the stock heads wear a garment from the community's suits02 pack (CC0, 183 MB).
+# Only its clothes/<garment>/ directory and packs/suits02.json (the index MPFB reads the
+# licence and author from) are needed; the whole pack merges in the same way.
+python3 -m zipfile -e suits02_cc0.zip $DATA
 ```
+
+| Pack | Licence | Download | sha256 |
+|---|---|---|---|
+| suits02 | CC0 | <https://files.makehumancommunity.org/asset_packs/suits02/suits02_cc0.zip> | `437f4d7ab92b698c1fb1047e7d62b22c11f195b2473e936118661dc8e6b7eb7a` |
+
+A preset's `assets.clothes` lists garments as `clothes/<dir>/<file>.mhclo`. The body under a garment is removed, as MakeHuman does, and the garment is cut with the bust. A garment carries no face shapes. `thegreatengineer_galactic_warrior_uniform` (by TheGreatEngineer, CC0) is a high-collared tunic that reads as a ship's crew uniform; from a bust only its collar and shoulders show.
 
 ## Build a head
 

@@ -52,6 +52,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 | `argus-mask drive <audio.wav> --out take.ndjson` | Audio to a take file, offline. The same audio, driver and seed give the same file. |
 | `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
+| `argus-mask record --face <id> --out clip.mp4` | Waits for the next session on a face and renders it to a video, offline and frame-exact, with the audio. |
 | `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
 | `argus-mask editor` | The face editor (port 8111): build heads from presets with Blender. See [Face editor](#face-editor). |
 | `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
@@ -135,6 +136,7 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
 | `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
 | `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say` only |
+| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` asks for: a stored clone's name, or a speaker number |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
 | `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect. The editor refuses builds. |
@@ -156,12 +158,36 @@ Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances 
 
 ## Speech from a TTS service
 
-`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL`, waits for the whole reply, then plays it into the face at the speed of speech. The wait is deliberate: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+`say` asks a TTS service for the speech and plays it into the face at the speed of speech. The whole utterance is fetched first: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated, and Ctrl-C stops the wait at once. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+
+Two kinds of service, told apart by the URL:
+
+- **`http(s)://…`**: an endpoint that takes `{"text": …}` and streams raw PCM, stating the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Miso TTS's `/synthesise/stream` is one. Extra request fields go in with `-p key=value`.
+- **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p language=…` and `-p speaker=…` pass through. Audio must be 16-bit.
+
+`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers. Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
-argus-mask say "Hello from the other side of the room." --face my-head -p emotion=neutral
+export ARGUS_MASK_TTS_VOICE=inara-nobility
+argus-mask say "Hello from the other side of the room." --face stock-01
+
+argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 --voice "Claribel Dervla"
 ```
+
+`say` sends the text one sentence at a time and leaves `--pause` ms of silence between sentences (default 300; twice that between paragraphs, which are blank lines in the text). TTS models run sentences into each other, and a short request wanders less than a long one. `--pause 0` sends the text whole. It also puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
+
+## Recording a clip
+
+Screen capture fights the viewer for the machine and leaves the audio to the operating system. A take is deterministic, so a clip need not be captured at all:
+
+```bash
+uv sync --extra record && uv run playwright install chromium-headless-shell   # once
+argus-mask record --face stock-01 --out clip.mp4 &
+argus-mask say "Hello from the bridge." --face stock-01
+```
+
+`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
 
 ## Wire
 
