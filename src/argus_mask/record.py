@@ -30,6 +30,7 @@ from argus_mask.models import Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
+QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
 BACKENDS = (
     ("gpu", ["--use-angle=gl-egl", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"]),
@@ -165,8 +166,9 @@ async def render_frames(
                 if error:
                     raise RecordError(f"the viewer could not load the face: {error}")
                 renderer = await page.evaluate(WEBGL_RENDERER)
+                look = await page.evaluate("window.__mask.look && window.__mask.look.quality")
                 if on_renderer:
-                    on_renderer(f"{backend}: {renderer}")
+                    on_renderer(f"{backend}: {renderer}" + (f", look {look}" if look else ""))
                 break
             except Exception as exc:  # playwright's own error types vary by version
                 failures.append(f"{backend}: {str(exc).splitlines()[0]}")
@@ -240,6 +242,7 @@ async def record(
     height: int = DEFAULT_HEIGHT,
     display: str = "flat",
     bg: str = "",
+    quality: str = "high",
     keep: bool = False,
     on_wait: Callable[[], None] | None = None,
     on_captured: Callable[[Recording], None] | None = None,
@@ -249,6 +252,8 @@ async def record(
     """Capture the next session on *face_id* and write *out*, with the take and WAV beside it."""
     if width % 2 or height % 2:
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
+    if quality not in QUALITIES:  # before the wait: a typo should not cost the session
+        raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
     recording = await capture(base, face_id, on_wait=on_wait)
     if not recording.frames:
         raise RecordError("the session had no frames")
@@ -262,7 +267,9 @@ async def record(
     write_take(take, recording)
     frames_dir = Path(f"{stem}.frames")
     shutil.rmtree(frames_dir, ignore_errors=True)  # frames kept from an earlier, longer clip would join this one
-    params = {"face": face_id, "record": "1", "hud": "0", "display": display} | ({"bg": bg} if bg else {})
+    # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
+    params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
+    params |= {"bg": bg} if bg else {}
     await render_frames(
         f"{base.rstrip('/')}/?{urlencode(params)}",
         recording,

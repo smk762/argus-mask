@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
+import { Look, lookOptions } from './look.js';
 
 export const POSES = {
   rest: () => ({}),
@@ -21,7 +22,7 @@ function dispose(root) {
     if (!node.isMesh) return;
     node.geometry?.dispose();
     for (const m of [].concat(node.material || [])) {
-      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      for (const v of Object.values(m)) if (v && v.isTexture && !v.userData.shared) v.dispose();  // look.js's skin detail is shared
       m.dispose();
     }
   });
@@ -33,11 +34,10 @@ export class Stage {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#101216');
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f4a, 1.6));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
-    key.position.set(0.6, 0.8, 1.5);
-    this.scene.add(key);
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+    // The viewer's own look (look.js), so a face looks here as it will on a screen. Medium by default;
+    // the page's ?quality= and single switches apply as in the viewer.
+    this.look = new Look(this.renderer, this.scene, this.camera, lookOptions(new URLSearchParams(location.search), 'medium'));
     this.pivot = new THREE.Group();
     this.scene.add(this.pivot);
     this.targets = new Map();
@@ -58,6 +58,7 @@ export class Stage {
     this.pivot.clear();
     this.targets = new Map();
     this.pivot.add(gltf.scene);
+    this.look.apply(gltf.scene);
     gltf.scene.traverse((node) => {
       if (node.isMesh && node.morphTargetDictionary) {
         for (const [name, index] of Object.entries(node.morphTargetDictionary)) {
@@ -71,6 +72,7 @@ export class Stage {
     this.camera.lookAt(0, framing.height || 0, 0);
     this.loaded = true;
     this.resize();
+    this.look.focus(gltf.scene);
   }
 
   attach(host) {
@@ -87,6 +89,7 @@ export class Stage {
     this.renderer.setSize(box.width, box.height, false);
     this.camera.aspect = box.width / box.height;
     this.camera.updateProjectionMatrix();
+    this.look.setSize(box.width, box.height);
   }
 
   weigh(name, value) {
@@ -100,7 +103,7 @@ export class Stage {
     this.weigh('eyeBlinkLeft', blink);
     this.weigh('eyeBlinkRight', blink);
     this.pivot.rotation.y += ((this.turn ? 0.6 : 0) - this.pivot.rotation.y) * 0.08;
-    this.renderer.render(this.scene, this.camera);
+    this.look.render();
   }
 
   // A still of the loaded face at rest, as a data URL: for a card, without a live canvas per card.
@@ -111,7 +114,8 @@ export class Stage {
     this.camera.updateProjectionMatrix();
     for (const name of this.targets.keys()) this.weigh(name, 0);
     this.pivot.rotation.y = 0;
-    this.renderer.render(this.scene, this.camera);
+    this.look.setSize(width, height);
+    this.look.render();
     return this.renderer.domElement.toDataURL('image/jpeg', 0.85);
   }
 
