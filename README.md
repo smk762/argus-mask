@@ -52,6 +52,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 | `argus-mask drive <audio.wav> --out take.ndjson` | Audio to a take file, offline. The same audio, driver and seed give the same file. |
 | `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
+| `argus-mask record --face <id> --out clip.mp4` | Waits for the next session on a face and renders it to a video, offline and frame-exact, with the audio. |
 | `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
 | `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
 
@@ -149,6 +150,18 @@ argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming:
 ```
 
 `say` sends the text one sentence at a time and leaves `--pause` ms of silence between sentences (default 300; twice that between paragraphs, which are blank lines in the text). TTS models run sentences into each other, and a short request wanders less than a long one. `--pause 0` sends the text whole. It also puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
+
+## Recording a clip
+
+Screen capture fights the viewer for the machine and leaves the audio to the operating system. A take is deterministic, so a clip need not be captured at all:
+
+```bash
+uv sync --extra record && uv run playwright install chromium-headless-shell   # once
+argus-mask record --face stock-01 --out clip.mp4 &
+argus-mask say "Hello from the bridge." --face stock-01
+```
+
+`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
 
 ## Wire
 

@@ -265,6 +265,59 @@ def say(
 
 
 @app.command()
+def record(
+    face_id: str = Option(..., "--face", help="The face to record"),
+    out: Path = Option(Path("clip.mp4"), "--out", help="The clip (.mp4, or .webm); its take and WAV go beside it"),
+    url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
+    width: int = Option(1280, "--width", min=16),
+    height: int = Option(720, "--height", min=16),
+    display: str = Option("flat", "--display", help="The viewer's display tier: flat or hld"),
+    bg: str = Option("", "--bg", help="Background colour, as the viewer takes it (e.g. '#202020')"),
+    keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
+) -> None:
+    """Record the next session on a face as a video, offline and frame-exact.
+
+    Waits on the face's viewer socket; run `say` or `push` on that face meanwhile. Then renders every frame of the
+    session in a headless browser and muxes them with the audio, so the machine's load never shows in the clip.
+    Needs argus-mask[record] and `playwright install chromium-headless-shell`.
+    """
+    from argus_mask import record as recorder
+
+    def captured(r: recorder.Recording) -> None:
+        typer.echo(f"captured {len(r.frames)} frames, {r.duration_ms / 1000:.2f}s; rendering", err=True)
+
+    last = [0]
+
+    def progress(i: int, n: int) -> None:
+        if i == n or i * 10 // n > last[0]:
+            last[0] = i * 10 // n
+            typer.echo(f"  {i}/{n} frames", err=True)
+
+    try:
+        r = asyncio.run(
+            recorder.record(
+                url,
+                face_id,
+                out,
+                width=width,
+                height=height,
+                display=display,
+                bg=bg,
+                keep=keep,
+                on_wait=lambda: typer.echo(f"waiting for a session on {face_id} (run say or push now)", err=True),
+                on_captured=captured,
+                on_progress=progress,
+                on_renderer=lambda r: typer.echo(f"rendering on {r}", err=True),
+            )
+        )
+    except recorder.RecordError as exc:
+        raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
+    typer.echo(f"wrote {out} ({len(r.frames)} frames, {r.duration_ms / 1000:.2f}s)")
+
+
+@app.command()
 def serve(
     host: str = Option("127.0.0.1", "--host", help="Address to bind. Serving the LAN is a deliberate choice."),
     port: int = Option(DEFAULT_PORT, "--port"),

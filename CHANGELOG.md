@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MakeHuman assets, adults only). The model is not in the repo: `scripts/fetch_stock_head.py` (`make head`) downloads
   it and checks it against `scripts/stock_heads/stock-01.lock.json`.
 - Wire schema `schema/mask-wire.schema.json`.
+- **`argus-mask record`**: waits for the next session on a face and renders it to a video (MP4 or WebM), offline and
+  frame-exact, in a headless browser, muxed with the session's audio; the take and WAV are written beside it. The
+  viewer gets a `?record=1` mode posed from outside. Needs the `record` extra (playwright, imageio-ffmpeg).
 - **The Audio2Face server** (`a2f/`): NVIDIA's Audio2Face-3D SDK behind the `a2f` driver's protocol, in its own
   Docker image. It downloads its model and builds a TensorRT engine for the host's card on first start, and holds
   about 0.5 GB of VRAM. `docker compose --profile a2f` runs it beside mask. The image is built locally, not published.
