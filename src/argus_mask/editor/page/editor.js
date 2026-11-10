@@ -92,6 +92,7 @@ let preset = structuredClone(DEFAULT);
 let built = null;   // the preset of the face on show, as JSON, to say when the form has moved on
 let made = new Map(); // face id -> { exported, previewed }, from /presets
 let busy = false;
+let canBuild = true; // false when /health says this editor cannot build (read-only, or no Blender)
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
 function set(obj, path, value) {
   const keys = path.split('.');
@@ -399,7 +400,7 @@ function schedule(delay = LIVE_DELAY_MS) {
   clearTimeout(timer);
   timer = setTimeout(() => {
     const content = contentOf(current());
-    if (content === shownContent || content === failedContent || !$('form').checkValidity()) return;
+    if (!canBuild || content === shownContent || content === failedContent || !$('form').checkValidity()) return;
     if (busy) { again = true; return; }
     runBuild();
   }, delay);
@@ -497,7 +498,7 @@ async function runBuild() {
     status(`${err.message} (${((performance.now() - started) / 1000).toFixed(1)} s)`, true);
   } finally {
     busy = false;
-    $('build').disabled = false;
+    $('build').disabled = !canBuild;
     building(false);
     meta();
   }
@@ -543,6 +544,7 @@ async function main() {
     $('banner').textContent = health.read_only ? 'This editor is read-only: it cannot build.' : `Cannot build: ${health.reason}`;
     $('banner').hidden = false;
     $('build').disabled = true;
+    canBuild = false;
   }
   buildPanels(library, catalogue);
   await loadStarts();

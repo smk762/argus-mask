@@ -307,6 +307,18 @@ def test_clothes_are_each_listed_once_and_few() -> None:
         Preset.model_validate(body)
 
 
+def test_the_library_scan_is_reused_until_an_asset_is_installed(tmp_path) -> None:
+    data = make_library(tmp_path)
+    library = AssetLibrary(data)
+    first = library.scan()
+    assert library.scan() is first  # one scan serves every thumbnail
+    sub = data / "hair" / "h3"
+    sub.mkdir()
+    (sub / "h3.mhclo").write_text("# asset\n")
+    (data / "packs" / "more.json").write_text(json.dumps({"h3": {"type": "hair", "license": "CC0"}}))
+    assert [a.name for a in library.scan()["hair"]] == ["h1", "h2", "h3"]
+
+
 def test_an_unconfigured_library_is_empty() -> None:
     library = AssetLibrary(None)
     assert all(v == [] for v in library.scan().values()) and not library.has_faceunits()
@@ -510,6 +522,25 @@ def test_rename_moves_the_export_and_the_preview_together(client, rig) -> None:
     # A name alone keeps the id.
     assert client.post("/saved/renamed/rename", json={"name": "Again"}).json() == {"id": "renamed"}
     assert FaceStore(rig["assets"]).load("renamed")[0].name == "Again"
+
+
+def test_a_failed_rename_leaves_both_copies_as_they_were(client, rig, monkeypatch) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    builder: Builder = client.app.state.builder
+    real = builder._rewrite
+
+    def fail_on_preview(root, *args):
+        if root == builder.preview_dir:
+            raise OSError("disk full")
+        return real(root, *args)
+
+    monkeypatch.setattr(builder, "_rewrite", fail_on_preview)
+    assert client.post("/saved/my-face/rename", json={"id": "renamed"}).status_code == 500
+    for root in (rig["assets"], rig["assets"] / ".preview"):
+        assert FaceStore(root).load("my-face")[0].id == "my-face"
+        assert not (root / "renamed").exists()
+    assert leftovers(rig["assets"]) == []
 
 
 def test_rename_refuses_a_taken_id_another_faces_or_a_bad_one(client, rig) -> None:

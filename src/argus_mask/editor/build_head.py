@@ -34,6 +34,7 @@ import argparse
 import importlib
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -104,7 +105,7 @@ def load_preset(path: str) -> dict:
     if not clothes:
         raise RecipeError(f"{path}: assets.clothes is required: every head is dressed")
     names = [asset_name(c) for c in clothes]
-    if clash := [n for n in names if n in BODY_PARTS]:
+    if clash := [n for n in names if n in (*BODY_PARTS, "head")]:
         raise RecipeError(f"{path}: a garment cannot be called {clash[0]!r}")
     if len(set(names)) != len(names):
         raise RecipeError(f"{path}: assets.clothes lists the same garment twice")
@@ -620,46 +621,51 @@ def build(preset: dict, out: str) -> dict:
     still = [kind for kind in MOVING_PARTS if kind in parts and not shapes[kind]]
 
     drop_normal_maps()
+    # The shrunk textures only live until the exporter has packed them into the .glb: the editor runs
+    # this for every build, so they must not pile up in the temp directory.
     workdir = tempfile.mkdtemp(prefix="argus-mask-head-")
-    max_px = int(preset.get("max_texture_px", 2048))
-    gains = {
-        image: float(gain)
-        for kind, gain in (preset.get("texture_gain") or {}).items()
-        if kind in parts
-        for image in part_images(parts[kind])
-    }
-    textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains)
-    blended = {
-        slot.material.name
-        for kind in preset.get("blend_parts") or []
-        if kind in parts
-        for slot in parts[kind].material_slots
-        if slot.material
-    }
+    try:
+        max_px = int(preset.get("max_texture_px", 2048))
+        gains = {
+            image: float(gain)
+            for kind, gain in (preset.get("texture_gain") or {}).items()
+            if kind in parts
+            for image in part_images(parts[kind])
+        }
+        textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains)
+        blended = {
+            slot.material.name
+            for kind in preset.get("blend_parts") or []
+            if kind in parts
+            for slot in parts[kind].material_slots
+            if slot.material
+        }
 
-    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    bpy.ops.export_scene.gltf(
-        filepath=out,
-        export_format="GLB",
-        use_selection=False,
-        export_apply=False,
-        export_yup=True,
-        export_morph=True,
-        export_morph_normal=False,
-        export_morph_tangent=False,
-        export_try_sparse_sk=True,
-        export_skins=False,
-        export_animations=False,
-        export_cameras=False,
-        export_lights=False,
-        export_tangents=False,
-        export_materials="EXPORT",
-        export_vertex_color="ACTIVE",
-        export_all_vertex_colors=False,
-        export_image_format="AUTO",
-        export_draco_mesh_compression_enable=False,
-    )
-    doc = patch_glb(out, blended)
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        bpy.ops.export_scene.gltf(
+            filepath=out,
+            export_format="GLB",
+            use_selection=False,
+            export_apply=False,
+            export_yup=True,
+            export_morph=True,
+            export_morph_normal=False,
+            export_morph_tangent=False,
+            export_try_sparse_sk=True,
+            export_skins=False,
+            export_animations=False,
+            export_cameras=False,
+            export_lights=False,
+            export_tangents=False,
+            export_materials="EXPORT",
+            export_vertex_color="ACTIVE",
+            export_all_vertex_colors=False,
+            export_image_format="AUTO",
+            export_draco_mesh_compression_enable=False,
+        )
+        doc = patch_glb(out, blended)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
     lowest = min((obj.matrix_world @ v.co).z for obj in objects for v in obj.data.vertices)
     highest = max((obj.matrix_world @ v.co).z for obj in objects for v in obj.data.vertices)

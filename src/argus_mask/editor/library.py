@@ -73,6 +73,29 @@ class AssetLibrary:
 
     def __init__(self, data_dir: str | Path | None) -> None:
         self.data_dir = Path(data_dir) if data_dir is not None else None
+        self._scanned: tuple[tuple, dict[str, list[Asset]]] | None = None
+
+    def _signature(self) -> tuple:
+        """What a scan depends on, cheaply: the pack files and the part directories, by mtime.
+
+        Installing or removing a pack or an asset changes it, so a cached scan is only reused while
+        the library is as it was.
+        """
+        if self.data_dir is None:
+            return ()
+        paths = [self.data_dir / "packs", *(self.data_dir / d for d in (*PART_DIRS.values(), CLOTHES_DIR))]
+        packs = self.data_dir / "packs"
+        if packs.is_dir():
+            paths += sorted(packs.glob("*.json"))
+        out = []
+        for path in paths:
+            try:
+                st = path.stat()
+            except OSError:
+                out.append((str(path), None))
+                continue
+            out.append((str(path), st.st_mtime_ns, st.st_size))
+        return tuple(out)
 
     def _packs(self) -> tuple[dict[tuple[str, str], tuple[str, dict]], set[str]]:
         """(MPFB type, asset name) to (pack, entry), and the names of the packs installed."""
@@ -101,7 +124,19 @@ class AssetLibrary:
         return FACEUNITS_PACK in self._packs()[1]
 
     def scan(self) -> dict[str, list[Asset]]:
-        """Every licensed asset, by part; clothes under ``clothes``, without the ones a bust never shows."""
+        """Every licensed asset, by part; clothes under ``clothes``, without the ones a bust never shows.
+
+        Cached until the library changes: the editor asks once per thumbnail, and a full scan reads every
+        pack and every garment's ``.mhclo``.
+        """
+        signature = self._signature()
+        if self._scanned is not None and self._scanned[0] == signature:
+            return self._scanned[1]
+        found = self._scan()
+        self._scanned = (signature, found)
+        return found
+
+    def _scan(self) -> dict[str, list[Asset]]:
         entries, _ = self._packs()
         out: dict[str, list[Asset]] = {part: [] for part in (*PART_DIRS, CLOTHES)}
         if self.data_dir is None:

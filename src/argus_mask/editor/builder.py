@@ -180,7 +180,8 @@ class Builder:
                 raise NotOwned(f"{face_id!r} is a face the editor did not make; build it under another id")
             work = Path(tempfile.mkdtemp(prefix=".export-", dir=self.assets_dir))
             try:
-                shutil.copytree(self.preview_dir / face_id, work, dirs_exist_ok=True)
+                # Off the event loop: a face is megabytes, and the editor's other routes wait on the loop.
+                await asyncio.to_thread(shutil.copytree, self.preview_dir / face_id, work, dirs_exist_ok=True)
                 self._install(work, target, self.assets_dir)
             finally:
                 if work.exists():
@@ -207,7 +208,7 @@ class Builder:
             model = work / MODEL_NAME
             if not model.is_file():
                 raise BuildError("Blender finished but wrote no model")
-            report = inspect_glb(model)
+            report = await asyncio.to_thread(inspect_glb, model)
             if report.missing:
                 raise BuildError(f"the model is missing {len(report.missing)} of the 52 ARKit shapes")
             try:
@@ -229,8 +230,8 @@ class Builder:
                     + "A generated character, not a real person."
                 ),
             )
-            manifest = build_manifest(
-                model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
+            manifest = await asyncio.to_thread(
+                build_manifest, model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
             )
             (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
             self._install(work, target, self.preview_dir)
@@ -326,8 +327,8 @@ class Builder:
             raise Busy("another build or export is running")
         async with self._lock:
             new_id = new_id or face_id
-            if not _FACE_ID.match(face_id) or not _FACE_ID.match(new_id):
-                raise NoPreview(f"{new_id!r} is not a face id")
+            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.match(i)), None):
+                raise NoPreview(f"{bad!r} is not a face id")
             places = [p for p in PLACES if (self.root(p) / face_id).exists()]
             if not places:
                 raise NoPreview(f"there is no face {face_id!r}")
@@ -336,16 +337,31 @@ class Builder:
                     raise NotOwned(f"{face_id!r} is a face the editor did not make")
             if new_id != face_id and any((self.root(p) / new_id).exists() for p in PLACES):
                 raise Taken(f"there is already a face {new_id!r}")
-            for place in places:
-                self._rewrite(self.root(place), face_id, new_id, name)
+            # Every copy is rewritten before any is moved: a failure part way leaves both as they were,
+            # not the export under the new id and the preview under the old one.
+            staged: list[tuple[Path, Path]] = []
+            try:
+                for place in places:
+                    root = self.root(place)
+                    staged.append((root, await asyncio.to_thread(self._rewrite, root, face_id, new_id, name)))
+                for root, work in staged:
+                    if new_id == face_id:
+                        self._install(work, root / face_id, root)
+                    else:
+                        work.rename(root / new_id)
+                        shutil.rmtree(root / face_id, ignore_errors=True)
+            finally:
+                for _, work in staged:
+                    if work.exists():
+                        shutil.rmtree(work, ignore_errors=True)
             log.info("face_renamed", face=face_id, to=new_id, name=name)
             return new_id
 
-    def _rewrite(self, root: Path, face_id: str, new_id: str, name: str | None) -> None:
-        source = root / face_id
+    def _rewrite(self, root: Path, face_id: str, new_id: str, name: str | None) -> Path:
+        """A copy of ``<root>/<face_id>`` under *root*, with the new id and name written in; not yet in place."""
         work = Path(tempfile.mkdtemp(prefix=".rename-", dir=root))
         try:
-            shutil.copytree(source, work, dirs_exist_ok=True)
+            shutil.copytree(root / face_id, work, dirs_exist_ok=True)
             manifest = FaceManifest.model_validate_json((work / MANIFEST_NAME).read_text(encoding="utf-8"))
             manifest = manifest.model_copy(update={"id": new_id, "name": name or manifest.name})
             (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -355,14 +371,10 @@ class Builder:
                 (work / PRESET_NAME).write_text(
                     preset.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
                 )
-            if new_id == face_id:
-                self._install(work, source, root)
-            else:
-                work.rename(root / new_id)
-                shutil.rmtree(source, ignore_errors=True)
-        finally:
-            if work.exists():
-                shutil.rmtree(work, ignore_errors=True)
+        except BaseException:
+            shutil.rmtree(work, ignore_errors=True)
+            raise
+        return work
 
     async def delete(self, face_id: str, places: tuple[str, ...] = PLACES) -> Path:
         """Move a face the editor made (its export, its preview, or both) to the trash; returns where it went."""

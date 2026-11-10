@@ -117,14 +117,14 @@ def ends(name: str) -> list[str]:
 
 
 def label(name: str, group: str) -> str:
+    """``mouth-upperlip-volume`` to ``Upper lip size``; ``nose-trans-down-up`` to ``Move: down – up``."""
     if name in _LABELS:
         return _LABELS[name]
-    """``mouth-upperlip-volume`` to ``Upper lip size``; ``nose-trans-down-up`` to ``Move: down – up``."""
-    ends = ""
+    suffix = ""
     m = _PAIR.search(name)
     if m and set(m.groups()) <= _DIRECTIONS and m.group(1) != m.group(2):
         lo, hi = (_ENDS.get(w, w) for w in m.groups())
-        ends = f": {lo} – {hi}"
+        suffix = f": {lo} – {hi}"
         name = name[: m.start()]
     parts = name.split("-")
     while parts and parts[0] in (group, group.rstrip("s"), "eye", "ear", "measure"):
@@ -135,7 +135,7 @@ def label(name: str, group: str) -> str:
         word = _WORDS.get(p, p) if not n else f"{_WORDS.get(n.group(1), n.group(1))} {n.group(2)}"
         if word:
             words.append(word)
-    text = (" ".join(words) or name.split("-")[-1]) + ends
+    text = (" ".join(words) or name.split("-")[-1]) + suffix
     return text[0].upper() + text[1:]
 
 

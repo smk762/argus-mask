@@ -97,7 +97,9 @@ function card(row) {
   const notMine = 'Only faces the editor made can be changed here.';
   const review = el('button', { type: 'button', textContent: 'Review', disabled: !copy });
   const remix = el('button', { type: 'button', textContent: 'Remix', disabled: !editable, title: editable ? 'Open its preset in the editor, under a new id' : 'No preset: it was not made by the editor.' });
-  const rename = el('button', { type: 'button', textContent: 'Rename', disabled: !editable, title: editable ? '' : notMine });
+  // Rename moves every copy together, so it needs them all to be the editor's; delete can take one alone.
+  const renamable = editable && [row.export, row.preview].every((c) => !c || c.editable);
+  const rename = el('button', { type: 'button', textContent: 'Rename', disabled: !renamable, title: renamable ? '' : notMine });
   const del = el('button', { type: 'button', className: 'danger', textContent: 'Delete', disabled: !editable, title: editable ? 'Move to assets/.trash/' : notMine });
   review.onclick = () => openReview(row);
   shot.onclick = () => copy && openReview(row);
