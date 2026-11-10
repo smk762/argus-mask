@@ -21,10 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Viewer**, bundled and served at `/`: three.js, lip sync on the page's own audio clock, the `flat` and `hld`
   display tiers.
 - **CLI:** `inspect` (with `--write-manifest`), `drive`, `push`, `say`, `serve`, `schema`.
-- **The stock head.** `scripts/build_stock_head.py` builds a head with headless Blender and MPFB from a preset (CC0
+- **The stock head.** `src/argus_mask/editor/build_head.py` (was `scripts/build_stock_head.py`) builds a head with headless Blender and MPFB from a preset (CC0
   MakeHuman assets, adults only). The model is not in the repo: `scripts/fetch_stock_head.py` (`make head`) downloads
   it and checks it against `scripts/stock_heads/stock-01.lock.json`.
 - Wire schema `schema/mask-wire.schema.json`.
+- **Face editor** (`argus-mask editor`, port 8111): a page that builds heads from presets with headless Blender and
+  MPFB, about ten seconds a build, with a posed preview. Ages 18 and up; every head wears an outfit. Skin, hair,
+  clothes and a hat are picked from thumbnails;
+  117 shape sliders (head, forehead, brow ridge, eyes, ears, cheeks, nose, mouth, chin, neck) over MakeHuman's CC0
+  modelling targets, from `modifiers.json`, generated from MPFB's catalogue. Collapsible panels, a filter, a hover
+  preview of each asset, a preview card that opens a large view, a spinner and timer while a build runs, and
+  **Live update**, which builds a second after the last change. A build is a preview (`assets/.preview/`);
+  **Export** puts it in `assets/<id>` and on `/faces`; **Download preset** saves the form and
+  **Open preset…** loads one. A **Saved faces** page reviews, remixes, renames and deletes (to `assets/.trash/`) the
+  faces the editor made, and reviews the others. It offers only assets an installed pack licenses, writes their
+  licences into the face's provenance, replaces only faces it made, and is behind the write guards. Blender, MPFB and
+  the asset packs are the user's to install; none ships.
+- **A second stock preset**, `stock-02`: a female head, about 25, short brown hair, in the same crew uniform as
+  `stock-01` (suits02 pack, CC0). Not published yet.
 - **`argus-mask record`**: waits for the next session on a face and renders it to a video (MP4 or WebM), offline and
   frame-exact, in a headless browser, muxed with the session's audio; the take and WAV are written beside it. The
   viewer gets a `?record=1` mode posed from outside. Needs the `record` extra (playwright, imageio-ffmpeg).

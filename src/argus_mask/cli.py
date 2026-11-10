@@ -9,7 +9,7 @@ from pathlib import Path
 import typer
 from typer import Argument, Option
 
-from argus_mask.config import DEFAULT_FPS, DEFAULT_PORT, ConfigError, Settings
+from argus_mask.config import DEFAULT_EDITOR_PORT, DEFAULT_FPS, DEFAULT_PORT, ConfigError, Settings
 
 app = typer.Typer(help="A talking face: audio in, animation frames out.", no_args_is_help=True, add_completion=False)
 
@@ -337,6 +337,41 @@ def serve(
     if assets_dir is not None:
         cfg = replace(cfg, assets_dir=assets_dir)
     uvicorn.run(create_app(cfg), host=host, port=port)
+
+
+@app.command()
+def editor(
+    host: str = Option("127.0.0.1", "--host", help="Address to bind. A build starts Blender: keep it local."),
+    port: int = Option(DEFAULT_EDITOR_PORT, "--port"),
+    assets_dir: Path | None = Option(None, "--assets-dir", help="Root of the faces; default: ARGUS_MASK_ASSETS_DIR"),
+    blender: str | None = Option(None, "--blender", help="The Blender binary; default: ARGUS_MASK_BLENDER or blender"),
+    blender_user: Path | None = Option(
+        None, "--blender-user", help="Blender's user directory with MPFB and its asset packs (BLENDER_USER_RESOURCES)"
+    ),
+) -> None:
+    """Run the face editor: build heads from presets with headless Blender and MPFB."""
+    from dataclasses import replace
+
+    try:
+        import uvicorn
+
+        from argus_mask.config import EditorSettings
+        from argus_mask.editor.app import create_editor_app
+    except ImportError as exc:
+        raise _fail(f"the editor needs the [server] extra: {exc}") from exc
+
+    cfg = _settings()
+    if assets_dir is not None:
+        cfg = replace(cfg, assets_dir=assets_dir)
+    try:
+        ed = EditorSettings.from_env()
+    except ConfigError as exc:
+        raise _fail(str(exc)) from exc
+    if blender is not None:
+        ed = replace(ed, blender=blender)
+    if blender_user is not None:
+        ed = replace(ed, blender_user=blender_user)
+    uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)
 
 
 @app.command()

@@ -9,6 +9,7 @@ from pathlib import Path
 from argus_mask.drivers import DRIVERS
 
 DEFAULT_PORT = 8109
+DEFAULT_EDITOR_PORT = 8111  # 8110 is the Audio2Face server
 DEFAULT_FPS = 30
 
 
@@ -59,4 +60,43 @@ class Settings:
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
             read_only=read_only,
+        )
+
+
+MPFB_DATA_UNDER_USER = Path("extensions/.user/user_default/mpfb/data")
+
+
+@dataclass(frozen=True)
+class EditorSettings:
+    """The face editor's own settings. It also reads :class:`Settings` for the assets root and the guards."""
+
+    blender: str = "blender"
+    # Blender's user directory (BLENDER_USER_RESOURCES), where MPFB and its asset packs are installed.
+    blender_user: Path | None = None
+    # MPFB's data directory, if it is not the usual place under blender_user.
+    mpfb_data: Path | None = None
+    build_timeout_s: float = 300.0
+
+    @property
+    def data_dir(self) -> Path | None:
+        if self.mpfb_data is not None:
+            return self.mpfb_data
+        return self.blender_user / MPFB_DATA_UNDER_USER if self.blender_user is not None else None
+
+    @classmethod
+    def from_env(cls) -> EditorSettings:
+        user = _env("BLENDER_USER") or os.environ.get("BLENDER_USER_RESOURCES", "").strip()
+        data = _env("MPFB_DATA")
+        raw_timeout = _env("BUILD_TIMEOUT_S", "300")
+        try:
+            timeout = float(raw_timeout)
+        except ValueError as exc:
+            raise ConfigError(f"ARGUS_MASK_BUILD_TIMEOUT_S {raw_timeout!r} is not a number") from exc
+        if not 10 <= timeout <= 3600:
+            raise ConfigError(f"ARGUS_MASK_BUILD_TIMEOUT_S {timeout}: must be between 10 and 3600")
+        return cls(
+            blender=_env("BLENDER", "blender") or "blender",
+            blender_user=Path(user) if user else None,
+            mpfb_data=Path(data) if data else None,
+            build_timeout_s=timeout,
         )
