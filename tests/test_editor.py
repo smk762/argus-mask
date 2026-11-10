@@ -607,6 +607,11 @@ def test_the_modifiers_route_lists_the_catalogue(client) -> None:
     assert len(by_name) == len(MODIFIERS)
     assert by_name["head-square"]["min"] == 0.0 and by_name["chin-width"]["min"] == -1.0
     assert "negative" not in by_name["chin-width"]  # file paths stay on the server
+    # Each two-way slider says what its ends mean, so the page can read "45% wider", not "+0.45".
+    assert by_name["chin-width"]["ends"] == ["narrower", "wider"]
+    assert by_name["head-age"]["ends"] == ["younger", "older"] and by_name["head-age"]["label"] == "Apparent age"
+    assert all(len(m["ends"]) == 2 for m in body["modifiers"] if m["min"] < 0)
+    assert all(m["ends"] == [] for m in body["modifiers"] if m["min"] == 0)
 
 
 def test_the_page_and_three_are_served(client) -> None:

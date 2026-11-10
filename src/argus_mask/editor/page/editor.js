@@ -43,29 +43,40 @@ const DEFAULT = {
   max_triangles: 30000,
 };
 
+// How each value reads: in the units it means, not MakeHuman's 0..1 or -1..+1.
 const fixed = (v) => Number(v).toFixed(2);
-const signed = (v) => (v > 0 ? '+' : '') + fixed(v);
-const years = (a) => `${Math.round(a < 0.5 ? 1 + 48 * a : 25 + 130 * (a - 0.5))} y`;  // MakeHuman's scale
+const pct = (v) => `${Math.round(v * 100)}%`;
+const years = (a) => `${Math.round(a < 0.5 ? 1 + 48 * a : 25 + 130 * (a - 0.5))} years`;  // MakeHuman's scale
+const sex = (v) => (v <= 0.005 ? 'female' : v >= 0.995 ? 'male' : Math.abs(v - 0.5) < 0.005 ? 'even'
+  : v < 0.5 ? `${Math.round((1 - v) * 100)}% female` : `${Math.round(v * 100)}% male`);
+// MakeHuman normalises the three ancestry values to a mix: show each one's share of it.
+const share = (key) => () => {
+  const race = preset.phenotype.race || {};
+  const total = (race.african || 0) + (race.asian || 0) + (race.caucasian || 0);
+  return total > 0 ? `${Math.round(((race[key] || 0) / total) * 100)}% of mix` : 'even mix';
+};
+// A two-way shape: "45% wider", "20% down"; 0 is the phenotype's own shape.
+const toward = ([low, high]) => (v) => (Math.abs(v) < 0.005 ? '—' : `${Math.round(Math.abs(v) * 100)}% ${v > 0 ? high : low}`);
 const ADULT_AGE = 0.3542;  // 18 years; preset.py and build_head.py hold the same
 // [path in the preset, label, min, max, step, how to show the value, the value it rests at]
 const BODY = [
-  ['phenotype.gender', 'Female – male', 0, 1, 0.01, fixed, 0],
+  ['phenotype.gender', 'Female – male', 0, 1, 0.01, sex, 0],
   ['phenotype.age', 'Age', ADULT_AGE, 1, 0.005, years, 0.5],
-  ['phenotype.muscle', 'Muscle', 0, 1, 0.01, fixed, 0.5],
-  ['phenotype.weight', 'Weight', 0, 1, 0.01, fixed, 0.5],
-  ['phenotype.proportions', 'Proportions', 0, 1, 0.01, fixed, 0.5],
-  ['phenotype.race.african', 'African', 0, 1, 0.01, fixed, 0.2],
-  ['phenotype.race.asian', 'Asian', 0, 1, 0.01, fixed, 0.2],
-  ['phenotype.race.caucasian', 'Caucasian', 0, 1, 0.01, fixed, 0.6],
+  ['phenotype.muscle', 'Muscle', 0, 1, 0.01, pct, 0.5],
+  ['phenotype.weight', 'Weight', 0, 1, 0.01, pct, 0.5],
+  ['phenotype.proportions', 'Proportions', 0, 1, 0.01, pct, 0.5],
+  ['phenotype.race.african', 'African', 0, 1, 0.01, share('african'), 0.2],
+  ['phenotype.race.asian', 'Asian', 0, 1, 0.01, share('asian'), 0.2],
+  ['phenotype.race.caucasian', 'Caucasian', 0, 1, 0.01, share('caucasian'), 0.6],
 ];
 const ADVANCED = [
-  ['mouth.tongue_flatten', 'Tongue height', 0.2, 1, 0.05, fixed, 0.6],
-  ['mouth.upper_teeth_drop_mm', 'Upper teeth ↓ mm', 0, 6, 0.1, fixed, 2.5],
-  ['mouth.cavity_shade', 'Mouth shade', 0, 1, 0.01, fixed, 0.02],
-  ['shape_scale.mouthPucker', 'Pucker ×', 0, 3, 0.05, fixed, 1.5],
-  ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05, fixed, 1.3],
-  ['bust.height_m', 'Bust height m', 0.2, 0.6, 0.01, fixed, 0.4],
-  ['max_triangles', 'Triangle budget', 1000, 30000, 500, String, 30000],
+  ['mouth.tongue_flatten', 'Tongue height', 0.2, 1, 0.05, (v) => `${pct(v)} of full`, 0.6],
+  ['mouth.upper_teeth_drop_mm', 'Upper teeth lowered', 0, 6, 0.1, (v) => `${Number(v).toFixed(1)} mm`, 2.5],
+  ['mouth.cavity_shade', 'Mouth darkness', 0, 1, 0.01, (v) => `${Math.round((1 - v) * 100)}% darker`, 0.02],
+  ['shape_scale.mouthPucker', 'Pucker strength', 0, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.5],
+  ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.3],
+  ['bust.height_m', 'Bust height', 0.2, 0.6, 0.01, (v) => `${Math.round(v * 100)} cm`, 0.4],
+  ['max_triangles', 'Triangle budget', 1000, 30000, 500, (v) => Number(v).toLocaleString(), 30000],
 ];
 // Asset pickers: [key, title, library part, optional, clothes slot, enlarge on hover]
 const PICKERS = [
@@ -159,7 +170,7 @@ function slider(entry, [path, label, min, max, step, show = fixed, rest = min < 
   });
   entry.body.append(row);
   entry.rows.push({ el: row, text: `${label} ${entry.title}`.toLowerCase() });
-  controls.push({ sync });
+  controls.push({ sync, paint });  // paint again on any change: the ancestry shares depend on each other
   return { isChanged: () => Math.abs(value() - rest) > 1e-9 };
 }
 
@@ -255,7 +266,7 @@ function buildPanels(library, catalogue) {
   for (const [group, title] of Object.entries(catalogue.groups)) {
     const mods = catalogue.modifiers.filter((m) => m.group === group).sort(order);
     if (!mods.length) continue;
-    const specs = mods.map((m) => [`targets.${m.name}`, m.label, m.min, 1, 0.05, m.min < 0 ? signed : fixed, 0]);
+    const specs = mods.map((m) => [`targets.${m.name}`, m.label, m.min, 1, 0.05, m.min < 0 ? toward(m.ends) : pct, 0]);
     sliderPanel(`m:${group}`, title, specs, { resetTo: () => { for (const m of mods) delete preset.targets[m.name]; } });
   }
   const adv = sliderPanel('advanced', 'Advanced: mouth fixes and budgets', ADVANCED, {
@@ -361,6 +372,7 @@ function current() {
 }
 
 function changed() {
+  for (const c of controls) c.paint?.();
   for (const p of panels) {
     const n = p.changed();
     p.countEl.textContent = n ? `${n} changed` : '';

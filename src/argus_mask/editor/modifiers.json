@@ -17,6 +17,10 @@
    "name": "head-angle-in-out",
    "group": "head",
    "label": "Angle: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "head/head-angle-in"
    ],
@@ -28,6 +32,10 @@
    "name": "head-scale-vert",
    "group": "head",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "head/head-scale-vert-decr"
    ],
@@ -39,6 +47,10 @@
    "name": "head-trans-backward-forward",
    "group": "head",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "head/head-trans-backward"
    ],
@@ -50,6 +62,10 @@
    "name": "head-trans-down-up",
    "group": "head",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "head/head-trans-down"
    ],
@@ -61,6 +77,10 @@
    "name": "head-fat",
    "group": "head",
    "label": "Fat",
+   "ends": [
+    "thinner",
+    "fatter"
+   ],
    "negative": [
     "head/head-fat-decr"
    ],
@@ -72,6 +92,7 @@
    "name": "head-invertedtriangular",
    "group": "head",
    "label": "Heart",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-invertedtriangular"
@@ -81,6 +102,7 @@
    "name": "head-diamond",
    "group": "head",
    "label": "Diamond",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-diamond"
@@ -90,6 +112,7 @@
    "name": "head-oval",
    "group": "head",
    "label": "Oval",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-oval"
@@ -99,6 +122,7 @@
    "name": "head-rectangular",
    "group": "head",
    "label": "Rectangular",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-rectangular"
@@ -108,6 +132,10 @@
    "name": "head-trans-in-out",
    "group": "head",
    "label": "Move: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "head/head-trans-in"
    ],
@@ -119,6 +147,10 @@
    "name": "head-back-scale-depth",
    "group": "head",
    "label": "Back depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "head/head-back-scale-depth-decr"
    ],
@@ -130,6 +162,7 @@
    "name": "head-round",
    "group": "head",
    "label": "Round",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-round"
@@ -138,7 +171,11 @@
   {
    "name": "head-age",
    "group": "head",
-   "label": "Age",
+   "label": "Apparent age",
+   "ends": [
+    "younger",
+    "older"
+   ],
    "negative": [
     "head/head-age-decr"
    ],
@@ -150,6 +187,10 @@
    "name": "head-scale-depth",
    "group": "head",
    "label": "Depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "head/head-scale-depth-decr"
    ],
@@ -161,6 +202,10 @@
    "name": "head-scale-horiz",
    "group": "head",
    "label": "Width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "head/head-scale-horiz-decr"
    ],
@@ -172,6 +217,7 @@
    "name": "head-triangular",
    "group": "head",
    "label": "Triangular",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-triangular"
@@ -181,6 +227,7 @@
    "name": "head-square",
    "group": "head",
    "label": "Square",
+   "ends": [],
    "negative": [],
    "positive": [
     "head/head-square"
@@ -190,6 +237,10 @@
    "name": "forehead-temple",
    "group": "forehead",
    "label": "Temple",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "forehead/forehead-temple-decr"
    ],
@@ -201,6 +252,10 @@
    "name": "forehead-trans-backward-forward",
    "group": "forehead",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "forehead/forehead-trans-backward"
    ],
@@ -212,6 +267,10 @@
    "name": "forehead-scale-vert",
    "group": "forehead",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "forehead/forehead-scale-vert-decr"
    ],
@@ -223,6 +282,10 @@
    "name": "forehead-nubian",
    "group": "forehead",
    "label": "Nubian",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "forehead/forehead-nubian-decr"
    ],
@@ -234,6 +297,10 @@
    "name": "eyebrows-angle-down-up",
    "group": "eyebrows",
    "label": "Angle: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyebrows/eyebrows-angle-down"
    ],
@@ -245,6 +312,10 @@
    "name": "eyebrows-trans-down-up",
    "group": "eyebrows",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyebrows/eyebrows-trans-down"
    ],
@@ -256,6 +327,10 @@
    "name": "eyebrows-trans-backward-forward",
    "group": "eyebrows",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "eyebrows/eyebrows-trans-backward"
    ],
@@ -267,6 +342,10 @@
    "name": "eye-corner1-down-up",
    "group": "eyes",
    "label": "Corner 1: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyes/l-eye-corner1-down",
     "eyes/r-eye-corner1-down"
@@ -280,6 +359,10 @@
    "name": "eye-height1",
    "group": "eyes",
    "label": "Height 1",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "eyes/l-eye-height1-decr",
     "eyes/r-eye-height1-decr"
@@ -293,6 +376,10 @@
    "name": "eye-scale",
    "group": "eyes",
    "label": "Scale",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "eyes/l-eye-scale-decr",
     "eyes/r-eye-scale-decr"
@@ -306,6 +393,10 @@
    "name": "eye-push1-in-out",
    "group": "eyes",
    "label": "Push 1: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "eyes/l-eye-push1-in",
     "eyes/r-eye-push1-in"
@@ -319,6 +410,10 @@
    "name": "eye-eyefold-down-up",
    "group": "eyes",
    "label": "Eye fold: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyes/l-eye-eyefold-down",
     "eyes/r-eye-eyefold-down"
@@ -332,6 +427,10 @@
    "name": "eye-height3",
    "group": "eyes",
    "label": "Height 3",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "eyes/l-eye-height3-decr",
     "eyes/r-eye-height3-decr"
@@ -345,6 +444,10 @@
    "name": "eye-height2",
    "group": "eyes",
    "label": "Height 2",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "eyes/l-eye-height2-decr",
     "eyes/r-eye-height2-decr"
@@ -358,6 +461,10 @@
    "name": "eye-bag",
    "group": "eyes",
    "label": "Bag",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "eyes/l-eye-bag-decr",
     "eyes/r-eye-bag-decr"
@@ -371,6 +478,10 @@
    "name": "eye-push2-in-out",
    "group": "eyes",
    "label": "Push 2: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "eyes/l-eye-push2-in",
     "eyes/r-eye-push2-in"
@@ -384,6 +495,10 @@
    "name": "eye-trans-down-up",
    "group": "eyes",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyes/l-eye-trans-down",
     "eyes/r-eye-trans-down"
@@ -397,6 +512,10 @@
    "name": "eye-bag-height",
    "group": "eyes",
    "label": "Bag height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "eyes/l-eye-bag-height-decr",
     "eyes/r-eye-bag-height-decr"
@@ -410,6 +529,10 @@
    "name": "eye-epicanthus-in-out",
    "group": "eyes",
    "label": "Epicanthus: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "eyes/l-eye-epicanthus-in",
     "eyes/r-eye-epicanthus-in"
@@ -423,6 +546,10 @@
    "name": "eye-eyefold-angle-down-up",
    "group": "eyes",
    "label": "Eye fold angle: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyes/l-eye-eyefold-angle-down",
     "eyes/r-eye-eyefold-angle-down"
@@ -436,6 +563,10 @@
    "name": "eye-bag-in-out",
    "group": "eyes",
    "label": "Bag: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "eyes/l-eye-bag-in",
     "eyes/r-eye-bag-in"
@@ -449,6 +580,10 @@
    "name": "eye-corner2-down-up",
    "group": "eyes",
    "label": "Corner 2: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "eyes/l-eye-corner2-down",
     "eyes/r-eye-corner2-down"
@@ -462,6 +597,10 @@
    "name": "eye-trans-in-out",
    "group": "eyes",
    "label": "Move: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "eyes/l-eye-trans-in",
     "eyes/r-eye-trans-in"
@@ -475,6 +614,10 @@
    "name": "eye-eyefold-concave-convex",
    "group": "eyes",
    "label": "Eye fold: concave \u2013 convex",
+   "ends": [
+    "concave",
+    "convex"
+   ],
    "negative": [
     "eyes/l-eye-eyefold-concave",
     "eyes/r-eye-eyefold-concave"
@@ -488,6 +631,10 @@
    "name": "ear-lobe",
    "group": "ears",
    "label": "Lobe",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "ears/l-ear-lobe-decr",
     "ears/r-ear-lobe-decr"
@@ -501,6 +648,10 @@
    "name": "ear-shape-square-round",
    "group": "ears",
    "label": "Shape: square \u2013 round",
+   "ends": [
+    "square",
+    "round"
+   ],
    "negative": [
     "ears/l-ear-shape-square",
     "ears/r-ear-shape-square"
@@ -514,6 +665,10 @@
    "name": "ear-trans-backward-forward",
    "group": "ears",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "ears/l-ear-trans-backward",
     "ears/r-ear-trans-backward"
@@ -527,6 +682,10 @@
    "name": "ear-rot-backward-forward",
    "group": "ears",
    "label": "Rotate: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "ears/l-ear-rot-backward",
     "ears/r-ear-rot-backward"
@@ -540,6 +699,10 @@
    "name": "ear-trans-down-up",
    "group": "ears",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "ears/l-ear-trans-down",
     "ears/r-ear-trans-down"
@@ -553,6 +716,10 @@
    "name": "ear-scale-vert",
    "group": "ears",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "ears/l-ear-scale-vert-decr",
     "ears/r-ear-scale-vert-decr"
@@ -566,6 +733,10 @@
    "name": "ear-flap",
    "group": "ears",
    "label": "Flap",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "ears/l-ear-flap-decr",
     "ears/r-ear-flap-decr"
@@ -579,6 +750,10 @@
    "name": "ear-shape-pointed-triangle",
    "group": "ears",
    "label": "Shape: pointed \u2013 triangle",
+   "ends": [
+    "pointed",
+    "triangle"
+   ],
    "negative": [
     "ears/l-ear-shape-pointed",
     "ears/r-ear-shape-pointed"
@@ -592,6 +767,10 @@
    "name": "ear-scale",
    "group": "ears",
    "label": "Scale",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "ears/l-ear-scale-decr",
     "ears/r-ear-scale-decr"
@@ -605,6 +784,10 @@
    "name": "ear-scale-depth",
    "group": "ears",
    "label": "Depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "ears/l-ear-scale-depth-decr",
     "ears/r-ear-scale-depth-decr"
@@ -618,6 +801,10 @@
    "name": "ear-wing",
    "group": "ears",
    "label": "Wing",
+   "ends": [
+    "flatter",
+    "further out"
+   ],
    "negative": [
     "ears/l-ear-wing-decr",
     "ears/r-ear-wing-decr"
@@ -631,6 +818,10 @@
    "name": "cheek-trans-down-up",
    "group": "cheek",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "cheek/l-cheek-trans-down",
     "cheek/r-cheek-trans-down"
@@ -644,6 +835,10 @@
    "name": "cheek-volume",
    "group": "cheek",
    "label": "Size",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "cheek/l-cheek-volume-decr",
     "cheek/r-cheek-volume-decr"
@@ -657,6 +852,10 @@
    "name": "cheek-inner",
    "group": "cheek",
    "label": "Inner",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "cheek/l-cheek-inner-decr",
     "cheek/r-cheek-inner-decr"
@@ -670,6 +869,10 @@
    "name": "cheek-bones",
    "group": "cheek",
    "label": "Bone width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "cheek/l-cheek-bones-decr",
     "cheek/r-cheek-bones-decr"
@@ -683,6 +886,10 @@
    "name": "nose-nostrils-angle-down-up",
    "group": "nose",
    "label": "Nostrils angle: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "nose/nose-nostrils-angle-down"
    ],
@@ -694,6 +901,10 @@
    "name": "nose-flaring",
    "group": "nose",
    "label": "Flaring",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "nose/nose-flaring-decr"
    ],
@@ -705,6 +916,10 @@
    "name": "nose-curve-concave-convex",
    "group": "nose",
    "label": "Curve: concave \u2013 convex",
+   "ends": [
+    "concave",
+    "convex"
+   ],
    "negative": [
     "nose/nose-curve-concave"
    ],
@@ -716,6 +931,10 @@
    "name": "nose-scale-depth",
    "group": "nose",
    "label": "Depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "nose/nose-scale-depth-decr"
    ],
@@ -727,6 +946,10 @@
    "name": "nose-scale-vert",
    "group": "nose",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "nose/nose-scale-vert-decr"
    ],
@@ -738,6 +961,10 @@
    "name": "nose-point-width",
    "group": "nose",
    "label": "Tip width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-point-width-decr"
    ],
@@ -749,6 +976,10 @@
    "name": "nose-scale-horiz",
    "group": "nose",
    "label": "Width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-scale-horiz-decr"
    ],
@@ -760,6 +991,10 @@
    "name": "nose-width1",
    "group": "nose",
    "label": "Width 1",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-width1-decr"
    ],
@@ -771,6 +1006,10 @@
    "name": "nose-trans-backward-forward",
    "group": "nose",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "nose/nose-trans-backward"
    ],
@@ -782,6 +1021,10 @@
    "name": "nose-trans-down-up",
    "group": "nose",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "nose/nose-trans-down"
    ],
@@ -793,6 +1036,10 @@
    "name": "nose-hump",
    "group": "nose",
    "label": "Hump",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "nose/nose-hump-decr"
    ],
@@ -804,6 +1051,10 @@
    "name": "nose-nostrils-width",
    "group": "nose",
    "label": "Nostrils width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-nostrils-width-decr"
    ],
@@ -815,6 +1066,10 @@
    "name": "nose-trans-in-out",
    "group": "nose",
    "label": "Move: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "nose/nose-trans-in"
    ],
@@ -826,6 +1081,10 @@
    "name": "nose-greek",
    "group": "nose",
    "label": "Greek",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "nose/nose-greek-decr"
    ],
@@ -837,6 +1096,10 @@
    "name": "nose-point-down-up",
    "group": "nose",
    "label": "Tip: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "nose/nose-point-down"
    ],
@@ -848,6 +1111,10 @@
    "name": "nose-width2",
    "group": "nose",
    "label": "Width 2",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-width2-decr"
    ],
@@ -859,6 +1126,10 @@
    "name": "nose-width3",
    "group": "nose",
    "label": "Width 3",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "nose/nose-width3-decr"
    ],
@@ -870,6 +1141,10 @@
    "name": "nose-septumangle",
    "group": "nose",
    "label": "Septum angle",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "nose/nose-septumangle-decr"
    ],
@@ -881,6 +1156,10 @@
    "name": "nose-base-down-up",
    "group": "nose",
    "label": "Base: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "nose/nose-base-down"
    ],
@@ -892,6 +1171,10 @@
    "name": "nose-compression-compress-uncompress",
    "group": "nose",
    "label": "Compression: pinched \u2013 open",
+   "ends": [
+    "pinched",
+    "open"
+   ],
    "negative": [
     "nose/nose-compression-compress"
    ],
@@ -903,6 +1186,10 @@
    "name": "nose-volume",
    "group": "nose",
    "label": "Size",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "nose/nose-volume-decr"
    ],
@@ -914,6 +1201,10 @@
    "name": "mouth-lowerlip-height",
    "group": "mouth",
    "label": "Lower lip height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "mouth/mouth-lowerlip-height-decr"
    ],
@@ -925,6 +1216,10 @@
    "name": "mouth-scale-horiz",
    "group": "mouth",
    "label": "Width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "mouth/mouth-scale-horiz-decr"
    ],
@@ -936,6 +1231,10 @@
    "name": "mouth-cupidsbow",
    "group": "mouth",
    "label": "Cupid's bow",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "mouth/mouth-cupidsbow-decr"
    ],
@@ -947,6 +1246,10 @@
    "name": "mouth-laugh-lines-in-out",
    "group": "mouth",
    "label": "Laugh lines: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "mouth/mouth-laugh-lines-in"
    ],
@@ -958,6 +1261,10 @@
    "name": "mouth-scale-depth",
    "group": "mouth",
    "label": "Depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "mouth/mouth-scale-depth-decr"
    ],
@@ -969,6 +1276,10 @@
    "name": "mouth-lowerlip-volume",
    "group": "mouth",
    "label": "Lower lip size",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "mouth/mouth-lowerlip-volume-decr"
    ],
@@ -980,6 +1291,10 @@
    "name": "mouth-angles-down-up",
    "group": "mouth",
    "label": "Angles: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-angles-down"
    ],
@@ -991,6 +1306,10 @@
    "name": "mouth-upperlip-ext-down-up",
    "group": "mouth",
    "label": "Upper lip outer: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-upperlip-ext-down"
    ],
@@ -1002,6 +1321,10 @@
    "name": "mouth-lowerlip-width",
    "group": "mouth",
    "label": "Lower lip width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "mouth/mouth-lowerlip-width-decr"
    ],
@@ -1013,6 +1336,10 @@
    "name": "mouth-trans-backward-forward",
    "group": "mouth",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "mouth/mouth-trans-backward"
    ],
@@ -1024,6 +1351,10 @@
    "name": "mouth-upperlip-width",
    "group": "mouth",
    "label": "Upper lip width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "mouth/mouth-upperlip-width-decr"
    ],
@@ -1035,6 +1366,10 @@
    "name": "mouth-scale-vert",
    "group": "mouth",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "mouth/mouth-scale-vert-decr"
    ],
@@ -1046,6 +1381,10 @@
    "name": "mouth-dimples-in-out",
    "group": "mouth",
    "label": "Dimples: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "mouth/mouth-dimples-in"
    ],
@@ -1057,6 +1396,10 @@
    "name": "mouth-upperlip-height",
    "group": "mouth",
    "label": "Upper lip height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "mouth/mouth-upperlip-height-decr"
    ],
@@ -1068,6 +1411,10 @@
    "name": "mouth-upperlip-volume",
    "group": "mouth",
    "label": "Upper lip size",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "mouth/mouth-upperlip-volume-decr"
    ],
@@ -1079,6 +1426,10 @@
    "name": "mouth-cupidsbow-width",
    "group": "mouth",
    "label": "Cupid's bow width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "mouth/mouth-cupidsbow-width-decr"
    ],
@@ -1090,6 +1441,10 @@
    "name": "mouth-lowerlip-ext-down-up",
    "group": "mouth",
    "label": "Lower lip outer: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-lowerlip-ext-down"
    ],
@@ -1101,6 +1456,10 @@
    "name": "mouth-upperlip-middle-down-up",
    "group": "mouth",
    "label": "Upper lip middle: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-upperlip-middle-down"
    ],
@@ -1112,6 +1471,10 @@
    "name": "mouth-trans-down-up",
    "group": "mouth",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-trans-down"
    ],
@@ -1123,6 +1486,10 @@
    "name": "mouth-trans-in-out",
    "group": "mouth",
    "label": "Move: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "mouth/mouth-trans-in"
    ],
@@ -1134,6 +1501,10 @@
    "name": "mouth-lowerlip-middle-down-up",
    "group": "mouth",
    "label": "Lower lip middle: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "mouth/mouth-lowerlip-middle-down"
    ],
@@ -1145,6 +1516,10 @@
    "name": "mouth-philtrum-volume",
    "group": "mouth",
    "label": "Philtrum size",
+   "ends": [
+    "smaller",
+    "bigger"
+   ],
    "negative": [
     "mouth/mouth-philtrum-volume-decr"
    ],
@@ -1156,6 +1531,10 @@
    "name": "chin-jaw-drop",
    "group": "chin",
    "label": "Jaw drop",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "chin/chin-jaw-drop-decr"
    ],
@@ -1167,6 +1546,10 @@
    "name": "chin-height",
    "group": "chin",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "chin/chin-height-decr"
    ],
@@ -1178,6 +1561,10 @@
    "name": "chin-prominent",
    "group": "chin",
    "label": "Forward",
+   "ends": [
+    "receding",
+    "prominent"
+   ],
    "negative": [
     "chin/chin-prominent-decr"
    ],
@@ -1189,6 +1576,10 @@
    "name": "chin-bones",
    "group": "chin",
    "label": "Bone width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "chin/chin-bones-decr"
    ],
@@ -1200,6 +1591,10 @@
    "name": "chin-width",
    "group": "chin",
    "label": "Width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "chin/chin-width-decr"
    ],
@@ -1211,6 +1606,10 @@
    "name": "chin-cleft",
    "group": "chin",
    "label": "Cleft",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "chin/chin-cleft-decr"
    ],
@@ -1222,6 +1621,7 @@
    "name": "chin-triangle",
    "group": "chin",
    "label": "Triangle",
+   "ends": [],
    "negative": [],
    "positive": [
     "chin/chin-triangle"
@@ -1231,6 +1631,10 @@
    "name": "chin-prognathism",
    "group": "chin",
    "label": "Jaw thrust",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "chin/chin-prognathism-decr"
    ],
@@ -1242,6 +1646,10 @@
    "name": "measure-neck-circ",
    "group": "neck",
    "label": "Circumference",
+   "ends": [
+    "thinner",
+    "thicker"
+   ],
    "negative": [
     "neck/measure-neck-circ-decr"
    ],
@@ -1253,6 +1661,10 @@
    "name": "measure-neck-height",
    "group": "neck",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "neck/measure-neck-height-decr"
    ],
@@ -1264,6 +1676,10 @@
    "name": "neck-scale-depth",
    "group": "neck",
    "label": "Depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "neck/neck-scale-depth-decr"
    ],
@@ -1275,6 +1691,10 @@
    "name": "neck-trans-backward-forward",
    "group": "neck",
    "label": "Move: back \u2013 forward",
+   "ends": [
+    "back",
+    "forward"
+   ],
    "negative": [
     "neck/neck-trans-backward"
    ],
@@ -1286,6 +1706,10 @@
    "name": "neck-double",
    "group": "neck",
    "label": "Double",
+   "ends": [
+    "less",
+    "more"
+   ],
    "negative": [
     "neck/neck-double-decr"
    ],
@@ -1297,6 +1721,10 @@
    "name": "neck-trans-in-out",
    "group": "neck",
    "label": "Move: in \u2013 out",
+   "ends": [
+    "in",
+    "out"
+   ],
    "negative": [
     "neck/neck-trans-in"
    ],
@@ -1308,6 +1736,10 @@
    "name": "neck-back-scale-depth",
    "group": "neck",
    "label": "Back depth",
+   "ends": [
+    "shallower",
+    "deeper"
+   ],
    "negative": [
     "neck/neck-back-scale-depth-decr"
    ],
@@ -1319,6 +1751,10 @@
    "name": "neck-scale-horiz",
    "group": "neck",
    "label": "Width",
+   "ends": [
+    "narrower",
+    "wider"
+   ],
    "negative": [
     "neck/neck-scale-horiz-decr"
    ],
@@ -1330,6 +1766,10 @@
    "name": "neck-scale-vert",
    "group": "neck",
    "label": "Height",
+   "ends": [
+    "shorter",
+    "taller"
+   ],
    "negative": [
     "neck/neck-scale-vert-decr"
    ],
@@ -1341,6 +1781,10 @@
    "name": "neck-trans-down-up",
    "group": "neck",
    "label": "Move: down \u2013 up",
+   "ends": [
+    "down",
+    "up"
+   ],
    "negative": [
     "neck/neck-trans-down"
    ],

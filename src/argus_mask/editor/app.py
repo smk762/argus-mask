@@ -104,6 +104,7 @@ def create_editor_app(
                     "group": m["group"],
                     "label": m["label"],
                     "min": 0.0 if one_way(m["name"]) else -1.0,
+                    "ends": m.get("ends") or [],
                 }
                 for m in MODIFIERS.values()
             ],

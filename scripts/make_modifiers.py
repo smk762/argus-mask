@@ -78,7 +78,47 @@ _WORDS = {
 }
 
 
+# What a two-way slider's ends mean, for the page to say "45% wider" rather than "+0.45". Taken from the
+# direction words a name ends with, else from the measure it changes, else "less" and "more".
+_MEASURES = {
+    "horiz": ("narrower", "wider"),
+    "width": ("narrower", "wider"),
+    "vert": ("shorter", "taller"),
+    "height": ("shorter", "taller"),
+    "depth": ("shallower", "deeper"),
+    "volume": ("smaller", "bigger"),
+    "scale": ("smaller", "bigger"),
+    "fat": ("thinner", "fatter"),
+    "age": ("younger", "older"),
+    "lobe": ("smaller", "bigger"),
+    "flap": ("smaller", "bigger"),
+    "wing": ("flatter", "further out"),
+    "bag": ("smaller", "bigger"),
+    "temple": ("narrower", "wider"),
+    "double": ("less", "more"),
+    "bones": ("narrower", "wider"),
+    "circ": ("thinner", "thicker"),
+    "prominent": ("receding", "prominent"),
+    "prognathism": ("back", "forward"),
+}
+# Labels the generated ones say badly.
+_LABELS = {"head-age": "Apparent age"}
+
+
+def ends(name: str) -> list[str]:
+    """``["narrower", "wider"]`` for ``nose-scale-horiz``; ``["down", "up"]`` for ``nose-trans-down-up``."""
+    m = _PAIR.search(name)
+    if m and set(m.groups()) <= _DIRECTIONS and m.group(1) != m.group(2):
+        return [_ENDS.get(w, w) for w in m.groups()]
+    for word in reversed(re.sub(r"\d+$", "", name).split("-")):
+        if word in _MEASURES:
+            return list(_MEASURES[word])
+    return ["less", "more"]
+
+
 def label(name: str, group: str) -> str:
+    if name in _LABELS:
+        return _LABELS[name]
     """``mouth-upperlip-volume`` to ``Upper lip size``; ``nose-trans-down-up`` to ``Move: down – up``."""
     ends = ""
     m = _PAIR.search(name)
@@ -136,6 +176,7 @@ def main() -> int:
                     "name": name,
                     "group": group,
                     "label": label(name, group),
+                    "ends": ends(name) if negative else [],
                     "negative": [f"{group}/{s}" for s in negative],
                     "positive": [f"{group}/{s}" for s in positive],
                 }
