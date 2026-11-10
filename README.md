@@ -129,7 +129,7 @@ Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances 
 
 ## Speech from a TTS service
 
-`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL` and streams the reply into the face. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
+`say` posts `{"text": …}` to `ARGUS_MASK_TTS_URL`, waits for the whole reply, then plays it into the face at the speed of speech. The wait is deliberate: Miso TTS 8B generates at about a quarter of real time on an RTX 3090, and streaming it live would stall the face mid-sentence. `--stream` forwards the audio as it is generated, for a service that is faster than real time. The face stays free for other sources while the speech is being generated. The service must stream raw PCM and state the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Extra request fields go in with `-p key=value`. The text is sent to that service and nowhere else; mask's server only ever receives audio.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream

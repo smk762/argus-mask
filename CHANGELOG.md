@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the
+  face and plays it at the speed of speech (`--stream` keeps the old behaviour for a service faster than real time),
+  and a source's pacing clock now starts at its first chunk rather than at connect.
+
 - **Audio no longer runs ahead of the mouth with a slow driver.** Audio2Face answers about 0.3 s behind the audio it
   is given. The server now holds each audio chunk until frames reach its end, and ends a stream whose driver falls
   more than 10 s behind.

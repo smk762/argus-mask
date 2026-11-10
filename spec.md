@@ -24,7 +24,7 @@ audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN devic
 Do not rebuild these.
 
 - **NVIDIA Audio2Face-3D.** The models (regression v2.3, diffusion v3.0) are under the NVIDIA Open Model License; the SDK is MIT. Audio is resampled to 16 kHz. The SDK is C++/CUDA on TensorRT with no Python bindings, and recommends 4 GB+ of VRAM. Mask reaches it as an external service by URL, the way darkroom reaches ComfyUI. Mask never links TensorRT.
-- **Miso TTS** (a separate TTS server, `:8034` where this was developed), optional. `POST /synthesise/stream` takes text and streams raw 24 kHz mono float32 PCM, with the format in `X-Sample-Rate` / `X-Audio-Format` / `X-Channels` headers. It is one way to get speech to push into mask, never a dependency: only the `say` command talks to it.
+- **Miso TTS** (a separate TTS server, `:8034` where this was developed), optional. `POST /synthesise/stream` takes text and streams raw 24 kHz mono float32 PCM, with the format in `X-Sample-Rate` / `X-Audio-Format` / `X-Channels` headers. It is one way to get speech to push into mask, never a dependency: only the `say` command talks to it. It is slower than real time on a 3090 (see [Open questions](#open-questions)).
 - **argus-cortex** (`>=0.4.6,<0.5`):
   - `wire.make_versioned_base` and `render_schema` for the wire schema.
   - `server.WriteGuard` / `cross_site_refuse` / `env_flag`.
@@ -234,14 +234,15 @@ Settled: the Audio2Face service is our own server on the MIT SDK ([The Audio2Fac
 
 Also settled by the spike: the SDK returns ARKit weights, so the server needs no solve of its own.
 
-- **Whether Miso and Audio2Face fit on one card.** Audio2Face turned out small (about 0.6 GB). Miso is an 8B model loaded in bfloat16, so roughly 16 GB of weights on a 24 GB card, which leaves little for ComfyUI. Not measured yet: the card was busy during the spike. Still to measure with both loaded: VRAM, whether Miso generates faster than real time, and its cold-load delay after an idle unload.
+Measured since, with Miso and Audio2Face loaded together on the RTX 3090 and nothing else heavy: 22 GB of the 24 GB in use (Miso 18 GB, Audio2Face 0.5 GB), so ComfyUI cannot be resident at the same time. Miso loads cold in about 85 s and generates at about 0.27 times real time, so `say` fetches the whole utterance before playing it rather than streaming it; a ten-second line starts about 35 s after it is typed. The chain Miso → mask → Audio2Face → viewer was run end to end: 300 frames for 10 s of speech, the sound never ahead of the mouth.
+
 - **How the stock head looks in motion.** The mouth was fixed from still frames of a real take (see [The stock head](#the-stock-head)). Nobody has yet watched it speak on a real screen with sound.
 - **Weak clients (0.2 for the Go).** Whether a base Apple-silicon Mac holds 66 views at a steady frame rate, and whether a Raspberry Pi holds one. The triangle and texture budget is a guess until measured.
 - **Emotion.** Audio2Face accepts emotion input. Not in 0.1.
 
 ## Build order
 
-1. **Spike, thrown away afterwards.** Done: the SDK builds in Docker and returns ARKit weights; the findings are in [The Audio2Face server](#the-audio2face-server). The Miso measurement is still owed.
+1. **Spike, thrown away afterwards.** Done: the SDK builds in Docker and returns ARKit weights; the findings are in [The Audio2Face server](#the-audio2face-server). The Miso measurement is in [Open questions](#open-questions).
 2. **Engine.** Wire models and schema, the `energy` driver, the idle layer, `drive` to a take file.
 3. **Faces.** The model contract, the manifest with provenance, `inspect`. The stock head recipe, and the head it builds.
 4. **Server.** Sessions, the two sockets, `/health`, `push`.
