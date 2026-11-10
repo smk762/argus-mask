@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   117 shape sliders (head, forehead, brow ridge, eyes, ears, cheeks, nose, mouth, chin, neck) over MakeHuman's CC0
   modelling targets, from `modifiers.json`, generated from MPFB's catalogue. Collapsible panels, a filter, a hover
   preview of each asset, and a preview card that opens a large view. A build is a preview (`assets/.preview/`);
-  **Export** puts it in `assets/<id>` and on `/faces`; **Download preset** saves the form. It offers only assets an installed pack licenses, writes their
+  **Export** puts it in `assets/<id>` and on `/faces`; **Download preset** saves the form and
+  **Open preset…** loads one. A **Saved faces** page reviews, remixes, renames and deletes (to `assets/.trash/`) the
+  faces the editor made, and reviews the others. It offers only assets an installed pack licenses, writes their
   licences into the face's provenance, replaces only faces it made, and is behind the write guards. Blender, MPFB and
   the asset packs are the user's to install; none ships.
 - **A second stock preset**, `stock-02`: a female head, about 25, short brown hair, in the same crew uniform as

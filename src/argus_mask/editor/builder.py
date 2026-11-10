@@ -40,6 +40,8 @@ PRESET_NAME = "preset.json"
 MODEL_NAME = "head.glb"
 RECIPE_NAME = "head.recipe.json"
 PREVIEW_DIR = ".preview"
+TRASH_DIR = ".trash"  # deleted faces go here, not away: the server skips it, and a move restores one
+PLACES = ("export", "preview")
 # Where the stock heads put the camera: a bust, not a face filling the screen.
 FRAMING = Framing(distance=0.9, height=-0.08)
 _ERROR_CHARS = 2000
@@ -60,6 +62,10 @@ class NotOwned(BuildError):
 
 class NoPreview(BuildError):
     """Export was asked for a face that has no finished preview."""
+
+
+class Taken(BuildError):
+    """A rename to an id another face already has."""
 
 
 class Refused(BuildError):
@@ -268,6 +274,115 @@ class Builder:
         if proc.returncode == 2:
             raise Refused(why)
         raise BuildError(f"Blender exited with status {proc.returncode}: {why}")
+
+    # ---- saved faces: list, rename, delete -------------------------------------------------------
+
+    def root(self, place: str) -> Path:
+        return self.preview_dir if place == "preview" else self.assets_dir
+
+    def editable(self, face_id: str, place: str) -> bool:
+        return self.previewed(face_id) if place == "preview" else self.owned(face_id)
+
+    def preset_in(self, face_id: str, place: str) -> Preset | None:
+        if not _FACE_ID.match(face_id):
+            return None
+        return self._read_preset(self.root(place) / face_id)
+
+    def saved(self) -> list[dict]:
+        """Every face in the assets root (the editor's and any other) and every preview, newest first."""
+        out: dict[str, dict] = {}
+        for place in PLACES:
+            root = self.root(place)
+            if not root.is_dir():
+                continue
+            store = FaceStore(root)
+            accepted, refused = store.scan()
+            for manifest in accepted:
+                model = root / manifest.id / manifest.model.file
+                entry = out.setdefault(manifest.id, {"id": manifest.id, "export": None, "preview": None})
+                entry[place] = {
+                    "name": manifest.name,
+                    "kind": manifest.provenance.kind,
+                    "license": manifest.provenance.license,
+                    "notes": manifest.provenance.notes,
+                    "editable": self.editable(manifest.id, place),
+                    "updated": model.stat().st_mtime,
+                    "bytes": model.stat().st_size,
+                    "sha256": manifest.model.sha256,
+                }
+            if place == "export":
+                for face_id, why in refused.items():
+                    if _FACE_ID.match(face_id):
+                        out.setdefault(face_id, {"id": face_id, "export": None, "preview": None})["refused"] = why
+
+        def newest(e: dict) -> float:
+            return max((e[p]["updated"] for p in PLACES if e.get(p)), default=0.0)
+
+        return sorted(out.values(), key=newest, reverse=True)
+
+    async def rename(self, face_id: str, *, new_id: str | None = None, name: str | None = None) -> str:
+        """Give a face the editor made a new id, a new name, or both: its export and its preview together."""
+        if self._lock.locked():
+            raise Busy("another build or export is running")
+        async with self._lock:
+            new_id = new_id or face_id
+            if not _FACE_ID.match(face_id) or not _FACE_ID.match(new_id):
+                raise NoPreview(f"{new_id!r} is not a face id")
+            places = [p for p in PLACES if (self.root(p) / face_id).exists()]
+            if not places:
+                raise NoPreview(f"there is no face {face_id!r}")
+            for place in places:
+                if not self.editable(face_id, place):
+                    raise NotOwned(f"{face_id!r} is a face the editor did not make")
+            if new_id != face_id and any((self.root(p) / new_id).exists() for p in PLACES):
+                raise Taken(f"there is already a face {new_id!r}")
+            for place in places:
+                self._rewrite(self.root(place), face_id, new_id, name)
+            log.info("face_renamed", face=face_id, to=new_id, name=name)
+            return new_id
+
+    def _rewrite(self, root: Path, face_id: str, new_id: str, name: str | None) -> None:
+        source = root / face_id
+        work = Path(tempfile.mkdtemp(prefix=".rename-", dir=root))
+        try:
+            shutil.copytree(source, work, dirs_exist_ok=True)
+            manifest = FaceManifest.model_validate_json((work / MANIFEST_NAME).read_text(encoding="utf-8"))
+            manifest = manifest.model_copy(update={"id": new_id, "name": name or manifest.name})
+            (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            preset = self._read_preset(work)
+            if preset is not None:
+                preset = preset.model_copy(update={"id": new_id, "name": name or preset.name})
+                (work / PRESET_NAME).write_text(
+                    preset.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
+                )
+            if new_id == face_id:
+                self._install(work, source, root)
+            else:
+                work.rename(root / new_id)
+                shutil.rmtree(source, ignore_errors=True)
+        finally:
+            if work.exists():
+                shutil.rmtree(work, ignore_errors=True)
+
+    async def delete(self, face_id: str, places: tuple[str, ...] = PLACES) -> Path:
+        """Move a face the editor made (its export, its preview, or both) to the trash; returns where it went."""
+        if self._lock.locked():
+            raise Busy("another build or export is running")
+        async with self._lock:
+            if not _FACE_ID.match(face_id):
+                raise NoPreview(f"{face_id!r} is not a face id")
+            found = [p for p in places if (self.root(p) / face_id).exists()]
+            if not found:
+                raise NoPreview(f"there is no face {face_id!r}")
+            for place in found:
+                if not self.editable(face_id, place):
+                    raise NotOwned(f"{face_id!r} is a face the editor did not make")
+            bin_ = self.assets_dir / TRASH_DIR / f"{face_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+            bin_.mkdir(parents=True)
+            for place in found:
+                (self.root(place) / face_id).rename(bin_ / place)
+            log.info("face_deleted", face=face_id, places=found, trash=str(bin_))
+            return bin_
 
     @staticmethod
     def _install(work: Path, target: Path, root: Path) -> None:

@@ -17,6 +17,8 @@
   header h1 { font-size: 16px; margin: 0 8px 6px 0; white-space: nowrap; }
   header label { display: grid; gap: 3px; color: var(--dim); font-size: 12px; }
   header .grow { flex: 1 1 160px; }
+  a.nav { color: var(--accent); text-decoration: none; font-size: 13px; margin: 0 8px 8px 0; white-space: nowrap; }
+  a.nav:hover { text-decoration: underline; }
   #status { flex: 1 1 220px; color: var(--dim); font-size: 12px; align-self: center; min-height: 1.4em; }
   #status.bad, #banner { color: var(--bad); }
   #banner { padding: 8px 16px; background: #2a1517; border-bottom: 1px solid var(--line); }
@@ -95,11 +97,14 @@
 <form id="form" autocomplete="off">
   <header>
     <h1>Face editor</h1>
+    <a class="nav" href="./faces.html">Saved faces →</a>
     <label class="grow">Start from<select id="start"></select></label>
     <label class="grow">Id<input type="text" id="id" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required></label>
     <label class="grow">Name<input type="text" id="name" maxlength="80" required></label>
     <label class="grow">Filter<input type="search" id="filter" placeholder="nose, lip, hair…"></label>
     <span id="status"></span>
+    <button type="button" id="open" title="Load a preset .json file into the form">Open preset…</button>
+    <input type="file" id="open-file" accept=".json,application/json" hidden>
     <button type="button" id="download" title="Save the form as a preset .json file">Download preset</button>
     <button type="button" id="export" disabled title="Copy the preview into assets/, where the server serves it">Export</button>
     <button type="submit" class="primary" id="build" title="Build a preview (Ctrl+Enter)">Build</button>

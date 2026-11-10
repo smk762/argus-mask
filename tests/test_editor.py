@@ -470,7 +470,82 @@ def test_the_editor_never_replaces_a_face_it_did_not_make(client, rig) -> None:
     assert reply.status_code == 409 and "did not make" in reply.json()["detail"]
     assert (rig["assets"] / "stock-01" / "manifest.json").read_text() == before
     assert calls(rig) == []
-    assert client.get("/face/stock-01").status_code == 404  # nor shows it
+    # It may show one, read-only, for review: the same face the server serves.
+    assert client.get("/face/stock-01").json()["id"] == "stock-01"
+
+
+# ---- saved faces --------------------------------------------------------------------------
+
+
+def test_saved_lists_previews_exports_and_other_faces(client, rig) -> None:
+    make_face(rig["assets"], "stock-01")
+    make_face(rig["assets"], "anonymous", provenance=None)
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/build", json=preset(id="other")).status_code == 200
+    assert client.post("/export/other").status_code == 200
+    rows = {r["id"]: r for r in client.get("/saved").json()}
+    assert set(rows) == {"my-face", "other", "stock-01", "anonymous"}
+    assert rows["my-face"]["preview"]["editable"] and rows["my-face"]["export"] is None
+    assert rows["other"]["preview"] and rows["other"]["export"]["editable"]
+    assert rows["stock-01"]["export"]["kind"] == "stock" and not rows["stock-01"]["export"]["editable"]
+    assert "provenance" in rows["anonymous"]["refused"]
+    assert client.get("/saved/other/preset?from=export").json()["id"] == "other"
+    assert client.get("/saved/stock-01/preset?from=export").status_code == 404
+
+
+def test_rename_moves_the_export_and_the_preview_together(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    reply = client.post("/saved/my-face/rename", json={"id": "renamed", "name": "Renamed"})
+    assert reply.status_code == 200, reply.text
+    for root in (rig["assets"], rig["assets"] / ".preview"):
+        assert not (root / "my-face").exists()
+        manifest = FaceStore(root).load("renamed")[0]
+        assert manifest.name == "Renamed"
+        assert json.loads((root / "renamed" / "preset.json").read_text())["id"] == "renamed"
+    assert served(rig["assets"]) == ["renamed"]
+    assert leftovers(rig["assets"]) == []
+    # A name alone keeps the id.
+    assert client.post("/saved/renamed/rename", json={"name": "Again"}).json() == {"id": "renamed"}
+    assert FaceStore(rig["assets"]).load("renamed")[0].name == "Again"
+
+
+def test_rename_refuses_a_taken_id_another_faces_or_a_bad_one(client, rig) -> None:
+    make_face(rig["assets"], "stock-01")
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/saved/my-face/rename", json={"id": "stock-01"}).status_code == 409
+    assert client.post("/saved/stock-01/rename", json={"name": "Mine now"}).status_code == 409
+    assert client.post("/saved/my-face/rename", json={"id": "../escape"}).status_code == 422
+    assert client.post("/saved/my-face/rename", json={}).status_code == 422
+    assert client.post("/saved/nothing/rename", json={"name": "x"}).status_code == 404
+    assert FaceStore(rig["assets"]).load("stock-01")[0].name != "Mine now"
+
+
+def test_delete_moves_to_the_trash(client, rig) -> None:
+    make_face(rig["assets"], "stock-01")
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    # Just the preview first, then the rest.
+    assert client.delete("/saved/my-face?from=preview").status_code == 200
+    assert not (rig["assets"] / ".preview" / "my-face").exists() and served(rig["assets"]) == ["my-face", "stock-01"]
+    trash = client.delete("/saved/my-face").json()["trash"]
+    assert served(rig["assets"]) == ["stock-01"]
+    assert (Path(trash) / "export" / "head.glb").is_file()
+    assert client.delete("/saved/stock-01").status_code == 409  # never another's face
+    assert client.delete("/saved/my-face").status_code == 404
+
+
+def test_rename_and_delete_are_guarded_writes(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    cross = {"Origin": "https://elsewhere.example"}
+    assert client.post("/saved/my-face/rename", json={"name": "x"}, headers=cross).status_code == 403
+    assert client.delete("/saved/my-face", headers=cross).status_code == 403
+    assert (rig["assets"] / ".preview" / "my-face").exists()
+
+
+def test_the_faces_page_is_served(client) -> None:
+    assert "Saved faces" in client.get("/faces.html").text
+    assert client.get("/faces.js").status_code == 200
 
 
 def test_a_cross_site_build_is_refused(client, rig) -> None:

@@ -1,8 +1,7 @@
 // The face editor: panels that write a preset, POST /build, and a preview of the face it made.
 // Everything the server sends is put on the page as text, never as HTML.
 
-import * as THREE from 'three';
-import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
+import { Stage } from './stage.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -287,95 +286,21 @@ function applyFilter() {
   }
 }
 
-// ---- preview: one renderer, shown in the card or in the large view --------------------------
+// ---- preview: one stage, shown in the card or in the large view -----------------------------
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-const scene = new THREE.Scene();
-scene.background = new THREE.Color('#101216');
-scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f4a, 1.6));
-const key = new THREE.DirectionalLight(0xffffff, 2.2);
-key.position.set(0.6, 0.8, 1.5);
-scene.add(key);
-const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
-const pivot = new THREE.Group();
-scene.add(pivot);
-let targets = new Map();
-let pose = 'rest';
-let turn = false;
+const stage = new Stage();
 let shown = null;   // the manifest on show
-
-function host() { return $('modal').hidden ? $('thumb') : $('stage'); }
-function resize() {
-  const box = host().getBoundingClientRect();
-  if (!box.width || !box.height) return;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(box.width, box.height, false);
-  camera.aspect = box.width / box.height;
-  camera.updateProjectionMatrix();
-}
-window.addEventListener('resize', resize);
-
-function weigh(name, value) {
-  for (const { influences, index } of targets.get(name) || []) influences[index] = value;
-}
-
-const POSES = {
-  rest: () => ({}),
-  open: () => ({ jawOpen: 0.6, mouthFunnel: 0.1 }),
-  smile: () => ({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),
-  // A rough syllable rhythm, to judge the mouth in motion. The real motion comes from Audio2Face.
-  talk: (t) => {
-    const s = Math.max(0, Math.sin(t * 9.0)) * (0.55 + 0.45 * Math.sin(t * 2.3));
-    return { jawOpen: 0.45 * s, mouthFunnel: 0.25 * Math.max(0, Math.sin(t * 4.1)), mouthClose: 0.1 * (1 - s),
-             mouthPucker: 0.3 * Math.max(0, Math.sin(t * 3.3 + 1)), mouthStretchLeft: 0.2 * s, mouthStretchRight: 0.2 * s };
-  },
-};
-
-function animate(now) {
-  requestAnimationFrame(animate);
-  if (!shown) return;
-  const t = now / 1000;
-  const weights = POSES[pose](t);
-  const blink = (t % 4.2) < 0.12 ? 1 : 0;
-  for (const name of targets.keys()) weigh(name, weights[name] ?? 0);
-  weigh('eyeBlinkLeft', blink);
-  weigh('eyeBlinkRight', blink);
-  pivot.rotation.y += ((turn ? 0.6 : 0) - pivot.rotation.y) * 0.08;
-  renderer.render(scene, camera);
-}
-requestAnimationFrame(animate);
-
-function poseButtons() {
-  const bar = $('poses');
-  bar.replaceChildren();
-  for (const name of Object.keys(POSES)) {
-    const b = el('button', { type: 'button', textContent: name });
-    b.onclick = () => {
-      pose = name;
-      for (const x of bar.children) if (x.dataset.pose) x.classList.toggle('on', x === b);
-    };
-    b.dataset.pose = name;
-    b.classList.toggle('on', name === pose);
-    bar.append(b);
-  }
-  const spin = el('button', { type: 'button', textContent: 'turn' });
-  spin.onclick = () => { turn = !turn; spin.classList.toggle('on', turn); };
-  bar.append(spin);
-}
 
 function openModal() {
   if (!shown) return;
   hidePeek();
   $('modal').hidden = false;
-  $('stage').append(renderer.domElement);
-  resize();
+  stage.attach($('stage'));
   $('close').focus();
 }
 function closeModal() {
   $('modal').hidden = true;
-  $('thumb').prepend(renderer.domElement);
-  resize();
+  stage.attach($('thumb'));
 }
 $('thumb').addEventListener('click', openModal);
 $('close').addEventListener('click', closeModal);
@@ -405,34 +330,19 @@ function meta() {
 }
 
 async function showFace(faceId) {
-  const manifest = await json(`/face/${encodeURIComponent(faceId)}`);
-  const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model?v=${manifest.model.sha256}`);
-  pivot.clear();
-  targets = new Map();
-  pivot.add(gltf.scene);
-  gltf.scene.traverse((node) => {
-    if (node.isMesh && node.morphTargetDictionary) {
-      for (const [name, index] of Object.entries(node.morphTargetDictionary)) {
-        if (!targets.has(name)) targets.set(name, []);
-        targets.get(name).push({ influences: node.morphTargetInfluences, index });
-      }
-    }
-  });
-  const f = manifest.framing || {};
-  camera.fov = f.fov || 30;
-  camera.position.set(0, f.height || 0, f.distance || 0.6);
-  camera.lookAt(0, f.height || 0, 0);
+  const from = made.get(faceId)?.previewed === false ? 'export' : 'preview';
+  const manifest = await json(`/face/${encodeURIComponent(faceId)}?from=${from}`);
+  await stage.load(`/face/${encodeURIComponent(faceId)}/model?from=${from}&v=${manifest.model.sha256}`, manifest.framing || {});
   shown = manifest;
-  if (!renderer.domElement.parentElement) $('thumb').prepend(renderer.domElement);
+  if (!stage.host) stage.attach($('thumb'));
   $('empty').hidden = true;
   document.querySelector('#thumb .zoom').hidden = false;
   $('modal-name').textContent = `${manifest.name} (${manifest.id})`;
   $('modal-credits').textContent = manifest.provenance.license;
   $('modal-credits').title = manifest.provenance.notes;
-  poseButtons();
-  resize();
+  stage.poseButtons($('poses'));
   meta();
-  window.__editor = { face: faceId, shapes: targets.size };
+  window.__editor = { face: faceId, shapes: stage.targets.size };
 }
 
 // ---- the preset in and out -----------------------------------------------------------------
@@ -469,7 +379,7 @@ async function loadStarts() {
   meta();
   select.onchange = async () => {
     const chosen = presets.find((p) => p.id === select.value);
-    preset = structuredClone(chosen ? { ...DEFAULT, ...chosen, targets: chosen.targets || {} } : DEFAULT);
+    if (chosen) adopt(chosen); else preset = structuredClone(DEFAULT);
     syncForm();
     if (chosen) {
       await showFace(chosen.id).catch(() => {});
@@ -546,10 +456,54 @@ async function main() {
   }
   buildPanels(library, catalogue);
   await loadStarts();
-  // An unsent draft survives a reload; anything the server no longer offers is refused at Build.
-  const draft = store.get('draft', null);
-  if (draft && draft.phenotype && draft.assets) preset = { ...structuredClone(DEFAULT), ...draft, targets: draft.targets || {} };
+  const params = new URLSearchParams(location.search);
+  if (params.get('remix')) {
+    await remix(params.get('remix'), params.get('from') === 'export' ? 'export' : 'preview');
+    history.replaceState(null, '', location.pathname);
+  } else {
+    // An unsent draft survives a reload; anything the server no longer offers is refused at Build.
+    const draft = store.get('draft', null);
+    if (draft && draft.phenotype && draft.assets) adopt(draft);
+  }
   syncForm();
 }
+
+// Take a preset as the form, over the defaults (a preset may leave fields out).
+function adopt(source, changes = {}) {
+  preset = { ...structuredClone(DEFAULT), ...structuredClone(source), targets: source.targets || {}, ...changes };
+}
+
+// Start from a saved face's preset, under a new id, so building never touches the original.
+async function remix(faceId, from) {
+  try {
+    const base = await json(`/saved/${encodeURIComponent(faceId)}/preset?from=${from}`);
+    const taken = new Set((await json('/saved')).map((r) => r.id));
+    const stem = `${base.id}-remix`.slice(0, 58);
+    let id = stem;
+    for (let n = 2; taken.has(id); n += 1) id = `${stem}${n}`;
+    adopt(base, { id, name: `${base.name} (remix)`.slice(0, 80) });
+    $('start').value = '';
+    status(`Remixing ${base.name} as ${id}. Build to see it; the original is untouched.`);
+  } catch (err) {
+    status(`Could not remix ${faceId}: ${err.message}`, true);
+  }
+}
+
+$('open').addEventListener('click', () => $('open-file').click());
+$('open-file').addEventListener('change', async () => {
+  const file = $('open-file').files[0];
+  $('open-file').value = '';
+  if (!file) return;
+  try {
+    const loaded = JSON.parse(await file.text());
+    if (!loaded || typeof loaded !== 'object' || !loaded.phenotype || !loaded.assets) throw new Error('not a preset: it needs phenotype and assets');
+    adopt(loaded);
+    $('start').value = '';
+    syncForm();
+    status(`Opened ${file.name}. Build to see it; anything this machine does not have is refused then.`);
+  } catch (err) {
+    status(`Could not open ${file.name}: ${err.message}`, true);
+  }
+});
 
 main().catch((err) => status(err.message, true));
