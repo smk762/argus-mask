@@ -42,6 +42,11 @@
     color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
   textarea { min-height: 120px; resize: vertical; font-size: 15px; }
   .count { justify-self: end; font-size: 11px; color: var(--dim); }
+  .temp { display: grid; grid-template-columns: 110px 1fr 44px auto; gap: 10px; align-items: center; font-size: 13px; }
+  .temp input[type=range] { width: 100%; accent-color: var(--accent); }
+  .temp input[type=range]:disabled { opacity: .35; }
+  .temp output { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+  .temp label.check { font-size: 12px; color: var(--dim); }
   .params .row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; margin-bottom: 6px; }
   .hint { font-size: 12px; color: var(--dim); }
   .warnline { font-size: 13px; color: var(--warn); }
@@ -88,6 +93,12 @@
         <label id="voice-other-wrap" hidden>Voice name or speaker <input type="text" id="voice-other" placeholder="a clone's name, or a speaker number"></label>
         <label>Pause between sentences, ms <input type="number" id="pause" min="0" max="10000" step="50" value="300"></label>
         <label>Seed (idle layer) <input type="number" id="seed" min="0" value="0"></label>
+      </div>
+      <div class="temp" title="Sampling temperature, sent as the request's temperature field. Lower is steadier, higher more varied. Miso takes 0.1 to 1.5; left at the default, the service uses its own (or the clone's pinned) value.">
+        <span>Temperature</span>
+        <input type="range" id="temp" min="0.1" max="1.5" step="0.05" value="0.9">
+        <output id="temp-out">0.90</output>
+        <label class="check"><input type="checkbox" id="temp-default" checked> service default</label>
       </div>
       <label class="check" title="Forward the audio as the TTS generates it: only for a service faster than real time"><input type="checkbox" id="stream"> Stream (only for a TTS faster than real time)</label>
       <details>

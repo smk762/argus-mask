@@ -143,7 +143,14 @@ function params() {
   }
   const { speaker } = chosenVoice();
   if (speaker && !('speaker' in out)) out.speaker = speaker;
+  // The slider, unless left to the service (or a temperature typed as an extra field already says)
+  if (!$('temp-default').checked && !('temperature' in out)) out.temperature = Number($('temp').value);
   return out;
+}
+
+function paintTemperature() {
+  $('temp-out').textContent = $('temp-default').checked ? '—' : Number($('temp').value).toFixed(2);
+  $('temp').disabled = $('temp-default').checked;
 }
 
 // ---- the command line, kept equal to the form --------------------------------------------------------
@@ -164,7 +171,8 @@ function updateCli() {
   const file = $('file').files[0];
   $('push-cli').value = ['argus-mask push', shell(file ? file.name : '<file.wav>'), '--face', shell(face || '<id>'),
     '--url', shell(state.server || 'http://127.0.0.1:8109'), ...(Number($('push-seed').value) ? ['--seed', String(Number($('push-seed').value))] : [])].join(' ');
-  store.set('form', { tts, pause: $('pause').value, seed: $('seed').value, stream: $('stream').checked });
+  store.set('form', { tts, pause: $('pause').value, seed: $('seed').value, stream: $('stream').checked,
+    temp: $('temp').value, tempDefault: $('temp-default').checked });
 }
 
 // ---- sending, and what happens -------------------------------------------------------------------
@@ -244,6 +252,7 @@ $('add-param').onclick = () => paramRow();
 $('voice').addEventListener('change', () => { $('voice-other-wrap').hidden = $('voice').value !== '\u0001other'; updateCli(); });
 $('tts').addEventListener('change', loadVoices);
 for (const id of ['text', 'voice-other', 'pause', 'seed', 'stream', 'tts', 'file', 'push-seed']) $(id).addEventListener('input', updateCli);
+for (const id of ['temp', 'temp-default']) $(id).addEventListener('input', () => { paintTemperature(); updateCli(); });
 $('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('send').disabled) $('say').requestSubmit(); });
 
 const saved = store.get('form', {});
@@ -251,6 +260,9 @@ if (saved.tts) $('tts').value = saved.tts;
 if (saved.pause !== undefined) $('pause').value = saved.pause;
 if (saved.seed !== undefined) $('seed').value = saved.seed;
 $('stream').checked = Boolean(saved.stream);
+if (saved.temp !== undefined) $('temp').value = saved.temp;
+if (saved.tempDefault !== undefined) $('temp-default').checked = saved.tempDefault;
+paintTemperature();
 await refresh();
 await loadVoices();
 // A broadcast already running from this editor (a reload mid-sentence): follow it again.

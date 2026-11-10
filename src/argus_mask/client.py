@@ -278,13 +278,16 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ClientError("nothing to say")
-    # Wyoming's synthesize event: text, and a voice {name, language, speaker}. Other -p fields ride in the voice.
+    # Wyoming's synthesize event: text, and a voice {name, language, speaker}. Any other -p field (a
+    # temperature, say) goes beside the text in the event's data: a server that does not know it ignores
+    # it, and a bridge to an engine that takes it can pass it on.
     data: dict = {"text": text}
     voice = {k: v for k, v in body.items() if k in ("name", "language", "speaker") or k == "voice"}
     if "voice" in voice:
         voice["name"] = str(voice.pop("voice"))
     if voice:
         data["voice"] = voice
+    data |= {k: v for k, v in body.items() if k not in ("text", "voice", "name", "language", "speaker")}
     try:
         sock = socket.create_connection((parts.hostname, parts.port), timeout=TTS_TIMEOUT_S)
     except OSError as exc:
