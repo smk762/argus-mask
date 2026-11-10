@@ -89,6 +89,21 @@ class EditorSettings:
     build_timeout_s: float = 300.0
     # Builds kept so that asking for one again (undo, redo) copies it instead of running Blender. 0: none.
     build_cache: int = 40
+    # How the editor reaches the server (to check an exported face and send a test), and the origin a
+    # screen opens the viewer at: the TLS proxy, on a LAN. The viewer's defaults to the server's.
+    server_url: str = f"http://127.0.0.1:{DEFAULT_PORT}"
+    viewer_url: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("server_url", "viewer_url"):
+            value = getattr(self, name)
+            if value and not value.startswith(("http://", "https://")):
+                raise ConfigError(f"ARGUS_MASK_{name.upper()} {value!r}: must be an http:// or https:// URL")
+
+    @property
+    def viewer(self) -> str:
+        """The origin a screen opens the viewer at."""
+        return (self.viewer_url or self.server_url).rstrip("/")
 
     @property
     def data_dir(self) -> Path | None:
@@ -113,4 +128,6 @@ class EditorSettings:
             mpfb_data=Path(data) if data else None,
             build_timeout_s=timeout,
             build_cache=_cache_size(),
+            server_url=(_env("SERVER_URL") or f"http://127.0.0.1:{DEFAULT_PORT}").rstrip("/"),
+            viewer_url=_env("VIEWER_URL").rstrip("/"),
         )

@@ -785,3 +785,114 @@ def test_the_viewer_dresses_the_parts_the_recipe_names() -> None:
     assert 'WET_LINE = "wetline"' in recipe and "mesh.name === 'wetline'" in look
     assert 'basemesh.name = basemesh.data.name = "head"' in recipe and "mesh.name === 'head'" in look
     assert "SKIN_DETAIL" in recipe and "const baked = Boolean(m.normalMap)" in look
+
+
+# ---- from the editor to a screen --------------------------------------------------------------
+
+
+@pytest.fixture
+def on_screen(rig):
+    """A real server on the editor's assets root, and an editor pointed at it."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from argus_mask.editor.app import create_editor_app  # noqa: PLC0415
+    from tests.helpers import live_server  # noqa: PLC0415
+
+    make_face(rig["assets"], "stock-01")
+
+    def editor(server_url: str, *, read_only: bool = False, **server):
+        ed = replace(rig["editor"], server_url=server_url, viewer_url="https://mask.example.org")
+        return TestClient(create_editor_app(Settings(assets_dir=rig["assets"]), ed))
+
+    def server(read_only: bool = False):
+        return live_server(create_app(Settings(assets_dir=rig["assets"], read_only=read_only)))
+
+    return editor, server
+
+
+def test_an_exported_face_is_checked_on_the_server(on_screen) -> None:
+    editor, server = on_screen
+    with server() as url, editor(url) as c:
+        state = c.get("/screen/stock-01").json()
+        assert state["server_ok"] and state["listed"] and state["exported"] and state["screens"] == []
+        assert state["viewer"] == "https://mask.example.org" and "hint" not in state
+        # A face the editor has not exported: no link to hand out.
+        state = c.get("/screen/my-face").json()
+        assert not state["exported"] and "Export it first" in state["hint"]
+
+
+def test_a_server_on_other_assets_is_said_plainly(on_screen, tmp_path) -> None:
+    editor, _ = on_screen
+    from tests.helpers import live_server  # noqa: PLC0415
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    with live_server(create_app(Settings(assets_dir=elsewhere))) as url, editor(url) as c:
+        state = c.get("/screen/stock-01").json()
+        assert state["server_ok"] and not state["listed"] and "same assets directory" in state["hint"]
+        assert c.post("/screen/stock-01/test").status_code == 404
+
+
+def test_no_server_is_said_plainly(on_screen) -> None:
+    editor, _ = on_screen
+    with editor("http://127.0.0.1:9") as c:
+        state = c.get("/screen/stock-01").json()
+        assert not state["server_ok"] and "no argus-mask server answers" in state["hint"]
+        assert c.get("/screens").json()["server_ok"] is False
+
+
+def test_a_screen_that_reports_is_seen_from_the_editor(on_screen) -> None:
+    import asyncio  # noqa: PLC0415
+
+    import websockets  # noqa: PLC0415
+
+    editor, server = on_screen
+    with server() as url, editor(url) as c:
+
+        async def watch_and_ask():
+            async with websockets.connect(url.replace("http", "ws") + "/session/stock-01/view", proxy=None) as ws:
+                await ws.send(json.dumps({"type": "status", "audio": True, "display": "hld", "kiosk": True}))
+                for _ in range(100):
+                    screens = await asyncio.to_thread(lambda: c.get("/screens").json()["screens"])
+                    if screens:
+                        break
+                    await asyncio.sleep(0.02)
+                state = await asyncio.to_thread(lambda: c.get("/screen/stock-01").json())
+                test = await asyncio.to_thread(lambda: c.post("/screen/stock-01/test"))
+                heard = []
+                while True:  # the chime reaches the screen as the server's own stream
+                    message = await asyncio.wait_for(ws.recv(), 10)
+                    if isinstance(message, str):
+                        heard.append(json.loads(message)["type"])
+                        if heard[-1] == "end":
+                            return screens, state, test, heard
+
+        screens, state, test, heard = asyncio.run(watch_and_ask())
+    assert screens == {"stock-01": [{"display": "hld", "audio_ready": True, "kiosk": True}]}
+    assert state["screens"] == [{"display": "hld", "audio_ready": True, "kiosk": True}]
+    assert test.status_code == 200 and test.json()["ok"]
+    assert heard[0] == "header" and "frame" in heard and heard[-1] == "end"
+
+
+def test_a_read_only_server_refuses_the_test(on_screen) -> None:
+    editor, server = on_screen
+    with server(read_only=True) as url, editor(url) as c:
+        reply = c.post("/screen/stock-01/test")
+        assert reply.status_code == 409 and "read-only" in reply.json()["detail"]
+
+
+def test_the_test_is_a_guarded_write(on_screen) -> None:
+    editor, server = on_screen
+    with server() as url, editor(url) as c:
+        assert c.post("/screen/stock-01/test", headers={"Origin": "https://elsewhere.example"}).status_code == 403
+
+
+def test_editor_server_urls(monkeypatch) -> None:
+    monkeypatch.setenv("ARGUS_MASK_SERVER_URL", "http://10.0.0.5:8109/")
+    ed = EditorSettings.from_env()
+    assert ed.server_url == "http://10.0.0.5:8109" and ed.viewer == "http://10.0.0.5:8109"
+    monkeypatch.setenv("ARGUS_MASK_VIEWER_URL", "https://mask.example.org/")
+    assert EditorSettings.from_env().viewer == "https://mask.example.org"
+    monkeypatch.setenv("ARGUS_MASK_VIEWER_URL", "mask.example.org")
+    with pytest.raises(ValueError, match="http"):
+        EditorSettings.from_env()

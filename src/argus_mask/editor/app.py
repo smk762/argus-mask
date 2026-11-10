@@ -25,8 +25,14 @@ reaches the file system or Blender's command line except through that lookup.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 
+import numpy as np
 import structlog
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -43,6 +49,30 @@ from argus_mask.models import FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards
 
 log = structlog.get_logger(__name__)
+
+SERVER_TIMEOUT_S = 3.0
+_FACE_ID = re.compile(FACE_ID_PATTERN)
+
+
+def chime(rate: int = 24000) -> np.ndarray:
+    """A short two-note chime, for hearing that a screen plays sound: no voice, nothing to mistake for one."""
+    out = []
+    for freq, seconds in ((660.0, 0.22), (880.0, 0.34)):
+        t = np.arange(int(rate * seconds)) / rate
+        env = np.minimum(1, t / 0.01) * np.exp(-t * 6)
+        out.append((0.3 * env * np.sin(2 * np.pi * freq * t)).astype(np.float32))
+    return np.concatenate([*out, np.zeros(int(rate * 0.15), dtype=np.float32)])
+
+
+def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, str | None]:
+    """GET *path* on the argus-mask server: (status, JSON, why not), never raising."""
+    try:
+        with urllib.request.urlopen(f"{base}{path}", timeout=SERVER_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only, checked in config
+            return reply.status, json.loads(reply.read()), None
+    except urllib.error.HTTPError as exc:
+        return exc.code, None, f"{exc.code} {exc.reason}"
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return None, None, f"no argus-mask server answers at {base} ({getattr(exc, 'reason', exc)})"
 
 
 class Rename(BaseModel):
@@ -231,6 +261,70 @@ def create_editor_app(
         except OSError as exc:
             raise HTTPException(500, f"delete failed: {exc}") from exc
         return {"trash": str(trash)}
+
+    # ---- from the editor to a screen ------------------------------------------------------------
+
+    async def on_server(face_id: str) -> dict:
+        """What the server says about a face: is it up, does it list the face, which screens watch it."""
+        status, health, why = await asyncio.to_thread(server_get, ed.server_url, "/health")
+        out = {
+            "server": ed.server_url,
+            "viewer": ed.viewer,
+            "server_ok": status == 200,
+            "reason": why,
+            "read_only": bool(health and health.get("read_only")),
+            "listed": False,
+            "screens": [],
+        }
+        if status == 200 and isinstance(health, dict):
+            out["screens"] = (health.get("screens") or {}).get(face_id, [])
+            listed, _, _ = await asyncio.to_thread(server_get, ed.server_url, f"/face/{face_id}")
+            out["listed"] = listed == 200
+        return out
+
+    @app.get("/screen/{face_id}")
+    async def screen(face_id: str) -> dict:
+        if not _FACE_ID.match(face_id):
+            raise HTTPException(404, f"{face_id!r} is not a face id")
+        try:
+            store.load(face_id)
+            exported = True
+        except FaceError:
+            exported = False
+        out = await on_server(face_id) | {"face": face_id, "exported": exported}
+        if not exported:
+            out["hint"] = "Only an exported face can go on a screen: Export it first. A preview is never served."
+        elif not out["server_ok"]:
+            out["hint"] = f"{out['reason']}. Start it with: argus-mask serve --assets-dir {cfg.assets_dir}"
+        elif not out["listed"]:
+            # The usual cause: the editor and the server were started on different assets directories.
+            out["hint"] = (
+                f"The server at {ed.server_url} does not list {face_id}. Is it serving the same assets directory "
+                f"as the editor ({cfg.assets_dir})? Start it with: argus-mask serve --assets-dir {cfg.assets_dir}"
+            )
+        return out
+
+    @app.get("/screens")
+    async def screens() -> dict:
+        """The server's screens per face, for the saved-faces cards."""
+        status, health, why = await asyncio.to_thread(server_get, ed.server_url, "/health")
+        if status != 200 or not isinstance(health, dict):
+            return {"server_ok": False, "reason": why, "screens": {}}
+        return {"server_ok": True, "reason": None, "screens": health.get("screens") or {}}
+
+    @app.post("/screen/{face_id}/test")
+    async def screen_test(face_id: str) -> dict:
+        """A chime through the server's own source socket, as `push` sends one: its read-only and guards apply."""
+        from argus_mask import client  # noqa: PLC0415 - websockets: the [server] extra
+
+        state = await screen(face_id)
+        if not state["listed"]:
+            raise HTTPException(404, state.get("hint") or f"the server does not list {face_id}")
+        try:
+            done = await client.push(ed.server_url, face_id, chime(), 24000)
+        except client.ClientError as exc:
+            raise HTTPException(409, str(exc)) from exc  # the server's own reason: read-only, a live source ...
+        return {"ok": True, "screens": len(state["screens"]), "frames": done.get("frames")}
 
     @app.get("/look.js")
     def look() -> FileResponse:

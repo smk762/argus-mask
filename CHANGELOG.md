@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Editor to screen** (#28). On screen… in the editor and on Saved faces: checks the server lists the exported
+  face (and says plainly when it does not), builds the viewer link at `ARGUS_MASK_VIEWER_URL` with display, quality,
+  kiosk and background, to open, copy or scan as a QR code, shows whether screens are watching and can be heard,
+  plays a test chime through the server's source socket, and gives the `say` command. The viewer shows **Tap to
+  start** until its sound is unlocked and a brief **Ready** after, takes `kiosk=1`, and reports its state on its
+  socket (`ViewerStatus`, in the wire schema); `/health` lists `screens` per face. The viewer's reconnect backoff
+  now grows as it was meant to.
 - **Stock heads republished**: `stock-01` revision 4 and `stock-02`'s first lock, both built by the recipe with the wet
   line and baked skin maps (about 10 MB each). `fetch_stock_head.py --id stock-02` fetches the second.
 - **Recipe: wet line and skin maps** (#11, #9). A tear line along each lower lid (`wetline`, found by casting

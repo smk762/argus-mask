@@ -303,3 +303,36 @@ def test_a_driver_that_falls_far_behind_ends_the_stream(assets, monkeypatch) -> 
         assert failure["type"] == "error" and "behind the audio" in failure["detail"]
         assert notes[-1]["type"] == "end" and "behind the audio" in notes[-1]["error"]
         assert client.get("/health").json()["live"] == []
+
+
+def _screens(client, face="test-head", want=None, tries=100):
+    """The screens /health lists for *face*, once they reach *want* (the socket is read in the background)."""
+    import time  # noqa: PLC0415
+
+    for _ in range(tries):
+        screens = client.get("/health").json()["screens"].get(face, [])
+        if want is None or screens == want:
+            return screens
+        time.sleep(0.01)
+    return screens
+
+
+def test_a_viewer_that_reports_is_a_screen(client) -> None:
+    with client.websocket_connect("/session/test-head/view") as viewer:
+        assert _screens(client, want=[]) == []  # connected, not yet said what it is: not a screen
+        viewer.send_text(json.dumps({"type": "status", "audio": False, "display": "hld", "kiosk": True}))
+        assert _screens(client, want=[{"display": "hld", "audio_ready": False, "kiosk": True}])
+        viewer.send_text(json.dumps({"type": "status", "audio": True, "display": "hld", "kiosk": True}))
+        assert _screens(client, want=[{"display": "hld", "audio_ready": True, "kiosk": True}])
+    assert _screens(client, want=[]) == []  # gone with its socket
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["not json", json.dumps({"type": "status", "display": "cinema"}), json.dumps({"type": "status", "x": "y" * 2000})],
+)
+def test_a_viewer_saying_anything_else_is_ignored(client, message) -> None:
+    with client.websocket_connect("/session/test-head/view") as viewer:
+        viewer.send_text(message)
+        viewer.send_text(json.dumps({"type": "status", "audio": True}))  # still heard after the bad one
+        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False}])

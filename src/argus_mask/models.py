@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Literal
 
 from argus_cortex.wire import make_versioned_base, render_schema
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # 1.0: initial contract.
 MASK_VERSION = "1.0"
@@ -127,6 +127,29 @@ class DriverHealth(BaseModel):
     reason: str | None = None
 
 
+class ViewerStatus(BaseModel):
+    """What a viewer says about itself on its socket, when it connects and whenever it changes.
+
+    State, not media: whether it can play sound yet (a browser needs one click or key press first),
+    and how it shows the face. The server keeps the latest per viewer and reports it on ``/health``.
+    """
+
+    model_config = ConfigDict(extra="ignore")  # a newer viewer may say more
+
+    type: Literal["status"] = "status"
+    audio: bool = Field(False, description="Sound is unlocked: the screen will be heard")
+    display: Literal["flat", "hld", "go"] = "flat"
+    kiosk: bool = False
+
+
+class Screen(BaseModel):
+    """A viewer that has said what it is: one entry of ``Health.screens``."""
+
+    display: str
+    audio_ready: bool
+    kiosk: bool = False
+
+
 class Health(BaseModel):
     version: str
     driver: DriverHealth
@@ -135,8 +158,13 @@ class Health(BaseModel):
     read_only: bool
     faces: int
     live: list[str] = Field(default_factory=list, description="Faces with a source connected")
+    screens: dict[str, list[Screen]] = Field(
+        default_factory=dict, description="Per face, the viewers watching it that have reported their state"
+    )
 
 
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
-    return render_schema([StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health], title=WIRE_TITLE)
+    return render_schema(
+        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus], title=WIRE_TITLE
+    )

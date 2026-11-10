@@ -264,6 +264,17 @@
           "title": "Read Only",
           "type": "boolean"
         },
+        "screens": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/Screen"
+            },
+            "type": "array"
+          },
+          "description": "Per face, the viewers watching it that have reported their state",
+          "title": "Screens",
+          "type": "object"
+        },
         "version": {
           "title": "Version",
           "type": "string"
@@ -333,6 +344,30 @@
         "license"
       ],
       "title": "Provenance",
+      "type": "object"
+    },
+    "Screen": {
+      "description": "A viewer that has said what it is: one entry of ``Health.screens``.",
+      "properties": {
+        "audio_ready": {
+          "title": "Audio Ready",
+          "type": "boolean"
+        },
+        "display": {
+          "title": "Display",
+          "type": "string"
+        },
+        "kiosk": {
+          "default": false,
+          "title": "Kiosk",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "display",
+        "audio_ready"
+      ],
+      "title": "Screen",
       "type": "object"
     },
     "SourceHello": {
@@ -456,6 +491,40 @@
         "driver"
       ],
       "title": "StreamHeader",
+      "type": "object"
+    },
+    "ViewerStatus": {
+      "description": "What a viewer says about itself on its socket, when it connects and whenever it changes.\n\nState, not media: whether it can play sound yet (a browser needs one click or key press first),\nand how it shows the face. The server keeps the latest per viewer and reports it on ``/health``.",
+      "properties": {
+        "audio": {
+          "default": false,
+          "description": "Sound is unlocked: the screen will be heard",
+          "title": "Audio",
+          "type": "boolean"
+        },
+        "display": {
+          "default": "flat",
+          "enum": [
+            "flat",
+            "hld",
+            "go"
+          ],
+          "title": "Display",
+          "type": "string"
+        },
+        "kiosk": {
+          "default": false,
+          "title": "Kiosk",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "status",
+          "default": "status",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "ViewerStatus",
       "type": "object"
     }
   },

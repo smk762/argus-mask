@@ -41,7 +41,7 @@ from argus_mask.audio import PcmDecoder
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.faces import FaceError, FaceStore
-from argus_mask.models import DriverHealth, FaceManifest, Health, SourceHello, StreamHeader
+from argus_mask.models import DriverHealth, FaceManifest, Health, Screen, SourceHello, StreamHeader, ViewerStatus
 from argus_mask.performance import Performer, make_header
 from argus_mask.take import line
 
@@ -58,6 +58,8 @@ VIEWER_QUEUE = 2048
 # Audio is released once frames reach its end, give or take this many frames (the resampler holds
 # a few samples back, so the frame under a chunk's last milliseconds comes with the next chunk).
 AUDIO_SLACK_FRAMES = 2
+# A viewer's status message is a few fields; anything longer is not one.
+MAX_STATUS_BYTES = 1024
 # A driver this far behind the audio is not going to catch up: the stream is ended.
 MAX_DRIVER_LAG_MS = 10_000.0
 
@@ -75,6 +77,9 @@ class Stage:
         self.header: StreamHeader | None = None
         self.claimed = False  # a source holds the face, from its connect to its last frame
         self.viewers: set[asyncio.Queue[str | bytes | None]] = set()
+        # The viewers that have said what they are (by their queue): the screens. A socket client
+        # that never reports (record, an older page) watches, but is not counted as a screen.
+        self.screens: dict[asyncio.Queue[str | bytes | None], Screen] = {}
 
     def send(self, message: str | bytes) -> None:
         for queue in list(self.viewers):
@@ -165,6 +170,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             read_only=cfg.read_only,
             faces=len(faces),
             live=sorted(fid for fid, stage in stages.items() if stage.claimed),
+            screens={fid: list(stage.screens.values()) for fid, stage in sorted(stages.items()) if stage.screens},
         )
 
     @app.get("/faces", response_model=list[FaceManifest])
@@ -368,8 +374,16 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     await ws.send_text(message)
 
         async def watch() -> None:
-            while (await ws.receive())["type"] != "websocket.disconnect":
-                pass  # a viewer has nothing to say; only its leaving matters
+            # A viewer says only what state it is in (ViewerStatus); anything else, or too big, is ignored.
+            while (message := await ws.receive())["type"] != "websocket.disconnect":
+                text = message.get("text")
+                if not text or len(text) > MAX_STATUS_BYTES:
+                    continue
+                try:
+                    status = ViewerStatus.model_validate_json(text)
+                except ValidationError:
+                    continue
+                stage.screens[queue] = Screen(display=status.display, audio_ready=status.audio, kiosk=status.kiosk)
 
         async def first(job: Callable[[], Awaitable[None]], scope: anyio.CancelScope) -> None:
             try:
@@ -387,6 +401,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 group.start_soon(first, watch, group.cancel_scope)
         finally:
             stage.viewers.discard(queue)
+            stage.screens.pop(queue, None)
 
     if VIEWER_DIR.is_dir():
         # Last, so it never shadows a route above.

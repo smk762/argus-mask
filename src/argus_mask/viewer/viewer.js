@@ -7,6 +7,8 @@
 //   ?hud=0           hide the status line
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
 //   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
+//   ?kiosk=1         a dedicated screen: no HUD, no cursor, full screen on the first tap or key press
+//                    (start Chromium with --kiosk --autoplay-policy=no-user-gesture-required for no tap at all)
 //   ?quality=medium  low | medium (default) | high: the look's profile (see look.js); record uses high
 //   ?ao= ?shadows= ?skin= ?cornea= ?ibl= ?smaa= ?dof= ?grain= ?bloom=   1 or 0, over the profile
 //   ?hair=a2c        a2c (alpha to coverage) | hash | cutout: how hair cards meet the background
@@ -21,6 +23,7 @@ import { Look, lookOptions } from './look.js';
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
 const RECORD = params.get('record') === '1';
+const KIOSK = params.get('kiosk') === '1';
 const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
 const BUFFER_S = Math.min(2, Math.max(0.05, (Number.isFinite(BUFFER_MS) ? BUFFER_MS : 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
 const RESYNC_S = 0.05;        // after an underrun, how soon the late audio starts
@@ -32,13 +35,17 @@ const hudEl = document.getElementById('hud');
 const noticeEl = document.getElementById('notice');
 const noticeText = document.getElementById('notice-text');
 const noticeButton = document.getElementById('notice-button');
-if (params.get('hud') === '0') hudEl.hidden = true;
+if (params.get('hud') === '0' || KIOSK) hudEl.hidden = true;
+if (KIOSK) document.body.classList.add('kiosk');
+const startEl = document.getElementById('start');
+const readyEl = document.getElementById('ready');
 
 // What a test (or a curious operator in the console) can read.
 const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
   look: null,   // the profile and effects in use: see look.js
+  screenReady: false, kiosk: KIOSK,   // connected and heard; a dedicated screen
 };
 
 function notice(text, button, onClick) {
@@ -160,8 +167,14 @@ function unlockAudio() {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
   } catch { state.audio = 'unavailable'; return; }
   const settle = () => {
+    const was = state.audio;
     state.audio = audio.state === 'running' ? 'running' : 'locked';
-    if (audio.state === 'running') { notice(''); anchor = null; }   // re-anchor on the audio clock
+    if (audio.state === 'running' && was !== 'running') {
+      startEl.classList.remove('show');
+      anchor = null;   // re-anchor on the audio clock
+      announce();
+    }
+    if (state.audio !== was) report();
   };
   audio.resume().then(settle, settle);
   settle();
@@ -234,12 +247,13 @@ function onMessage(event) {
   else if (message.type === 'error') fail(message.detail);
 }
 
+let socket = null;
+let delay = 500;           // reconnect backoff: grows across attempts, back to 500 ms once connected
 function connect(faceId) {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  const socket = new WebSocket(`${scheme}://${location.host}/session/${encodeURIComponent(faceId)}/view`);
+  socket = new WebSocket(`${scheme}://${location.host}/session/${encodeURIComponent(faceId)}/view`);
   socket.binaryType = 'arraybuffer';
-  let delay = 500;
-  socket.onopen = () => { state.connected = true; delay = 500; };
+  socket.onopen = () => { state.connected = true; delay = 500; report(); announce(); };
   socket.onmessage = onMessage;
   socket.onclose = () => {
     state.connected = false;
@@ -247,6 +261,31 @@ function connect(faceId) {
     setTimeout(() => connect(faceId), delay);   // the server restarted, or the network blinked
     delay = Math.min(delay * 2, 8000);
   };
+}
+
+// Tell the server what this screen is and whether it can be heard: the editor shows it as
+// "1 screen ready". State, not media (models.ViewerStatus).
+function report() {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'status', audio: state.audio === 'running', display: DISPLAY, kiosk: KIOSK }));
+  }
+}
+
+// Connected and heard: say so for a moment, then get out of the way.
+let readyTimer = null;
+function announce() {
+  state.screenReady = state.connected && state.audio === 'running';
+  if (!state.screenReady) return;
+  readyEl.classList.add('show');
+  clearTimeout(readyTimer);
+  readyTimer = setTimeout(() => readyEl.classList.remove('show'), 3000);
+}
+
+// The one gesture a browser needs: sound on, and full screen (a page cannot ask for either unprompted).
+function start() {
+  unlockAudio();
+  const root = document.documentElement;
+  if (!document.fullscreenElement && root.requestFullscreen) root.requestFullscreen().catch(() => {});
 }
 
 // ---- drawing -------------------------------------------------------------------------------
@@ -346,10 +385,11 @@ async function main() {
   // (Chromium: --autoplay-policy=no-user-gesture-required), so try first and ask only if refused.
   unlockAudio();
   setTimeout(() => {
-    if (state.audio !== 'running' && state.audio !== 'unavailable') notice('The face is ready. Sound needs one click.', 'Turn sound on', unlockAudio);
+    // Silent until asked: say so, plainly, rather than leave a face that will never be heard.
+    if (state.audio !== 'running' && state.audio !== 'unavailable') startEl.classList.add('show');
   }, 400);
-  window.addEventListener('pointerdown', unlockAudio);
-  window.addEventListener('keydown', unlockAudio);
+  window.addEventListener('pointerdown', start);
+  window.addEventListener('keydown', start);
 }
 
 main();

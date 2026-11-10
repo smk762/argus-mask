@@ -2,6 +2,7 @@
 // Everything the server sends is put on the page as text, never as HTML.
 
 import { Stage } from './stage.js';
+import { openScreen } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -465,6 +466,7 @@ function meta() {
   // Export the face on show, and only while it is what the form describes.
   $('export').disabled = busy || !shown || !state.previewed || stale;
   $('export').textContent = state.exported ? 'Export again' : 'Export';
+  $('onscreen').disabled = !shown || !state.exported;  // only an exported face is served: previews never are
   if (!shown) { box.hidden = true; return; }
   box.replaceChildren(
     el('span', { className: 'name', textContent: `${shown.name} (${shown.id})` }),
@@ -666,7 +668,8 @@ $('export').addEventListener('click', async () => {
   try {
     const done = await json(`/export/${encodeURIComponent(id)}`, { method: 'POST' });
     await loadStarts();
-    status(`Exported to ${done.path}: on the server's /faces now.`);
+    status(`Exported to ${done.path}. Next: On screen…`);
+    openScreen(id, shown.name);
   } catch (err) {
     status(err.message, true);
   } finally {
@@ -747,3 +750,5 @@ $('open-file').addEventListener('change', async () => {
 });
 
 main().catch((err) => status(err.message, true));
+
+$('onscreen').addEventListener('click', () => { if (shown) openScreen(shown.id, shown.name); });
