@@ -57,6 +57,41 @@ CLOTHES = "clothes"
 MOVING_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue")
 PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", "cupsize", "firmness")
 RACE_KEYS = ("asian", "caucasian", "african")
+# Modelling targets a preset may set under ``targets``, from -1 to +1: base name, and the suffixes of
+# the negative and positive files under MPFB's data/targets/<group>/. ("", "") is a one-way target, one
+# file named as the target, from 0 to 1. The editor's preset.py holds the same table.
+MODIFIERS = {
+    # Lips
+    "mouth-upperlip-volume": ("decr", "incr"),
+    "mouth-lowerlip-volume": ("decr", "incr"),
+    "mouth-upperlip-height": ("decr", "incr"),
+    "mouth-lowerlip-height": ("decr", "incr"),
+    "mouth-scale-horiz": ("decr", "incr"),
+    "mouth-cupidsbow": ("decr", "incr"),
+    "mouth-angles": ("down", "up"),
+    "mouth-philtrum-volume": ("decr", "incr"),
+    # Face shape: one-way, 0 to 1
+    "head-square": ("", ""),
+    "head-round": ("", ""),
+    "head-oval": ("", ""),
+    "head-invertedtriangular": ("", ""),
+    "head-diamond": ("", ""),
+    # Chin and jaw
+    "chin-bones": ("decr", "incr"),
+    "chin-width": ("decr", "incr"),
+    "chin-height": ("decr", "incr"),
+    "chin-prominent": ("decr", "incr"),
+    "chin-triangle": ("", ""),
+    # Nose
+    "nose-volume": ("decr", "incr"),
+    "nose-scale-horiz": ("decr", "incr"),
+    "nose-scale-vert": ("decr", "incr"),
+    "nose-scale-depth": ("decr", "incr"),
+    "nose-point-width": ("decr", "incr"),
+    "nose-point": ("down", "up"),
+    "nose-hump": ("decr", "incr"),
+    "nose-flaring": ("decr", "incr"),
+}
 
 
 class RecipeError(Exception):
@@ -101,6 +136,15 @@ def load_preset(path: str) -> dict:
         raise RecipeError(f"{path}: a garment cannot be called {clash[0]!r}")
     if len(set(names)) != len(names):
         raise RecipeError(f"{path}: assets.clothes lists the same garment twice")
+    shaping = preset.get("targets") or {}
+    if not isinstance(shaping, dict):
+        raise RecipeError(f"{path}: targets must map a target name to a value")
+    for name, value in shaping.items():
+        if name not in MODIFIERS:
+            raise RecipeError(f"{path}: targets.{name} is not one of {', '.join(MODIFIERS)}")
+        low = 0.0 if MODIFIERS[name] == ("", "") else -1.0
+        if not isinstance(value, (int, float)) or not low <= value <= 1.0:
+            raise RecipeError(f"{path}: targets.{name} must be between {low:g} and 1")
     return preset
 
 
@@ -130,6 +174,28 @@ def resolve_asset(services, fragment: str) -> str:
 def asset_name(fragment: str) -> str:
     """``clothes/suit01/suit01.mhclo`` to ``suit01``."""
     return os.path.splitext(os.path.basename(fragment))[0]
+
+
+def apply_modifiers(mpfb, targets, basemesh, values: dict) -> dict[str, float]:
+    """Load the preset's modelling targets onto the new human, before anything is fitted to it.
+
+    Each value picks the negative or the positive file and sets its weight. They are baked with the
+    phenotype, so the face shapes, the teeth and the clothes are fitted to the result.
+    """
+    root = os.path.join(os.path.dirname(mpfb.__file__), "data", "targets")
+    applied = {}
+    for name, value in sorted(values.items()):
+        value = float(value)
+        if value == 0.0:
+            continue
+        negative, positive = MODIFIERS[name]
+        target = name if (negative, positive) == ("", "") else f"{name}-{positive if value > 0 else negative}"
+        path = os.path.join(root, name.split("-", 1)[0], f"{target}.target.gz")
+        if not os.path.isfile(path):
+            raise RecipeError(f"MPFB has no target {target!r} (looked for {path})")
+        targets.load_target(basemesh, path, weight=abs(value), name=target)
+        applied[name] = value
+    return applied
 
 
 def mesh_children(basemesh) -> dict[str, object]:
@@ -469,6 +535,8 @@ def build(preset: dict, out: str) -> dict:
         macro_detail_dict=phenotype,
     )
 
+    shaped = apply_modifiers(mpfb, targets, basemesh, preset.get("targets") or {})
+
     assets = preset["assets"]
     human.set_character_skin(
         resolve_asset(services, assets["skin"]), basemesh, skin_type="GAMEENGINE", material_instances=False
@@ -628,6 +696,7 @@ def build(preset: dict, out: str) -> dict:
         "blender": bpy.app.version_string,
         "mpfb": ".".join(str(n) for n in getattr(mpfb, "bl_info", {}).get("version", ())) or read_mpfb_version(mpfb),
         "phenotype": phenotype,
+        "targets": shaped,
         "age_years": round(age_years(phenotype["age"])),
         "assets": assets,
         "triangles": counts,

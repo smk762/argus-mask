@@ -52,6 +52,43 @@ const SLIDERS = [
   ['phenotype.race.asian', 'Asian', 0, 1, 0.01],
   ['phenotype.race.caucasian', 'Caucasian', 0, 1, 0.01],
 ];
+// MakeHuman modelling targets, -1 to +1 (preset.targets; the server holds the same list).
+const signed = (v) => (v > 0 ? '+' : '') + Number(v).toFixed(2);
+const LIPS = [
+  ['targets.mouth-upperlip-volume', 'Upper lip fullness', -1, 1, 0.05, signed],
+  ['targets.mouth-lowerlip-volume', 'Lower lip fullness', -1, 1, 0.05, signed],
+  ['targets.mouth-upperlip-height', 'Upper lip height', -1, 1, 0.05, signed],
+  ['targets.mouth-lowerlip-height', 'Lower lip height', -1, 1, 0.05, signed],
+  ['targets.mouth-scale-horiz', 'Mouth width', -1, 1, 0.05, signed],
+  ['targets.mouth-cupidsbow', "Cupid's bow", -1, 1, 0.05, signed],
+  ['targets.mouth-angles', 'Corners down – up', -1, 1, 0.05, signed],
+  ['targets.mouth-philtrum-volume', 'Philtrum', -1, 1, 0.05, signed],
+];
+const unit = (v) => Number(v).toFixed(2);
+const FACE = [
+  ['targets.head-square', 'Square', 0, 1, 0.05, unit],
+  ['targets.head-round', 'Round', 0, 1, 0.05, unit],
+  ['targets.head-oval', 'Oval', 0, 1, 0.05, unit],
+  ['targets.head-invertedtriangular', 'Heart (narrow chin)', 0, 1, 0.05, unit],
+  ['targets.head-diamond', 'Diamond', 0, 1, 0.05, unit],
+];
+const CHIN = [
+  ['targets.chin-bones', 'Jaw width', -1, 1, 0.05, signed],
+  ['targets.chin-width', 'Chin width', -1, 1, 0.05, signed],
+  ['targets.chin-height', 'Chin height', -1, 1, 0.05, signed],
+  ['targets.chin-prominent', 'Chin forward', -1, 1, 0.05, signed],
+  ['targets.chin-triangle', 'Pointed chin', 0, 1, 0.05, unit],
+];
+const NOSE = [
+  ['targets.nose-volume', 'Size', -1, 1, 0.05, signed],
+  ['targets.nose-scale-horiz', 'Width', -1, 1, 0.05, signed],
+  ['targets.nose-scale-vert', 'Length', -1, 1, 0.05, signed],
+  ['targets.nose-scale-depth', 'Projection', -1, 1, 0.05, signed],
+  ['targets.nose-point-width', 'Tip width', -1, 1, 0.05, signed],
+  ['targets.nose-point', 'Tip down – up', -1, 1, 0.05, signed],
+  ['targets.nose-hump', 'Bridge hump', -1, 1, 0.05, signed],
+  ['targets.nose-flaring', 'Nostril flare', -1, 1, 0.05, signed],
+];
 const ADVANCED = [
   ['mouth.tongue_flatten', 'Tongue height', 0.2, 1, 0.05],
   ['mouth.upper_teeth_drop_mm', 'Upper teeth ↓ mm', 0, 6, 0.1],
@@ -99,11 +136,12 @@ function slider(container, [path, label, min, max, step, show]) {
   const fmt = show || ((v) => Number(v).toFixed(2));
   input.addEventListener('input', () => {
     const v = step >= 1 ? parseInt(input.value, 10) : parseFloat(input.value);
-    set(preset, path, v);
+    if (path.startsWith('targets.') && v === 0) delete (preset.targets || {})[path.slice('targets.'.length)];
+    else set(preset, path, v);
     out.textContent = fmt(v);
   });
   input.sync = () => {
-    const v = get(preset, path) ?? min;
+    const v = get(preset, path) ?? (min < 0 ? 0 : min);  // a two-way slider rests in the middle
     input.value = v;
     out.textContent = fmt(v);
   };
@@ -343,6 +381,10 @@ async function main() {
     $('build').disabled = true;
   }
   controls = SLIDERS.map((s) => slider($('sliders'), s));
+  controls.push(...FACE.map((s) => slider($('face'), s)));
+  controls.push(...CHIN.map((s) => slider($('chin'), s)));
+  controls.push(...NOSE.map((s) => slider($('nose'), s)));
+  controls.push(...LIPS.map((s) => slider($('lips'), s)));
   controls.push(...ADVANCED.map((s) => slider($('advanced'), s)));
   buildParts(await json('/library'));
   await loadStarts();

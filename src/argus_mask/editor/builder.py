@@ -162,6 +162,7 @@ class Builder:
                 recipe = json.loads((work / RECIPE_NAME).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 recipe = {}
+            shaping = ", ".join(f"{k} {v:+.2f}" for k, v in sorted(preset.targets.items()) if v)
             provenance = Provenance(
                 kind="synthetic",
                 source=(
@@ -172,7 +173,8 @@ class Builder:
                 notes=(
                     f"{credits(assets)}; ARKit face units from the faceunits01 pack (Mika Suominen, CC0-1.0). "
                     f"Phenotype: gender {preset.phenotype.gender:g}, age about {preset.age_years()} years. "
-                    "A generated character, not a real person."
+                    + (f"Shaped with MakeHuman targets (CC0): {shaping}. " if shaping else "")
+                    + "A generated character, not a real person."
                 ),
             )
             manifest = build_manifest(

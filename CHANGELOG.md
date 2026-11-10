@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it and checks it against `scripts/stock_heads/stock-01.lock.json`.
 - Wire schema `schema/mask-wire.schema.json`.
 - **Face editor** (`argus-mask editor`, port 8111): a page that builds heads from presets with headless Blender and
-  MPFB, about ten seconds a build, with a posed preview. Skin, hair, clothes and a hat are picked from thumbnails. It offers only assets an installed pack licenses, writes their
+  MPFB, about ten seconds a build, with a posed preview. Skin, hair, clothes and a hat are picked from thumbnails;
+  face shape, chin and jaw, nose and lips are sliders over MakeHuman's CC0 modelling targets (`targets` in a preset,
+  from a fixed list). It offers only assets an installed pack licenses, writes their
   licences into the face's provenance, replaces only faces it made, and is behind the write guards. Blender, MPFB and
   the asset packs are the user's to install; none ships.
 - **A second stock preset**, `stock-02`: a female head, about 25, short brown hair, in the same crew uniform as

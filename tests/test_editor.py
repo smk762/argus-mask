@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.editor.builder import SCRIPT, Builder, BuildError, Busy
 from argus_mask.editor.library import AssetLibrary
-from argus_mask.editor.preset import ADULT_AGE, Preset
+from argus_mask.editor.preset import ADULT_AGE, MODIFIERS, Preset
 from argus_mask.faces import FaceStore
 from argus_mask.server.app import create_app
 from tests.helpers import make_face, make_glb
@@ -175,6 +175,31 @@ def test_the_editor_and_the_recipe_agree_on_the_adult_line() -> None:
     assert values == [ADULT_AGE]
 
 
+def test_the_editor_and_the_recipe_offer_the_same_targets() -> None:
+    tree = ast.parse(SCRIPT.read_text())
+    [table] = [
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "MODIFIERS" for t in node.targets)
+    ]
+    assert table == MODIFIERS
+
+
+def test_targets_are_named_from_the_list_and_bounded() -> None:
+    assert Preset.model_validate(preset(targets={"mouth-upperlip-volume": 0.4})).targets == {
+        "mouth-upperlip-volume": 0.4
+    }
+    assert Preset.model_validate(preset(targets={"head-square": 0.7, "nose-point": -0.3})).targets["head-square"] == 0.7
+    for bad in [
+        {"mouth-upperlip-volume": 1.5},
+        {"../../etc/passwd": 0.5},
+        {"mouth-upperlip-volume-incr": 0.5},
+        {"head-square": -0.5},  # one-way: 0 to 1
+    ]:
+        with pytest.raises(ValidationError):
+            Preset.model_validate(preset(targets=bad))
+
+
 def test_a_preset_below_the_adult_line_is_refused() -> None:
     body = preset()
     body["phenotype"]["age"] = 0.49
@@ -289,6 +314,14 @@ def test_clothes_not_in_the_library_never_reach_blender(client, rig, ref) -> Non
     reply = client.post("/build", json=body)
     assert reply.status_code == 422 and "clothes" in reply.json()["detail"]
     assert calls(rig) == []
+
+
+def test_targets_reach_the_recipe_and_the_credits(client, rig) -> None:
+    body = preset(targets={"mouth-upperlip-volume": 0.4, "mouth-angles": -0.25})
+    manifest = client.post("/build", json=body).json()["manifest"]
+    assert "mouth-angles -0.25, mouth-upperlip-volume +0.40" in manifest["provenance"]["notes"]
+    sent = json.loads((rig["assets"] / "my-face" / "preset.json").read_text())
+    assert sent["targets"] == body["targets"]
 
 
 def test_hair_is_optional(client) -> None:

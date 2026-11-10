@@ -32,12 +32,49 @@ PART_DIRS: dict[str, str] = {
 OPTIONAL_PARTS = ("hair",)
 CLOTHES_DIR = "clothes"
 MAX_CLOTHES = 3
+# MakeHuman modelling targets a preset may set: the target's base name, and the suffixes of the files
+# for the negative and the positive direction (-1 to +1). ("", "") is a one-way target, a single file
+# named as the target, from 0 to 1. CC0, bundled with MPFB. A fixed list: a preset cannot name any
+# other file. build_head.py holds the same table (a test keeps them equal).
+MODIFIERS: dict[str, tuple[str, str]] = {
+    # Lips
+    "mouth-upperlip-volume": ("decr", "incr"),
+    "mouth-lowerlip-volume": ("decr", "incr"),
+    "mouth-upperlip-height": ("decr", "incr"),
+    "mouth-lowerlip-height": ("decr", "incr"),
+    "mouth-scale-horiz": ("decr", "incr"),
+    "mouth-cupidsbow": ("decr", "incr"),
+    "mouth-angles": ("down", "up"),
+    "mouth-philtrum-volume": ("decr", "incr"),
+    # Face shape: one-way, 0 to 1
+    "head-square": ("", ""),
+    "head-round": ("", ""),
+    "head-oval": ("", ""),
+    "head-invertedtriangular": ("", ""),
+    "head-diamond": ("", ""),
+    # Chin and jaw
+    "chin-bones": ("decr", "incr"),
+    "chin-width": ("decr", "incr"),
+    "chin-height": ("decr", "incr"),
+    "chin-prominent": ("decr", "incr"),
+    "chin-triangle": ("", ""),
+    # Nose
+    "nose-volume": ("decr", "incr"),
+    "nose-scale-horiz": ("decr", "incr"),
+    "nose-scale-vert": ("decr", "incr"),
+    "nose-scale-depth": ("decr", "incr"),
+    "nose-point-width": ("decr", "incr"),
+    "nose-point": ("down", "up"),
+    "nose-hump": ("decr", "incr"),
+    "nose-flaring": ("decr", "incr"),
+}
 # An asset reference: <part directory>/<asset>/<asset>.<mhmat|mhclo>. No dot-leading names, so no "..".
 ASSET_REF = r"^[a-z]+/[A-Za-z0-9][A-Za-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9_-]*\.(mhmat|mhclo)$"
 
 Unit = Annotated[float, Field(ge=0.0, le=1.0)]
 AssetRef = Annotated[str, Field(pattern=ASSET_REF)]
 ShapeName = Literal[ARKIT_52]  # type: ignore[valid-type]
+ModifierName = Literal[tuple(MODIFIERS)]  # type: ignore[valid-type]
 
 
 class _Strict(BaseModel):
@@ -104,6 +141,8 @@ class Preset(_Strict):
     name: str = Field(..., min_length=1, max_length=80)
     phenotype: Phenotype
     assets: Assets
+    # Shape the face beyond the phenotype: face shape, chin, nose, lips. 0 leaves it as the phenotype made it.
+    targets: dict[ModifierName, Annotated[float, Field(ge=-1.0, le=1.0)]] = Field(default_factory=dict)
     bust: Bust = Field(default_factory=Bust)
     mouth: Mouth = Field(default_factory=Mouth)
     shape_scale: dict[ShapeName, Annotated[float, Field(ge=0.0, le=3.0)]] = Field(default_factory=dict)
@@ -114,6 +153,14 @@ class Preset(_Strict):
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(30_000, ge=1000, le=30_000)
+
+    @field_validator("targets")
+    @classmethod
+    def _one_way_targets_are_not_negative(cls, value: dict[str, float]) -> dict[str, float]:
+        for name, weight in value.items():
+            if MODIFIERS[name] == ("", "") and weight < 0:
+                raise ValueError(f"{name} goes from 0 to 1")
+        return value
 
     def age_years(self) -> int:
         """MakeHuman's own mapping of the age macro to years, for an adult."""

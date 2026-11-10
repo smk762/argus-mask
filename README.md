@@ -108,7 +108,7 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 
 ### Face editor
 
-`argus-mask editor` is a page for making heads: pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails, set sex, age, build and ancestry with sliders, press **Build**, and the head appears in a preview about ten seconds later, ready to rest, open, smile or talk. It writes the face into the same assets root the server reads, so it is on `/faces` at once.
+`argus-mask editor` is a page for making heads: pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails, set sex, age, build and ancestry, face shape (square, round, heart …), chin and jaw, nose and lips with sliders, press **Build**, and the head appears in a preview about ten seconds later, ready to rest, open, smile or talk. It writes the face into the same assets root the server reads, so it is on `/faces` at once.
 
 It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
 
