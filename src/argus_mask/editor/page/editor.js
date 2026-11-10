@@ -82,8 +82,9 @@ const ADVANCED = [
 const PICKERS = [
   ['skin', 'Skin', 'skin', false, null, true], ['hair', 'Hair', 'hair', true, null, true],
   ['outfit', 'Clothes', 'clothes', false, 'outfit', true], ['hat', 'Hat', 'clothes', true, 'hat', true],
-  ['eyebrows', 'Eyebrows', 'eyebrows', false], ['eyelashes', 'Eyelashes', 'eyelashes', false],
-  ['eyes', 'Eyeballs', 'eyes', false], ['teeth', 'Teeth', 'teeth', false], ['tongue', 'Tongue', 'tongue', false],
+  ['eyebrows', 'Eyebrows', 'eyebrows', false, null, true], ['eyelashes', 'Eyelashes', 'eyelashes', false, null, true],
+  ['eyes', 'Eyeballs', 'eyes', false, null, true], ['teeth', 'Teeth', 'teeth', false, null, true],
+  ['tongue', 'Tongue', 'tongue', false, null, true],
 ];
 const OPEN_BY_DEFAULT = new Set(['body', 'skin', 'hair', 'outfit', 'm:head']);
 
