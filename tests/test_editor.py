@@ -1066,3 +1066,24 @@ def test_a_temperature_reaches_the_tts_service(broadcasting, kind) -> None:
 def test_the_broadcast_page_has_a_temperature_left_to_the_service_by_default(client) -> None:
     page = client.get("/broadcast.html").text
     assert 'id="temp"' in page and 'min="0.1" max="1.5"' in page and 'id="temp-default" checked' in page
+
+
+def test_the_voices_come_from_a_miso_style_http_service(broadcasting) -> None:
+    from argus_mask.client import voiced  # noqa: PLC0415
+    from tests.helpers import fake_tts  # noqa: PLC0415
+
+    listed = {
+        "speakers": {
+            "speakers": [{"id": "0", "name": "Speaker 0", "languages": ["en"]}, {"id": "1", "name": "Speaker 1"}]
+        },
+        "clones": {"clones": [{"companion_id": "inara-nobility", "name": "Inara_nobility"}]},
+    }
+    with fake_tts(tone(0.1), voices=listed) as (tts, _), broadcasting(tts) as (c, _):
+        found = c.get("/voices").json()
+        assert found["listed"] and [v["name"] for v in found["voices"]] == ["0", "1", "clone:inara-nobility"]
+        assert found["voices"][2]["description"] == "Inara_nobility" and found["voices"][0]["languages"] == ["en"]
+        # Each name goes back to the field the service reads: a speaker by id, a clone by its id.
+        assert voiced({}, "1", tts) == {"speaker": "1"}
+        assert voiced({}, "clone:inara-nobility", tts) == {"voice_clone_id": "inara-nobility"}
+    with fake_tts(tone(0.1)) as (tts, _), broadcasting(tts) as (c, _):  # answers neither list
+        assert c.get("/voices").json()["listed"] is False

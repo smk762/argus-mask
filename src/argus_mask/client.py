@@ -21,6 +21,7 @@ import re
 import socket
 import time
 import urllib.parse
+import urllib.request
 from collections.abc import AsyncIterator, Callable
 
 import numpy as np
@@ -326,13 +327,64 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
 VOICES_TIMEOUT_S = 5.0
 
 
+def _http_voices(tts_url: str) -> list[dict] | None:
+    """Voices from an HTTP service with the ``/synthesise`` contract (Miso, agent-composer's TTS servers).
+
+    Beside ``POST …/synthesise[/stream]`` they answer ``GET …/speakers`` (built-in speakers, by id) and
+    ``GET …/clones`` (stored clones). Named as the Wyoming bridge names them, and as ``voiced`` maps
+    them back: a speaker by its id, a clone as ``clone:<id>``. None if the service answers neither.
+    """
+    parts = urllib.parse.urlsplit(tts_url)
+    base_path = re.sub(r"/synthesi[sz]e(/stream)?/?$", "", parts.path)
+    if base_path == parts.path.rstrip("/"):
+        return None  # not the /synthesise contract: no known place to ask
+    base = urllib.parse.urlunsplit((parts.scheme, parts.netloc, base_path, "", ""))
+
+    def get(path: str) -> dict | None:
+        try:
+            with urllib.request.urlopen(base + path, timeout=VOICES_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only
+                body = json.loads(reply.read())
+                return body if isinstance(body, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    speakers, clones = get("/speakers"), get("/clones")
+    if speakers is None and clones is None:
+        return None
+    voices = []
+    for s in (speakers or {}).get("speakers") or []:
+        if isinstance(s, dict) and s.get("id") is not None:
+            voices.append(
+                {
+                    "name": str(s["id"]),
+                    "description": str(s.get("name") or ""),
+                    "languages": [str(x) for x in s.get("languages") or []],
+                    "speakers": [],
+                }
+            )
+    for c in (clones or {}).get("clones") or []:
+        if isinstance(c, dict) and c.get("companion_id"):
+            voices.append(
+                {
+                    "name": f"clone:{c['companion_id']}",
+                    "description": str(c.get("name") or ""),
+                    "languages": [],
+                    "speakers": [],
+                }
+            )
+    return voices
+
+
 def tts_voices(tts_url: str) -> list[dict] | None:
-    """The voices a TTS service offers, or None if it does not say (the HTTP contract has no list).
+    """The voices a TTS service offers, or None if it does not say.
 
     A Wyoming server answers ``describe`` with ``info``: each TTS program's voices, with their
-    languages and, for multi-speaker models, their speakers. Flattened to
+    languages and, for multi-speaker models, their speakers. An HTTP service with the
+    ``/synthesise`` contract lists its speakers and clones (:func:`_http_voices`). Flattened to
     ``[{"name", "description", "languages", "speakers": [names]}]``.
     """
+    if tts_url.startswith(("http://", "https://")):
+        return _http_voices(tts_url)
     if not tts_url.startswith("wyoming://"):
         return None
     try:
