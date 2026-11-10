@@ -32,7 +32,22 @@
   /* layout: panels fill the width; the preview is a card beside them */
   main { display: grid; grid-template-columns: 1fr 300px; gap: 14px; padding: 14px 16px 40px; align-items: start; }
   #panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; align-items: start; }
-  aside { position: sticky; top: 76px; display: grid; gap: 8px; }
+  aside { position: sticky; top: 76px; display: grid; gap: 8px; max-height: calc(100vh - 90px); overflow-y: auto; }
+  .history { display: flex; align-items: center; gap: 6px; }
+  .history span { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .card .tag { padding: 6px 10px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+  .card .tag span { text-transform: none; letter-spacing: 0; opacity: .8; }
+  #before { position: relative; aspect-ratio: 1; cursor: zoom-in; background: var(--bg); }
+  #before canvas { display: block; width: 100%; height: 100%; }
+  #before .empty { background: var(--bg); }  /* over the stale canvas when a build has left the cache */
+  #diff div { color: var(--text); }
+  #diff .from { color: var(--dim); }
+  .stages { display: grid; grid-template-columns: 1fr; min-height: 0; }
+  .stages.two { grid-template-columns: 1fr 1fr; gap: 2px; }
+  .pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .pane .tag { padding: 4px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+  .pane > #stage, .pane > #stage-b { min-height: 0; position: relative; }
+  #stage-b canvas { display: block; width: 100%; height: 100%; }
 
   details.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   details.panel > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; list-style: none; user-select: none; }
@@ -67,9 +82,9 @@
 
   /* preview */
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  #thumb { position: relative; aspect-ratio: 5 / 6; cursor: zoom-in; background: var(--bg); }
+  #thumb { position: relative; aspect-ratio: 1; cursor: zoom-in; background: var(--bg); }
   #thumb canvas, #stage canvas { display: block; width: 100%; height: 100%; }
-  #thumb .empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--dim); font-size: 13px; cursor: default; }
+  #thumb .empty, #before .empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--dim); font-size: 13px; cursor: default; }
   #thumb .zoom { position: absolute; right: 8px; top: 8px; font-size: 12px; color: var(--dim); background: rgba(0,0,0,.4); border-radius: 6px; padding: 2px 6px; }
   .meta { padding: 8px 10px; font-size: 12px; color: var(--dim); display: grid; gap: 4px; }
   .meta .stale { color: var(--warn); }
@@ -92,7 +107,7 @@
   .meta .name { color: var(--text); font-weight: 600; }
 
   /* the large view */
-  #modal { position: fixed; inset: 0; z-index: 20; background: rgba(5, 6, 9, .88); display: grid; grid-template-rows: auto 1fr auto; }
+  #modal { position: fixed; inset: 0; z-index: 20; background: rgba(5, 6, 9, .88); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
   #modal .top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; color: var(--dim); font-size: 12px; }
   #modal .top .name { color: var(--text); font-weight: 600; font-size: 14px; }
   #modal .top .spacer { flex: 1; }
@@ -129,13 +144,24 @@
   <main>
     <div id="panels"></div>
     <aside>
+      <div class="history" id="history">
+        <button type="button" class="small" id="undo" disabled title="Back to the build before this one (Ctrl+Z)">↶ Undo</button>
+        <button type="button" class="small" id="redo" disabled title="Forward again (Ctrl+Shift+Z)">Redo ↷</button>
+        <span id="hist-pos"></span>
+      </div>
       <div class="card">
+        <div class="tag">Now</div>
         <div id="thumb" title="Open the large view">
           <div class="empty" id="empty">No build yet.<br>Choose, then Build: about ten seconds.</div>
           <div class="busy" hidden><div class="spin"></div><b>Building</b><span class="t"></span><div class="bar"><i></i></div></div>
           <span class="zoom" hidden>⤢ enlarge</span>
         </div>
         <div class="meta" id="meta" hidden></div>
+      </div>
+      <div class="card" id="before-card" hidden>
+        <div class="tag">Before <span>the build before this one</span></div>
+        <div id="before" title="Compare in the large view"><div class="empty" id="before-empty" hidden></div></div>
+        <div class="meta" id="diff"></div>
       </div>
     </aside>
   </main>
@@ -144,7 +170,11 @@
 <div id="modal" hidden role="dialog" aria-modal="true" aria-label="Preview">
   <div class="top"><span class="name" id="modal-name"></span><span id="modal-credits"></span><span class="spacer"></span>
     <button type="button" class="small" id="close">Close (Esc)</button></div>
-  <div id="stage"><div class="busy" hidden><div class="spin"></div><b>Building</b><span class="t"></span><div class="bar"><i></i></div></div></div>
+  <div class="stages" id="stages">
+    <div class="pane" id="pane-b" hidden><div class="tag">Before</div><div id="stage-b"></div></div>
+    <div class="pane"><div class="tag" id="tag-now" hidden>Now</div>
+      <div id="stage"><div class="busy" hidden><div class="spin"></div><b>Building</b><span class="t"></span><div class="bar"><i></i></div></div></div></div>
+  </div>
   <div class="poses" id="poses"></div>
 </div>
 <script type="module" src="./editor.js"></script>

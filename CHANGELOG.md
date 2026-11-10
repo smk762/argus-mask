@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Editor: compare, undo, build cache.** A Before card beside the preview shows the previous build and what
+  changed; the large view shows both side by side, posed together. Undo and redo step through the builds. Each
+  build is cached by what it was made from (the preset without id and name, the recipe, the Blender), so a repeat
+  copies in well under a second instead of running Blender: `GET /cache/{key}` serves an earlier build directly.
+  `ARGUS_MASK_BUILD_CACHE` sets how many are kept (40).
 - **The engine.** Audio in, animation frames out: a streaming resampler to 16 kHz, a driver, a seeded idle layer
   (blinks, gaze, head sway) and frames stamped on the audio timeline. The same audio, driver and seed give the same
   take file.

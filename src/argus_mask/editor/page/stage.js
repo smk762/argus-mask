@@ -115,21 +115,27 @@ export class Stage {
     return this.renderer.domElement.toDataURL('image/jpeg', 0.85);
   }
 
-  poseButtons(bar) {
+  // Pose buttons for this stage, and for any linked ones: a comparison moves both faces together.
+  poseButtons(bar, linked = []) {
+    const all = [this, ...linked];
     bar.replaceChildren();
     for (const name of Object.keys(POSES)) {
       const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
       b.dataset.pose = name;
       b.classList.toggle('on', name === this.pose);
       b.onclick = () => {
-        this.pose = name;
+        for (const st of all) st.pose = name;
         for (const x of bar.children) if (x.dataset.pose) x.classList.toggle('on', x === b);
       };
       bar.append(b);
     }
     const spin = Object.assign(document.createElement('button'), { type: 'button', textContent: 'turn' });
     spin.classList.toggle('on', this.turn);
-    spin.onclick = () => { this.turn = !this.turn; spin.classList.toggle('on', this.turn); };
+    spin.onclick = () => {
+      const turn = !this.turn;
+      for (const st of all) st.turn = turn;
+      spin.classList.toggle('on', turn);
+    };
     bar.append(spin);
   }
 }

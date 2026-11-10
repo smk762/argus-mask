@@ -120,6 +120,7 @@ async function json(url, options) {
 // ---- panels ----------------------------------------------------------------------------------
 
 const panels = [];   // { key, details, rows: [{ el, text }], changed() }
+const fields = new Map();  // preset path -> { label, show }: to say what changed between two builds
 const controls = []; // everything with a sync()
 let filterText = '';
 
@@ -172,6 +173,7 @@ function slider(entry, [path, label, min, max, step, show = fixed, rest = min < 
   });
   entry.body.append(row);
   entry.rows.push({ el: row, text: `${label} ${entry.title}`.toLowerCase() });
+  fields.set(path, { label: entry.title === label ? label : `${entry.title}: ${label}`, show, rest });
   controls.push({ sync, paint });  // paint again on any change: the ancestry shares depend on each other
   return { isChanged: () => Math.abs(value() - rest) > 1e-9 };
 }
@@ -205,6 +207,7 @@ function hidePeek() { peek.hidden = true; }
 window.addEventListener('scroll', hidePeek, { passive: true });
 
 function picker(library, [key, title, part, optional, slot, enlarge]) {
+  if (!slot) fields.set(`assets.${part}`, { label: title, show: (ref) => (ref ? ref.split('/')[1].replaceAll('_', ' ') : 'none') });
   const all = library[part] || [];
   const choices = slot ? all.filter((a) => a.slot === slot) : all;
   const slotOf = new Map((library.clothes || []).map((a) => [a.ref, a.slot]));
@@ -302,26 +305,158 @@ function applyFilter() {
 // ---- preview: one stage, shown in the card or in the large view -----------------------------
 
 const stage = new Stage();
+const before = new Stage();  // the build before the one on show, straight from the cache
 let shown = null;   // the manifest on show
+let beforeKey = null;  // the cache key on the before stage, when there is one
+let beforeLoading = Promise.resolve();  // the before stage's loads, one after another
 
 function openModal() {
   if (!shown) return;
   hidePeek();
   $('modal').hidden = false;
+  const compare = beforeKey !== null && before.loaded;
+  $('pane-b').hidden = !compare;
+  $('tag-now').hidden = !compare;
+  $('stages').classList.toggle('two', compare);
   stage.attach($('stage'));
+  if (compare) before.attach($('stage-b'));
+  stage.poseButtons($('poses'), compare ? [before] : []);
   $('close').focus();
 }
 function closeModal() {
   $('modal').hidden = true;
   stage.attach($('thumb'));
+  if (beforeKey !== null) before.attach($('before'));
+  stage.poseButtons($('poses'));
 }
 $('thumb').addEventListener('click', openModal);
+$('before').addEventListener('click', openModal);
 $('close').addEventListener('click', closeModal);
 $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('modal').hidden) closeModal();
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('build').disabled) $('form').requestSubmit();
+  // Undo and redo, unless the user is typing in a text box (where the browser's own undo belongs).
+  const focus = document.activeElement;
+  const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(focus?.tagName) && !['range', 'checkbox'].includes(focus.type);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+  }
 });
+
+// ---- history: every build, to step back and forth through, and to compare with ----------------
+
+const HISTORY_MAX = 60;
+// [{ preset, key }]: what was built and the cache key it went in under. Per browser.
+let builds = store.get('history', []).filter((h) => h && h.preset && h.key);
+let at = Math.min(store.get('at', builds.length - 1), builds.length - 1);
+let stepping = false;  // the build in progress is an undo or redo: it moves through history, it adds nothing
+let detached = false;  // a saved face is on show, loaded, not built: Undo goes back to the last build itself
+
+function remember(body, key) {
+  detached = false;
+  if (stepping) return;
+  builds = builds.slice(0, at + 1);
+  // A new name on the same build is the same step: no undo should be needed to get the old name back.
+  if (builds.length && builds.at(-1).key === key) builds[builds.length - 1] = { preset: body, key };
+  else builds.push({ preset: body, key });
+  builds = builds.slice(-HISTORY_MAX);
+  at = builds.length - 1;
+  store.set('history', builds);
+  store.set('at', at);
+}
+
+function renderHistory() {
+  $('undo').disabled = busy || !shown || (detached ? at < 0 : at <= 0);
+  $('redo').disabled = busy || !shown || at >= builds.length - 1;
+  $('hist-pos').textContent = builds.length > 1 && shown ? `build ${at + 1} of ${builds.length}` : '';
+}
+
+async function step(to) {
+  if (detached && to === at - 1) to = at;  // back from a loaded face is the last build, not the one before it
+  if (busy || to < 0 || to >= builds.length || (to === at && !detached)) return;
+  const from = at;
+  at = to;
+  store.set('at', at);
+  adopt(builds[at].preset);
+  syncForm();
+  stepping = true;
+  let ok = false;
+  try { ok = await runBuild(); } finally { stepping = false; }
+  // A failed step leaves the face that was on show: the place in history stays with it.
+  if (!ok) { at = from; store.set('at', at); renderHistory(); }
+}
+function undo() { step(at - 1); }
+function redo() { step(at + 1); }
+$('undo').addEventListener('click', undo);
+$('redo').addEventListener('click', redo);
+
+// What differs between two presets, said the way the sliders say it.
+function flatten(obj, prefix = '', out = new Map()) {
+  for (const [k, v] of Object.entries(obj || {})) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v, path, out);
+    else out.set(path, v);
+  }
+  return out;
+}
+function differences(older, newer) {
+  const a = flatten(older), b = flatten(newer);
+  const lines = [];
+  for (const path of new Set([...a.keys(), ...b.keys()])) {
+    if (path === 'id' || path === 'name') continue;
+    const x = a.get(path), y = b.get(path);
+    if (JSON.stringify(x) === JSON.stringify(y)) continue;
+    const field = fields.get(path);
+    if (path === 'assets.clothes') {
+      const names = (list) => (list || []).map((r) => r.split('/')[1].replaceAll('_', ' ')).join(', ') || 'none';
+      lines.push(['Clothes', names(x), names(y)]);
+    } else if (field) {
+      const show = (v) => field.show(v ?? field.rest ?? 0);
+      lines.push([field.label, show(x), show(y)]);
+    } else {
+      lines.push([path, String(x ?? '—'), String(y ?? '—')]);
+    }
+  }
+  return lines;
+}
+
+async function showBefore() {
+  const card = $('before-card');
+  const prev = at > 0 && !detached ? builds[at - 1] : null;
+  if (!shown || !prev) { card.hidden = true; beforeKey = null; renderHistory(); return; }
+  card.hidden = false;
+  const diff = differences(prev.preset, builds[at].preset);
+  $('diff').replaceChildren(
+    ...(diff.length ? diff.slice(0, 8) : [['No change but the name', '', '']]).map(([label, x, y]) =>
+      el('div', {}, `${label}: `, el('span', { className: 'from', textContent: x ? `${x} → ` : '' }), y)),
+    ...(diff.length > 8 ? [el('span', { textContent: `and ${diff.length - 8} more` })] : []),
+  );
+  if (beforeKey === prev.key && before.loaded) { renderHistory(); return; }
+  const key = prev.key;
+  beforeKey = key;
+  // One load at a time, in order: quick steps must not let an older model land after a newer one.
+  const loading = beforeLoading.then(async () => {
+    if (beforeKey !== key) return;
+    const manifest = await json(`/cache/${key}`);
+    await before.load(`/cache/${key}/model`, manifest.framing || {});
+  });
+  beforeLoading = loading.catch(() => {});
+  try {
+    await loading;
+    if (beforeKey !== key) return;
+    $('before-empty').hidden = true;
+    if ($('modal').hidden) before.attach($('before'));
+  } catch {
+    if (beforeKey !== key) return;
+    // Dropped from the cache (it keeps the most recent builds): Undo still works, by building it again.
+    before.loaded = false;
+    $('before-empty').textContent = 'No longer cached. Undo rebuilds it.';
+    $('before-empty').hidden = false;
+  }
+  renderHistory();
+}
 
 function meta() {
   const box = $('meta');
@@ -360,7 +495,8 @@ async function showFace(faceId) {
   $('modal-credits').title = manifest.provenance.notes;
   stage.poseButtons($('poses'));
   meta();
-  window.__editor = { face: faceId, shapes: stage.targets.size };
+  renderHistory();
+  window.__editor = { face: faceId, shapes: stage.targets.size, at, builds: builds.length };
 }
 
 // ---- the preset in and out -----------------------------------------------------------------
@@ -453,6 +589,8 @@ async function loadStarts() {
     syncForm();
     if (chosen) {
       await showFace(chosen.id).catch(() => {});
+      detached = true;
+      showBefore();
       built = JSON.stringify(current());
       shownContent = contentOf(current());
       meta();
@@ -482,17 +620,23 @@ async function runBuild() {
   meta();
   status(live() ? 'Live update: building…' : 'Building…');
   const started = performance.now();
+  let ok = false;
   try {
     const done = await json('/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    store.set('seconds', done.seconds);
     status('Built. Loading the preview…');
     built = JSON.stringify(body);
     shownContent = content;
     failedContent = null;
+    remember(body, done.key);
     await showFace(done.manifest.id);
+    showBefore();
     await loadStarts();
     $('start').value = done.manifest.id;
-    status(`Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
+    status(done.cached
+      ? `From the build cache in ${done.seconds} s: no Blender run.`
+      : `Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
+    if (!done.cached) store.set('seconds', done.seconds);
+    ok = true;
   } catch (err) {
     failedContent = content;
     status(`${err.message} (${((performance.now() - started) / 1000).toFixed(1)} s)`, true);
@@ -502,12 +646,14 @@ async function runBuild() {
     building(false);
     meta();
   }
+  renderHistory();
   // Changes made while Blender worked: one more build for the latest form, not one per change.
   const moved = contentOf(current()) !== content;
   if (again || (live() && moved)) {
     again = false;
     if (live() || moved) schedule(0);
   }
+  return ok;
 }
 
 $('export').addEventListener('click', async () => {
@@ -551,7 +697,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   if (params.get('remix')) {
     await remix(params.get('remix'), params.get('from') === 'export' ? 'export' : 'preview');
-    history.replaceState(null, '', location.pathname);
+    window.history.replaceState(null, '', location.pathname);
   } else {
     // An unsent draft survives a reload; anything the server no longer offers is refused at Build.
     const draft = store.get('draft', null);
@@ -563,7 +709,8 @@ async function main() {
 
 // Take a preset as the form, over the defaults (a preset may leave fields out).
 function adopt(source, changes = {}) {
-  preset = { ...structuredClone(DEFAULT), ...structuredClone(source), targets: source.targets || {}, ...changes };
+  // A deep copy: the form must never share an object with a history entry, or editing it rewrites history.
+  preset = { ...structuredClone(DEFAULT), ...structuredClone(source), targets: structuredClone(source.targets || {}), ...changes };
 }
 
 // Start from a saved face's preset, under a new id, so building never touches the original.
