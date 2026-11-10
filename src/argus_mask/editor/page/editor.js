@@ -321,7 +321,12 @@ function meta() {
   box.replaceChildren(
     el('span', { className: 'name', textContent: `${shown.name} (${shown.id})` }),
     el('span', { textContent: `${shown.provenance.license} · hover for credits`, title: shown.provenance.notes }),
-    el('span', { className: stale ? 'stale' : '', textContent: stale ? 'The form has changed since this build.' : 'Up to date with the form.' }),
+    el('span', {
+      className: stale ? 'stale' : '',
+      // Live update does not build for a new name or id (that would make a preview per keystroke): say so.
+      textContent: !stale ? 'Up to date with the form.'
+        : contentOf(current()) === shownContent ? 'Name or id changed: Build to apply it.' : 'The form has changed since this build.',
+    }),
     state.exported
       ? el('span', { className: 'live', textContent: `Exported: assets/${shown.id}, on the server's /faces.` })
       : el('span', { textContent: 'Preview only. Export puts it in assets/ and on /faces.' }),
@@ -362,6 +367,55 @@ function changed() {
   }
   meta();
   store.set('draft', current());
+  if (ready && live()) schedule();
+}
+
+// ---- live update: build by itself, a moment after the last change ---------------------------
+
+const LIVE_DELAY_MS = 1000;
+// What a build depends on: the preset without its id and name, so typing those never builds.
+const contentOf = (body) => JSON.stringify({ ...body, id: undefined, name: undefined });
+let shownContent = null;   // the content of the face on show (built here, or loaded from a saved one)
+let failedContent = null;  // the content of the last build that failed: not retried until something changes
+let timer = null;
+let again = false;         // the form changed during a build: build once more when it ends
+let ready = false;         // set once the page has loaded: restoring a draft is not a change to build
+
+const live = () => $('live').checked;
+function schedule(delay = LIVE_DELAY_MS) {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    const content = contentOf(current());
+    if (content === shownContent || content === failedContent || !$('form').checkValidity()) return;
+    if (busy) { again = true; return; }
+    runBuild();
+  }, delay);
+}
+$('live').checked = store.get('live', false);
+$('live').addEventListener('change', () => {
+  store.set('live', live());
+  if (live()) schedule(0);
+});
+
+// ---- building: the preview fades and a spinner counts while Blender works ------------------
+
+let ticker = null;
+function building(on) {
+  for (const host of [$('thumb'), $('stage')]) host.classList.toggle('building', on);
+  for (const box of document.querySelectorAll('.busy')) box.hidden = !on;
+  $('empty').hidden = on || !!shown;
+  $('build').textContent = on ? 'Building…' : 'Build';
+  clearInterval(ticker);
+  if (!on) return;
+  const started = performance.now();
+  const expected = store.get('seconds', 9);  // the last build's time: a good guess at this one's
+  const tick = () => {
+    const t = (performance.now() - started) / 1000;
+    for (const n of document.querySelectorAll('.busy .t')) n.textContent = `${t.toFixed(1)} s`;
+    for (const n of document.querySelectorAll('.busy .bar i')) n.style.width = `${Math.min(95, (t / expected) * 100)}%`;
+  };
+  tick();
+  ticker = setInterval(tick, 100);
 }
 
 async function loadStarts() {
@@ -380,10 +434,13 @@ async function loadStarts() {
   select.onchange = async () => {
     const chosen = presets.find((p) => p.id === select.value);
     if (chosen) adopt(chosen); else preset = structuredClone(DEFAULT);
+    // A saved face is already built: live update has nothing to do until the form moves on from it.
+    if (chosen) shownContent = contentOf(current());
     syncForm();
     if (chosen) {
       await showFace(chosen.id).catch(() => {});
       built = JSON.stringify(current());
+      shownContent = contentOf(current());
       meta();
     }
   };
@@ -394,30 +451,50 @@ $('id').addEventListener('input', changed);
 $('name').addEventListener('input', changed);
 $('filter').addEventListener('input', applyFilter);
 
-$('form').addEventListener('submit', async (event) => {
+$('form').addEventListener('submit', (event) => {
   event.preventDefault();
+  if (busy) { again = true; status('A build is running; this one follows it.'); return; }
+  runBuild();
+});
+
+async function runBuild() {
+  clearTimeout(timer);
   const body = current();
-  $('build').disabled = true;
+  const content = contentOf(body);
+  again = false;
   busy = true;
+  $('build').disabled = true;
+  building(true);
   meta();
-  status('Building…');
+  status(live() ? 'Live update: building…' : 'Building…');
   const started = performance.now();
   try {
     const done = await json('/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    store.set('seconds', done.seconds);
     status('Built. Loading the preview…');
     built = JSON.stringify(body);
+    shownContent = content;
+    failedContent = null;
     await showFace(done.manifest.id);
     await loadStarts();
     $('start').value = done.manifest.id;
     status(`Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
   } catch (err) {
+    failedContent = content;
     status(`${err.message} (${((performance.now() - started) / 1000).toFixed(1)} s)`, true);
   } finally {
-    $('build').disabled = false;
     busy = false;
+    $('build').disabled = false;
+    building(false);
     meta();
   }
-});
+  // Changes made while Blender worked: one more build for the latest form, not one per change.
+  const moved = contentOf(current()) !== content;
+  if (again || (live() && moved)) {
+    again = false;
+    if (live() || moved) schedule(0);
+  }
+}
 
 $('export').addEventListener('click', async () => {
   if (!shown) return;
@@ -466,6 +543,7 @@ async function main() {
     if (draft && draft.phenotype && draft.assets) adopt(draft);
   }
   syncForm();
+  ready = true;
 }
 
 // Take a preset as the form, over the defaults (a preset may leave fields out).

@@ -108,7 +108,7 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 
 ### Face editor
 
-`argus-mask editor` is a page for making heads. Pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails (hover for a large view). Set sex, age, build and ancestry, and shape the head, forehead, brow ridge, eyes, ears, cheeks, nose, lips, chin and neck with 117 sliders in collapsible panels (the filter box finds one by name). Press **Build** and a preview appears about ten seconds later; click it for a large view that can rest, open, smile, talk or turn.
+`argus-mask editor` is a page for making heads. Pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails (hover for a large view). Set sex, age, build and ancestry, and shape the head, forehead, brow ridge, eyes, ears, cheeks, nose, lips, chin and neck with 117 sliders in collapsible panels (the filter box finds one by name). Press **Build** and a preview appears about ten seconds later (the preview fades behind a spinner and a timer while Blender works); click it for a large view that can rest, open, smile, talk or turn. With **Live update** on, it builds by itself a second after you stop changing things; changes made during a build get one more build, and typing a name or id never builds.
 
 A build is a preview, kept in `assets/.preview/`, which the server never lists. **Export** copies the preview on show into `assets/<id>`, and it is on the server's `/faces` at once. **Download preset** saves the form as a `.json` preset, the same format as `scripts/stock_heads/`, and **Open preset…** loads one.
 

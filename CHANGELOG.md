@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clothes and a hat are picked from thumbnails;
   117 shape sliders (head, forehead, brow ridge, eyes, ears, cheeks, nose, mouth, chin, neck) over MakeHuman's CC0
   modelling targets, from `modifiers.json`, generated from MPFB's catalogue. Collapsible panels, a filter, a hover
-  preview of each asset, and a preview card that opens a large view. A build is a preview (`assets/.preview/`);
+  preview of each asset, a preview card that opens a large view, a spinner and timer while a build runs, and
+  **Live update**, which builds a second after the last change. A build is a preview (`assets/.preview/`);
   **Export** puts it in `assets/<id>` and on `/faces`; **Download preset** saves the form and
   **Open preset…** loads one. A **Saved faces** page reviews, remixes, renames and deletes (to `assets/.trash/`) the
   faces the editor made, and reviews the others. It offers only assets an installed pack licenses, writes their

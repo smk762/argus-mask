@@ -5,7 +5,9 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -541,6 +543,14 @@ def test_rename_and_delete_are_guarded_writes(client, rig) -> None:
     assert client.post("/saved/my-face/rename", json={"name": "x"}, headers=cross).status_code == 403
     assert client.delete("/saved/my-face", headers=cross).status_code == 403
     assert (rig["assets"] / ".preview" / "my-face").exists()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("script", sorted((SCRIPT.parent / "page").glob("*.js")), ids=lambda p: p.name)
+def test_the_page_scripts_parse(script) -> None:
+    # The pages have no build step and no browser test in CI: at least they must parse.
+    done = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
 
 
 def test_the_faces_page_is_served(client) -> None:
