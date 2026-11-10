@@ -267,7 +267,9 @@ def fake_tts(
 
 
 @contextmanager
-def fake_wyoming(pcm: np.ndarray, rate: int = 24000, *, error: str | None = None) -> Iterator[tuple[str, list[dict]]]:
+def fake_wyoming(
+    pcm: np.ndarray, rate: int = 24000, *, error: str | None = None, voices: list[dict] | None = None
+) -> Iterator[tuple[str, list[dict]]]:
     """A Wyoming TTS server: answers ``describe``, and ``synthesize`` with *pcm* as 16-bit chunks.
 
     Yields its URL and the synthesize requests it received. ``error`` makes it answer
@@ -296,7 +298,7 @@ def fake_wyoming(pcm: np.ndarray, rate: int = 24000, *, error: str | None = None
                 line, _, buf = buf.partition(b"\n")
                 head = json.loads(line)
                 if head["type"] == "describe":
-                    conn.sendall(event("info", {"tts": [{"name": "fake", "voices": [{"name": "0"}]}]}))
+                    conn.sendall(event("info", {"tts": [{"name": "fake", "voices": voices or [{"name": "0"}]}]}))
                 elif head["type"] == "synthesize":
                     seen.append(head.get("data") or {})
                     if error:
