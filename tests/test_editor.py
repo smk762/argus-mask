@@ -1046,3 +1046,44 @@ def test_a_wyoming_speaker_goes_with_the_voice_not_instead_of_it() -> None:
     assert voiced({}, "7", "http://h/tts") == {"speaker": "7"} and voiced({}, "clone:x", "http://h/tts") == {
         "voice_clone_id": "x"
     }
+
+
+@pytest.mark.parametrize("kind", ["wyoming", "http"])
+def test_a_temperature_reaches_the_tts_service(broadcasting, kind) -> None:
+    from tests.helpers import fake_tts, fake_wyoming  # noqa: PLC0415
+
+    fake = fake_wyoming(tone(0.3)) if kind == "wyoming" else fake_tts(tone(0.3))
+    with fake as (tts, seen), broadcasting(tts) as (c, _):
+        body = {"face": "stock-01", "text": "Steady now.", "voice": "0", "params": {"temperature": 0.6}}
+        job = finished(c, c.post("/broadcast/say", json=body).json())
+    assert job["state"] == "done", job["events"]
+    # Wyoming: beside the text in the synthesize event's data, for a bridge to pass on. HTTP: a field of the body.
+    assert seen[0]["temperature"] == 0.6 and seen[0]["text"] == "Steady now."
+    if kind == "wyoming":
+        assert seen[0]["voice"] == {"name": "0"} and "temperature" not in seen[0]["voice"]
+
+
+def test_the_broadcast_page_has_a_temperature_left_to_the_service_by_default(client) -> None:
+    page = client.get("/broadcast.html").text
+    assert 'id="temp"' in page and 'min="0.1" max="1.5"' in page and 'id="temp-default" checked' in page
+
+
+def test_the_voices_come_from_a_miso_style_http_service(broadcasting) -> None:
+    from argus_mask.client import voiced  # noqa: PLC0415
+    from tests.helpers import fake_tts  # noqa: PLC0415
+
+    listed = {
+        "speakers": {
+            "speakers": [{"id": "0", "name": "Speaker 0", "languages": ["en"]}, {"id": "1", "name": "Speaker 1"}]
+        },
+        "clones": {"clones": [{"companion_id": "inara-nobility", "name": "Inara_nobility"}]},
+    }
+    with fake_tts(tone(0.1), voices=listed) as (tts, _), broadcasting(tts) as (c, _):
+        found = c.get("/voices").json()
+        assert found["listed"] and [v["name"] for v in found["voices"]] == ["0", "1", "clone:inara-nobility"]
+        assert found["voices"][2]["description"] == "Inara_nobility" and found["voices"][0]["languages"] == ["en"]
+        # Each name goes back to the field the service reads: a speaker by id, a clone by its id.
+        assert voiced({}, "1", tts) == {"speaker": "1"}
+        assert voiced({}, "clone:inara-nobility", tts) == {"voice_clone_id": "inara-nobility"}
+    with fake_tts(tone(0.1)) as (tts, _), broadcasting(tts) as (c, _):  # answers neither list
+        assert c.get("/voices").json()["listed"] is False

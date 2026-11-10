@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Temperature on the Broadcast page**: a slider (0.1 to 1.5, Miso's range), left to the service's own value unless
+  set; it goes as the request's `temperature` (`-p temperature=…`). Over Wyoming, `-p` fields other than the voice's
+  now ride beside the text in the `synthesize` event, for a bridge to pass on, instead of being dropped.
+- **Voices from an HTTP TTS**: for a `…/synthesise[/stream]` URL (Miso, agent-composer's TTS servers) the editor lists
+  `GET …/speakers` and `GET …/clones`, named as the Wyoming bridge names them (`0`, `clone:<id>`), so the Broadcast
+  page's voice picker works talking to Miso directly.
 - **Broadcast page** in the editor: the server's faces with their readiness, and a form with every `say` option
   (voice listed from a Wyoming service, pause, seed, stream, TTS URL, `-p` fields) or a WAV to `push`, run through
   the CLI's own client with live progress, Stop, and the matching command line. `client.tts_voices()` asks a Wyoming

@@ -207,7 +207,13 @@ def fake_a2f(
 
 @contextmanager
 def fake_tts(
-    pcm: np.ndarray, rate: int = 24000, *, status: int = 200, break_after: int | None = None, stall_s: float = 0.0
+    pcm: np.ndarray,
+    rate: int = 24000,
+    *,
+    status: int = 200,
+    break_after: int | None = None,
+    stall_s: float = 0.0,
+    voices: dict | None = None,
 ) -> Iterator[tuple[str, list[dict]]]:
     """A TTS service that streams *pcm* as chunked ``pcm_f32le`` with the format in headers.
 
@@ -223,6 +229,19 @@ def fake_tts(
 
         def log_message(self, *args: object) -> None:
             pass
+
+        def do_GET(self) -> None:  # noqa: N802 - /speakers and /clones, as Miso answers them
+            body = json.dumps((voices or {}).get(self.path.rsplit("/", 1)[-1])).encode()
+            if not voices or self.path.rsplit("/", 1)[-1] not in voices:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:  # noqa: N802
             seen.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
