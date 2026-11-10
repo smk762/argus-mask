@@ -15,6 +15,11 @@
 ``POST /saved/{id}/rename``             ``{"id": new id, "name": new name}``: the export and the preview together
 ``DELETE /saved/{id}``                  move a face the editor made to ``.trash/`` (``?from=preview|export``, default both)
 ``GET  /faces.html``                    the saved-faces page
+``GET  /broadcast/state``               the server's faces, who watches them, the TTS defaults, running broadcasts
+``GET  /voices``                        the voices a (Wyoming) TTS service lists: ``?tts=`` its URL
+``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
+``GET  /broadcast/{job}``, ``POST /broadcast/{job}/stop``  a broadcast's progress; stop it
+``GET  /broadcast.html``                the Broadcast page
 ``GET  /``                              the editor page
 
 ``POST /build`` starts Blender, so it is behind the same origin and read-only
@@ -26,21 +31,27 @@ reaches the file system or Blender's command line except through that lookup.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
+import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import numpy as np
 import structlog
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from argus_mask import __version__
+from argus_mask import __version__, client
+from argus_mask.audio import AudioError, read_wav
 from argus_mask.config import EditorSettings, Settings
+from argus_mask.editor.broadcast import Broadcasts
+from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
@@ -75,6 +86,35 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
         return None, None, f"no argus-mask server answers at {base} ({getattr(exc, 'reason', exc)})"
 
 
+MAX_TEXT = 5000  # characters a broadcast may say: a long paragraph or two
+MAX_AUDIO_BYTES = 25 * 1024 * 1024  # a pushed file: minutes of 48 kHz 16-bit audio
+
+
+def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
+    """:func:`read_wav` on an uploaded file's bytes; errors name the upload, not the temporary file."""
+    with tempfile.NamedTemporaryFile(suffix=".wav") as handle:
+        handle.write(data)
+        handle.flush()
+        try:
+            return read_wav(handle.name)
+        except AudioError as exc:
+            raise AudioError(str(exc).replace(handle.name, name)) from exc
+
+
+class Say(BaseModel):
+    """Everything `argus-mask say` takes, as the Broadcast page sends it."""
+
+    model_config = ConfigDict(extra="forbid")
+    face: str = Field(..., pattern=FACE_ID_PATTERN)
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT)
+    tts_url: str = Field("", max_length=500, description="default: ARGUS_MASK_TTS_URL")
+    voice: str = Field("", max_length=200, description="default: ARGUS_MASK_TTS_VOICE")
+    params: dict[str, str | int | float | bool] = Field(default_factory=dict, description="-p key=value fields")
+    seed: int = Field(0, ge=0, le=2**31 - 1)
+    stream: bool = False
+    pause: int = Field(300, ge=0, le=10_000, description="ms between sentences; 0 sends the text whole")
+
+
 class Rename(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = Field(None, pattern=FACE_ID_PATTERN)
@@ -100,9 +140,16 @@ def create_editor_app(
     )
     store = FaceStore(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
-    app = FastAPI(title="Argus Mask face editor", version=__version__)
+    broadcasts = Broadcasts(ed.server_url)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        await broadcasts.stop_all()
+
+    app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
-    install_guards(app, cfg)
+    origin_refusal = install_guards(app, cfg)
 
     @app.get("/health")
     def health() -> dict:
@@ -316,7 +363,6 @@ def create_editor_app(
     @app.post("/screen/{face_id}/test")
     async def screen_test(face_id: str) -> dict:
         """A chime through the server's own source socket, as `push` sends one: its read-only and guards apply."""
-        from argus_mask import client  # noqa: PLC0415 - websockets: the [server] extra
 
         state = await screen(face_id)
         if not state["listed"]:
@@ -326,6 +372,127 @@ def create_editor_app(
         except client.ClientError as exc:
             raise HTTPException(409, str(exc)) from exc  # the server's own reason: read-only, a live source ...
         return {"ok": True, "screens": len(state["screens"]), "frames": done.get("frames")}
+
+    # ---- broadcast: say and push from the page, as from a terminal --------------------------------
+
+    app.state.broadcasts = broadcasts
+
+    async def served(face_id: str) -> None:
+        status, _, why = await asyncio.to_thread(server_get, ed.server_url, f"/face/{face_id}")
+        if status != 200:
+            raise HTTPException(
+                404, why if status is None else f"the server at {ed.server_url} does not serve {face_id}"
+            )
+
+    @app.get("/broadcast/state")
+    async def broadcast_state() -> dict:
+        """The server's faces and who is watching them, the TTS defaults, and what is broadcasting from here."""
+        status, health, why = await asyncio.to_thread(server_get, ed.server_url, "/health")
+        out = {
+            "server": ed.server_url,
+            "server_ok": status == 200,
+            "reason": why,
+            "tts_url": cfg.tts_url,
+            "tts_voice": cfg.tts_voice,
+            "faces": [],
+            "jobs": [j.public() for j in broadcasts.jobs.values() if j.state == "running"],
+        }
+        if status == 200 and isinstance(health, dict):
+            _, faces, _ = await asyncio.to_thread(server_get, ed.server_url, "/faces")
+            out |= {
+                "read_only": bool(health.get("read_only")),
+                "driver": health.get("driver") or {},
+                "live": health.get("live") or [],
+                "screens": health.get("screens") or {},
+                "faces": [
+                    {"id": f["id"], "name": f.get("name") or f["id"], "kind": (f.get("provenance") or {}).get("kind")}
+                    for f in (faces or [])
+                    if isinstance(f, dict) and f.get("id")
+                ],
+            }
+        return out
+
+    @app.get("/voices")
+    async def voices(request: Request, tts: str = Query("", max_length=500)) -> dict:
+        """The voices the TTS service offers, if it says (a Wyoming server does; the HTTP contract cannot).
+
+        A host the caller names is reached from here, so a read though it is, that takes the origin check
+        the writes have: no other site may use the editor to probe the LAN.
+        """
+        if tts and tts != cfg.tts_url:
+            why = origin_refusal(request.scope, request.headers)
+            if why is None and request.headers.get("sec-fetch-site") == "cross-site":
+                why = "a cross-site request may not name a TTS service"
+            if why is not None:
+                raise HTTPException(403, why)
+        tts = tts or cfg.tts_url
+        if not tts:
+            return {"tts_url": tts, "listed": False, "voices": [], "reason": "no TTS service set"}
+        try:
+            found = await asyncio.to_thread(client.tts_voices, tts)
+        except client.ClientError as exc:
+            return {"tts_url": tts, "listed": False, "voices": [], "reason": str(exc)}
+        if found is None:
+            return {"tts_url": tts, "listed": False, "voices": [], "reason": "this service does not list its voices"}
+        return {"tts_url": tts, "listed": True, "voices": found}
+
+    @app.post("/broadcast/say")
+    async def broadcast_say(req: Say) -> dict:
+        tts_url = (req.tts_url or cfg.tts_url).strip()
+        if not tts_url.startswith(("http://", "https://", "wyoming://")):
+            raise HTTPException(422, "a TTS service is needed: an http(s):// or wyoming:// URL (or ARGUS_MASK_TTS_URL)")
+        await served(req.face)
+        body = client.voiced({**req.params, "text": req.text}, req.voice or cfg.tts_voice, tts_url)
+        try:
+            job = broadcasts.say(req.face, tts_url, body, seed=req.seed, stream=req.stream, pause_ms=req.pause)
+        except Broadcasting as exc:
+            raise HTTPException(409, str(exc)) from exc
+        log.info("broadcast", face=req.face, kind="say", chars=len(req.text))  # never the text itself
+        return job.public()
+
+    @app.post("/broadcast/push")
+    async def broadcast_push(
+        request: Request,
+        face: str = Query(..., pattern=FACE_ID_PATTERN),
+        seed: int = Query(0, ge=0, le=2**31 - 1),
+        name: str = Query("audio.wav", max_length=200),
+    ) -> dict:
+        """An audio file (WAV) for a face, as `argus-mask push` plays one: the request's body is the file."""
+        too_big = HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+        declared = request.headers.get("content-length") or "0"
+        if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
+            raise too_big
+        data = bytearray()  # read up to the cap, never the whole of whatever is sent
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > MAX_AUDIO_BYTES:
+                raise too_big
+        if not data:
+            raise HTTPException(422, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+        await served(face)
+        try:
+            mono, rate = await asyncio.to_thread(wav_from_bytes, bytes(data), name)
+        except AudioError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        try:
+            job = broadcasts.push(face, mono, rate, seed=seed, name=name)
+        except Broadcasting as exc:
+            raise HTTPException(409, str(exc)) from exc
+        log.info("broadcast", face=face, kind="push", seconds=round(len(mono) / rate, 2))
+        return job.public()
+
+    @app.get("/broadcast/{job_id}")
+    def broadcast_job(job_id: str) -> dict:
+        job = broadcasts.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such broadcast")
+        return job.public()
+
+    @app.post("/broadcast/{job_id}/stop")
+    def broadcast_stop(job_id: str) -> dict:
+        if not broadcasts.stop(job_id):
+            raise HTTPException(404, "no such broadcast running")
+        return {"stopping": job_id}
 
     @app.get("/look.js")
     def look() -> FileResponse:

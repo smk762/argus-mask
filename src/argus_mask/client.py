@@ -320,6 +320,59 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
     return WyomingReply(sock, fmt, buffer)
 
 
+VOICES_TIMEOUT_S = 5.0
+
+
+def tts_voices(tts_url: str) -> list[dict] | None:
+    """The voices a TTS service offers, or None if it does not say (the HTTP contract has no list).
+
+    A Wyoming server answers ``describe`` with ``info``: each TTS program's voices, with their
+    languages and, for multi-speaker models, their speakers. Flattened to
+    ``[{"name", "description", "languages", "speakers": [names]}]``.
+    """
+    if not tts_url.startswith("wyoming://"):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(tts_url)
+        port = parts.port
+    except ValueError as exc:
+        raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port") from exc
+    if not parts.hostname or not port:
+        raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port")
+    try:
+        with socket.create_connection((parts.hostname, port), timeout=VOICES_TIMEOUT_S) as sock:
+            WyomingReply.send(sock, "describe")
+            buffer = b""
+            while True:
+                event, buffer = WyomingReply.receive(sock, buffer)
+                if event is None:
+                    raise ClientError(f"the Wyoming server at {tts_url} closed without describing itself")
+                if event[0] == "info":
+                    info = event[1]
+                    break
+    except OSError as exc:
+        raise ClientError(f"the Wyoming server at {tts_url} does not answer: {exc}") from exc
+    except ValueError as exc:  # an event's data that is not JSON
+        raise ClientError(f"the Wyoming server at {tts_url} sent an event that is not JSON") from exc
+    voices = []
+    programs = info.get("tts")
+    for program in programs if isinstance(programs, list) else []:
+        for v in (program.get("voices") if isinstance(program, dict) else None) or []:
+            if not isinstance(v, dict) or not v.get("name"):
+                continue
+            voices.append(
+                {
+                    "name": str(v["name"]),
+                    "description": str(v.get("description") or ""),
+                    "languages": [str(x) for x in v.get("languages") or []],
+                    "speakers": [
+                        str(s.get("name")) for s in v.get("speakers") or [] if isinstance(s, dict) and s.get("name")
+                    ],
+                }
+            )
+    return voices
+
+
 def voiced(body: dict, voice: str, tts_url: str) -> dict:
     """*body* with *voice* as its voice, unless it already names one.
 
@@ -328,10 +381,16 @@ def voiced(body: dict, voice: str, tts_url: str) -> dict:
     stored clone. A number goes to the first, any other name to the second, with the
     ``clone:`` prefix agent-composer's bridges use dropped, so the same name works on both.
     """
-    if not voice or any(k in body for k in ("voice", "name", "speaker", "voice_clone_id")):
+    if not voice:
+        return body
+    wyoming = tts_url.startswith("wyoming://")
+    # A Wyoming voice is {name, speaker}: a speaker picks one of the named voice's speakers, so only a
+    # name in the request stands instead of --voice. Over HTTP a speaker is itself the voice.
+    named = ("voice", "name") if wyoming else ("voice", "name", "speaker", "voice_clone_id")
+    if any(k in body for k in named):
         return body
     body = dict(body)
-    if tts_url.startswith("wyoming://"):
+    if wyoming:
         body["voice"] = voice
     elif voice.isdigit():
         body["speaker"] = voice

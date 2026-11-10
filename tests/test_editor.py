@@ -21,7 +21,7 @@ from argus_mask.editor.library import AssetLibrary
 from argus_mask.editor.preset import ADULT_AGE, MODIFIER_GROUPS, MODIFIERS, Preset, one_way
 from argus_mask.faces import FaceStore
 from argus_mask.server.app import create_app
-from tests.helpers import make_face, make_glb
+from tests.helpers import make_face, make_glb, tone
 
 REPO = Path(__file__).resolve().parent.parent
 STOCK_PRESETS = sorted((REPO / "scripts" / "stock_heads").glob("stock-*[0-9].json"))
@@ -896,3 +896,153 @@ def test_editor_server_urls(monkeypatch) -> None:
     monkeypatch.setenv("ARGUS_MASK_VIEWER_URL", "mask.example.org")
     with pytest.raises(ValueError, match="http"):
         EditorSettings.from_env()
+
+
+# ---- broadcast ------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def broadcasting(rig):
+    """A real server serving stock-01, and a factory for an editor pointed at it with a given TTS service."""
+    from contextlib import contextmanager  # noqa: PLC0415
+    from dataclasses import replace  # noqa: PLC0415
+
+    from argus_mask.editor.app import create_editor_app  # noqa: PLC0415
+    from tests.helpers import live_server  # noqa: PLC0415
+
+    make_face(rig["assets"], "stock-01")
+
+    @contextmanager
+    def run(tts_url: str = "", *, read_only: bool = False):
+        with live_server(create_app(Settings(assets_dir=rig["assets"], read_only=read_only))) as url:
+            ed = replace(rig["editor"], server_url=url)
+            with TestClient(create_editor_app(Settings(assets_dir=rig["assets"], tts_url=tts_url), ed)) as c:
+                yield c, url
+
+    return run
+
+
+def finished(c, job: dict, timeout: float = 20.0) -> dict:
+    import time  # noqa: PLC0415
+
+    end = time.monotonic() + timeout
+    while job["state"] == "running" and time.monotonic() < end:
+        time.sleep(0.05)
+        job = c.get(f"/broadcast/{job['id']}").json()
+    return job
+
+
+def test_the_broadcast_page_sees_the_servers_faces(broadcasting) -> None:
+    with broadcasting("wyoming://127.0.0.1:1") as (c, url):
+        state = c.get("/broadcast/state").json()
+        assert state["server_ok"] and state["server"] == url and state["tts_url"] == "wyoming://127.0.0.1:1"
+        assert [f["id"] for f in state["faces"]] == ["stock-01"] and state["live"] == [] and state["screens"] == {}
+    assert "Broadcast" in c.get("/broadcast.html").text
+
+
+def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
+    from tests.helpers import fake_wyoming  # noqa: PLC0415
+
+    with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _):
+        body = {
+            "face": "stock-01",
+            "text": "Hello there. Second sentence.",
+            "voice": "en_GB-alba",
+            "params": {"speaker": "3"},
+        }
+        job = c.post("/broadcast/say", json=body).json()
+        assert job["state"] == "running" and job["kind"] == "say"
+        job = finished(c, job)
+    assert job["state"] == "done", job["events"]
+    kinds = [e["kind"] for e in job["events"]]
+    assert "ready" in kinds and "progress" in kinds and kinds[-1] == "done"
+    assert [s["text"] for s in seen] == ["Hello there.", "Second sentence."]  # one sentence per request
+    assert seen[0]["voice"] == {"name": "en_GB-alba", "speaker": "3"}
+
+
+def test_the_voices_come_from_a_wyoming_service(broadcasting) -> None:
+    from tests.helpers import fake_wyoming  # noqa: PLC0415
+
+    voices = [{"name": "en_GB-alba", "languages": ["en_GB"], "speakers": [{"name": "a"}, {"name": "b"}]}, {"name": "x"}]
+    with fake_wyoming(tone(0.1), voices=voices) as (tts, _), broadcasting(tts) as (c, _):
+        found = c.get("/voices").json()
+        assert found["listed"] and [v["name"] for v in found["voices"]] == ["en_GB-alba", "x"]
+        assert found["voices"][0]["speakers"] == ["a", "b"] and found["voices"][0]["languages"] == ["en_GB"]
+        http = c.get("/voices", params={"tts": "http://127.0.0.1:9/tts"}).json()
+        assert not http["listed"] and "does not list" in http["reason"]
+        assert "does not answer" in c.get("/voices", params={"tts": "wyoming://127.0.0.1:9"}).json()["reason"]
+        assert "wyoming://host:port" in c.get("/voices", params={"tts": "wyoming://127.0.0.1:99999"}).json()["reason"]
+        # Another site may not use the editor to reach a host of its choosing.
+        evil = {"Origin": "http://evil.example"}
+        assert c.get("/voices", params={"tts": "wyoming://127.0.0.1:9"}, headers=evil).status_code == 403
+        assert (
+            c.get(
+                "/voices", params={"tts": "wyoming://10.0.0.1:22"}, headers={"Sec-Fetch-Site": "cross-site"}
+            ).status_code
+            == 403
+        )
+
+
+def test_push_plays_a_file_into_the_face(broadcasting, tmp_path) -> None:
+    from tests.helpers import write_wav  # noqa: PLC0415
+
+    wav = write_wav(tmp_path / "hello.wav", tone(0.5)).read_bytes()
+    with broadcasting() as (c, _):
+        job = c.post("/broadcast/push", params={"face": "stock-01", "name": "hello.wav"}, content=wav).json()
+        job = finished(c, job)
+        assert job["state"] == "done" and job["summary"] == "hello.wav", job["events"]
+        bad = c.post("/broadcast/push", params={"face": "stock-01", "name": "x.wav"}, content=b"not a wav at all")
+        assert bad.status_code == 422 and "RIFF" in bad.json()["detail"] and "/tmp" not in bad.json()["detail"]
+
+
+def test_a_read_only_server_refuses_and_the_page_hears_why(broadcasting, tmp_path) -> None:
+    from tests.helpers import write_wav  # noqa: PLC0415
+
+    wav = write_wav(tmp_path / "a.wav", tone(0.2)).read_bytes()
+    with broadcasting(read_only=True) as (c, _):
+        job = finished(c, c.post("/broadcast/push", params={"face": "stock-01"}, content=wav).json())
+    assert job["state"] == "failed" and "read-only" in job["events"][-1]["text"]
+
+
+def test_a_face_the_server_does_not_serve_is_refused_first(broadcasting) -> None:
+    with broadcasting("wyoming://127.0.0.1:1") as (c, _):
+        reply = c.post("/broadcast/say", json={"face": "nobody", "text": "hi"})
+        assert reply.status_code == 404 and "does not serve nobody" in reply.json()["detail"]
+        assert (
+            c.post("/broadcast/say", json={"face": "stock-01", "text": "hi", "tts_url": "ftp://x"}).status_code == 422
+        )
+        assert c.post("/broadcast/say", json={"face": "stock-01", "text": ""}).status_code == 422
+        assert c.post("/broadcast/say", json={"face": "../x", "text": "hi"}).status_code == 422
+
+
+def test_one_broadcast_per_face_and_stop(broadcasting, tmp_path) -> None:
+    from tests.helpers import write_wav  # noqa: PLC0415
+
+    long = write_wav(tmp_path / "long.wav", tone(6.0)).read_bytes()
+    with broadcasting() as (c, _):
+        first = c.post("/broadcast/push", params={"face": "stock-01"}, content=long).json()
+        second = c.post("/broadcast/push", params={"face": "stock-01"}, content=long)
+        assert second.status_code == 409 and "already broadcasting" in second.json()["detail"]
+        assert c.get("/broadcast/state").json()["jobs"][0]["id"] == first["id"]
+        assert c.post(f"/broadcast/{first['id']}/stop").status_code == 200
+        stopped = finished(c, c.get(f"/broadcast/{first['id']}").json(), timeout=5)
+        assert stopped["state"] == "stopped"
+        assert c.post(f"/broadcast/{first['id']}/stop").status_code == 404
+
+
+def test_broadcasts_are_guarded_writes(broadcasting) -> None:
+    cross = {"Origin": "https://elsewhere.example"}
+    with broadcasting("wyoming://127.0.0.1:1") as (c, _):
+        assert c.post("/broadcast/say", json={"face": "stock-01", "text": "hi"}, headers=cross).status_code == 403
+        assert c.post("/broadcast/push", params={"face": "stock-01"}, content=b"x", headers=cross).status_code == 403
+
+
+def test_a_wyoming_speaker_goes_with_the_voice_not_instead_of_it() -> None:
+    from argus_mask.client import voiced  # noqa: PLC0415
+
+    assert voiced({"speaker": "3"}, "alba", "wyoming://h:1") == {"speaker": "3", "voice": "alba"}
+    assert voiced({"name": "other"}, "alba", "wyoming://h:1") == {"name": "other"}  # a name in the request wins
+    assert voiced({"speaker": "3"}, "alba", "http://h/tts") == {"speaker": "3"}  # over HTTP a speaker is the voice
+    assert voiced({}, "7", "http://h/tts") == {"speaker": "7"} and voiced({}, "clone:x", "http://h/tts") == {
+        "voice_clone_id": "x"
+    }
