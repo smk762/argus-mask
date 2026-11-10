@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The viewer's audio buffer is tunable (`?buffer=<ms>`, default 250).
 - The stock head lock points at revision 2 of `stock-01`, with the mouth fixes.
+- **Clothes.** A preset's `assets.clothes` lists garments; the body under them is removed and they are cut with the
+  bust. `stock-01` revision 3 wears `thegreatengineer_galactic_warrior_uniform` from the MakeHuman community's
+  suits02 pack (CC0): a high-collared crew tunic, since a bust in nothing looked undressed.
 
 - **`say` speaks Wyoming** (`--tts-url wyoming://host:port`, `-p voice=…`), the protocol of Home Assistant's TTS
   servers and agent-composer's XTTS and Miso bridges, beside the HTTP PCM stream it already understood.

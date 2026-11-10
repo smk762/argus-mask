@@ -19,7 +19,8 @@
     "eyelashes": "eyelashes/eyelashes01/eyelashes01.mhclo",
     "teeth": "teeth/teeth_base/teeth_base.mhclo",
     "tongue": "tongue/tongue01/tongue01.mhclo",
-    "hair": "hair/short02/short02.mhclo"
+    "hair": "hair/short02/short02.mhclo",
+    "clothes": ["clothes/thegreatengineer_galactic_warrior_uniform/thegreatengineer_galactic_warrior_uniform.mhclo"]
   },
   "bust": {"height_m": 0.40, "half_width_m": 0.23},
   "mouth": {"tongue_flatten": 0.6, "tongue_drop_mm": 0.0, "upper_teeth_drop_mm": 2.5, "cavity_shade": 0.02},
