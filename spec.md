@@ -24,7 +24,7 @@ audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN devic
 Do not rebuild these.
 
 - **NVIDIA Audio2Face-3D.** The models (regression v2.3, diffusion v3.0) are under the NVIDIA Open Model License; the SDK is MIT. Audio is resampled to 16 kHz. The SDK is C++/CUDA on TensorRT with no Python bindings, and recommends 4 GB+ of VRAM. Mask reaches it as an external service by URL, the way darkroom reaches ComfyUI. Mask never links TensorRT.
-- **Miso TTS** (a separate TTS server, `:8034` where this was developed), optional. `POST /synthesise/stream` takes text and streams raw 24 kHz mono float32 PCM, with the format in `X-Sample-Rate` / `X-Audio-Format` / `X-Channels` headers. It is one way to get speech to push into mask, never a dependency: only the `say` command talks to it. It is slower than real time on a 3090 (see [Open questions](#open-questions)).
+- **Miso TTS** (a separate TTS server, `:8034` where this was developed), optional. `POST /synthesise/stream` takes text and streams raw 24 kHz mono float32 PCM, with the format in `X-Sample-Rate` / `X-Audio-Format` / `X-Channels` headers. It is one way to get speech to push into mask, never a dependency: only the `say` command talks to it. `say` also speaks Wyoming (`wyoming://host:port`), the protocol of Home Assistant's TTS servers and of agent-composer's XTTS and Miso bridges, so a TTS on another machine serves too. It is slower than real time on a 3090 (see [Open questions](#open-questions)).
 - **argus-cortex** (`>=0.4.6,<0.5`):
   - `wire.make_versioned_base` and `render_schema` for the wire schema.
   - `server.WriteGuard` / `cross_site_refuse` / `env_flag`.

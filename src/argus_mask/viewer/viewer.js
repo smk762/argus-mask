@@ -6,6 +6,7 @@
 //   ?bg=<css colour> background for the flat tier, or "transparent"
 //   ?hud=0           hide the status line
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
+//   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -14,6 +15,7 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
+const RECORD = params.get('record') === '1';
 const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
 const BUFFER_S = Math.min(2, Math.max(0.05, (Number.isFinite(BUFFER_MS) ? BUFFER_MS : 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
 const RESYNC_S = 0.05;        // after an underrun, how soon the late audio starts
@@ -30,7 +32,7 @@ if (params.get('hud') === '0') hudEl.hidden = true;
 // What a test (or a curious operator in the console) can read.
 const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
-  streamsEnded: 0, underruns: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
+  streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
 };
 
 function notice(text, button, onClick) {
@@ -41,6 +43,16 @@ function notice(text, button, onClick) {
 }
 
 function fail(text) { state.error = text; notice(text); }
+
+// `argus-mask record` drives the face frame by frame: pose() shows one frame's weights and head and
+// resolves once it has been drawn, so a screenshot taken then is exactly that frame.
+let posed = null;
+let posedResolve = null;
+state.pose = (weights, headTurn, blendshapes) => new Promise((resolve) => {
+  if (blendshapes) names = blendshapes;   // the stream's order, from its header
+  posed = { weights: Float32Array.from(weights), head: headTurn };
+  posedResolve = resolve;
+});
 
 // ---- scene ---------------------------------------------------------------------------------
 
@@ -157,6 +169,12 @@ function playChunk(startMs, samples) {
     anchor = { clock: now + RESYNC_S, t: startMs };
     when = anchor.clock;
   }
+  if (audio && audio.state !== 'running' && samples.length) {
+    // The browser paused the context (a tab switch, an interrupted output device). The chunk is
+    // lost; count it so a clipped start can be told from a clipped reply, and ask for the clock back.
+    state.audioDropped += 1;
+    audio.resume().catch(() => {});
+  }
   if (audio && audio.state === 'running' && samples.length) {
     const buffer = audio.createBuffer(1, samples.length, sampleRate);
     buffer.copyToChannel(samples, 0);
@@ -265,7 +283,12 @@ function draw() {
   lastDraw = wall;
   const t = timelineNow();
   let live = false;
-  if (current && t !== null && queue.length) {
+  if (posed) {
+    live = true;
+    if (!current || current.length !== posed.weights.length) current = new Float32Array(posed.weights.length);
+    current.set(posed.weights);
+    Object.assign(head, posed.head);
+  } else if (current && t !== null && queue.length) {
     while (queue.length > 1 && queue[1].t_ms <= t) queue.shift();   // frames already passed
     const a = queue[0];
     const b = queue[1];
@@ -289,6 +312,7 @@ function draw() {
   if (!live) localIdle(wall / 1000);
   applyHead();
   renderer.render(scene, camera);
+  if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 
   drawn += 1;
   if (wall - fpsSince >= 1000) { fps = Math.round(drawn * 1000 / (wall - fpsSince)); drawn = 0; fpsSince = wall; }
@@ -306,6 +330,7 @@ async function main() {
   resize();
   let faceId;
   try { faceId = await loadFace(); } catch (error) { fail(error.message || String(error)); return; }
+  if (RECORD) { draw(); return; }   // posed from outside; no stream, no sound, no notice
   connect(faceId);
   draw();
   // Browsers only start audio after a click or a key press. A kiosk can waive that

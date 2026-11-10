@@ -1,13 +1,13 @@
 {
-  "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-01-r2.glb",
-  "size": 5221960,
+  "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-01-r3.glb",
+  "size": 6151544,
   "manifest": {
     "mask_version": "1.0",
     "id": "stock-01",
     "name": "Stock head 01",
     "model": {
       "file": "head.glb",
-      "sha256": "c1e9313f87540592d0f71fcaa8942ecc3ddfcbc49cd469553690a8d13226f44a"
+      "sha256": "128f92450caccc239313bfc0b36c38dd572538755c5558f2a09a75e4ef86a638"
     },
     "blendshapes": [
       "eyeBlinkLeft",
@@ -70,9 +70,9 @@
     },
     "provenance": {
       "kind": "stock",
-      "source": "Built with scripts/build_stock_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets and faceunits01",
+      "source": "Built with scripts/build_stock_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets, faceunits01 and suits02",
       "license": "CC0-1.0",
-      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out."
+      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0); uniform thegreatengineer_galactic_warrior_uniform by TheGreatEngineer (suits02 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out. Revision 3: wears a high-collared crew uniform."
     }
   }
 }

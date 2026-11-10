@@ -193,6 +193,8 @@ def push(
         )
     except (AudioError, OSError, client.ClientError) as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
 
 
 @app.command()
@@ -201,15 +203,25 @@ def say(
     face_id: str = Option(..., "--face", help="The face to animate"),
     url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
     tts_url: str = Option("", "--tts-url", help="The TTS stream endpoint; default: ARGUS_MASK_TTS_URL"),
+    voice: str = Option(
+        "", "--voice", help="The TTS voice: a clone's name or a speaker number; default: ARGUS_MASK_TTS_VOICE"
+    ),
     param: list[str] = Option([], "--param", "-p", help="Extra field for the TTS request, key=value (repeatable)"),
     seed: int = Option(0, "--seed", help="Seed of the idle layer"),
     stream: bool = Option(
         False, "--stream", help="Forward audio as the TTS generates it (only for a service faster than real time)"
     ),
+    pause: int = Option(
+        300,
+        "--pause",
+        min=0,
+        help="Silence between sentences in ms, each sentence its own request; 0 sends the text whole",
+    ),
 ) -> None:
     """Speak text through a TTS service into a running server. The text goes to that service and nowhere else.
 
-    The whole utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
+    The text goes one sentence at a time with a pause between them (twice as long between paragraphs). The whole
+    utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
     """
     from argus_mask import client
 
@@ -223,23 +235,86 @@ def say(
         except ValueError:
             body[key] = value
     body["text"] = text
+    settings = _settings()
+    tts_url = tts_url or settings.tts_url
+    body = client.voiced(body, voice or settings.tts_voice, tts_url)
     try:
         _report(
             asyncio.run(
                 client.say(
                     url,
                     face_id,
-                    tts_url or _settings().tts_url,
+                    tts_url,
                     body,
                     seed=seed,
                     stream=stream,
+                    pause_ms=pause,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
+                    on_progress=lambda i, n: typer.echo(f"sentence {i}/{n}", err=True),
                     on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
+                    on_wait=lambda: typer.echo(
+                        "waiting for the TTS service (a cold model takes a minute or two)", err=True
+                    ),
                 )
             )
         )
     except client.ClientError as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
+
+
+@app.command()
+def record(
+    face_id: str = Option(..., "--face", help="The face to record"),
+    out: Path = Option(Path("clip.mp4"), "--out", help="The clip (.mp4, or .webm); its take and WAV go beside it"),
+    url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
+    width: int = Option(1280, "--width", min=16),
+    height: int = Option(720, "--height", min=16),
+    display: str = Option("flat", "--display", help="The viewer's display tier: flat or hld"),
+    bg: str = Option("", "--bg", help="Background colour, as the viewer takes it (e.g. '#202020')"),
+    keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
+) -> None:
+    """Record the next session on a face as a video, offline and frame-exact.
+
+    Waits on the face's viewer socket; run `say` or `push` on that face meanwhile. Then renders every frame of the
+    session in a headless browser and muxes them with the audio, so the machine's load never shows in the clip.
+    Needs argus-mask[record] and `playwright install chromium-headless-shell`.
+    """
+    from argus_mask import record as recorder
+
+    def captured(r: recorder.Recording) -> None:
+        typer.echo(f"captured {len(r.frames)} frames, {r.duration_ms / 1000:.2f}s; rendering", err=True)
+
+    last = [0]
+
+    def progress(i: int, n: int) -> None:
+        if i == n or i * 10 // n > last[0]:
+            last[0] = i * 10 // n
+            typer.echo(f"  {i}/{n} frames", err=True)
+
+    try:
+        r = asyncio.run(
+            recorder.record(
+                url,
+                face_id,
+                out,
+                width=width,
+                height=height,
+                display=display,
+                bg=bg,
+                keep=keep,
+                on_wait=lambda: typer.echo(f"waiting for a session on {face_id} (run say or push now)", err=True),
+                on_captured=captured,
+                on_progress=progress,
+                on_renderer=lambda r: typer.echo(f"rendering on {r}", err=True),
+            )
+        )
+    except recorder.RecordError as exc:
+        raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
+    typer.echo(f"wrote {out} ({len(r.frames)} frames, {r.duration_ms / 1000:.2f}s)")
 
 
 @app.command()

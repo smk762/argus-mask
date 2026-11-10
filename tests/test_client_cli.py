@@ -13,7 +13,7 @@ from argus_mask.config import ConfigError, Settings
 from argus_mask.drivers import DriverError, build_driver
 from argus_mask.performance import blocks
 from argus_mask.server.app import create_app
-from tests.helpers import fake_a2f, fake_tts, live_server, make_face, make_glb, tone, write_wav
+from tests.helpers import fake_a2f, fake_tts, fake_wyoming, live_server, make_face, make_glb, tone, write_wav
 
 runner = CliRunner()
 
@@ -132,13 +132,76 @@ def test_say_streams_tts_audio_into_the_server(server) -> None:
             ],
         )
     assert result.exit_code == 0, result.output
-    assert "speech: 1.00s, playing" in result.output and "done: 30 frames, 1.00s" in result.output
+    # The utterance is 1.00 s; the take is longer by the silence put either side of it.
+    assert "speech: 1.00s, playing" in result.output and "done: 44 frames, 1.45s" in result.output
     assert seen == [{"speed": 1.1, "emotion": "calm", "text": "Hello there."}]
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, _):
         streamed = runner.invoke(
             app, ["say", "Hello again.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
         )
-    assert streamed.exit_code == 0 and "done: 30 frames, 1.00s" in streamed.output
+    assert streamed.exit_code == 0 and "done: 44 frames, 1.45s" in streamed.output
+
+
+def test_sentences_split_where_a_pause_belongs() -> None:
+    assert client.sentences("Hello there. How are you?  Fine!") == [
+        ("Hello there.", 1),
+        ("How are you?", 1),
+        ("Fine!", 0),
+    ]
+    assert client.sentences('He said "Go." Then left.') == [('He said "Go."', 1), ("Then left.", 0)]
+    assert client.sentences("One.\n\nTwo. Three.\n") == [("One.", 2), ("Two.", 1), ("Three.", 0)]
+    assert client.sentences("No full stop at the end") == [("No full stop at the end", 0)]
+    assert client.sentences("Version 2.5 is out. Yes.") == [("Version 2.5 is out.", 1), ("Yes.", 0)]
+
+
+def test_say_sends_one_sentence_at_a_time_with_pauses_between(server) -> None:
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        result = runner.invoke(
+            app,
+            ["say", "One. Two!\n\nThree?", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "x=1"],
+        )
+    assert result.exit_code == 0, result.output
+    assert [b["text"] for b in seen] == ["One.", "Two!", "Three?"] and all(b["x"] == 1 for b in seen)
+    assert "sentence 1/3" in result.output and "sentence 3/3" in result.output
+    # 3 x 1.0 s of speech, 0.3 s after the first sentence, 0.6 s after the paragraph, 0.15 + 0.3 s either side.
+    assert "speech: 3.00s, playing" in result.output and "4.35s" in result.output
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        whole = runner.invoke(
+            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--pause", "0"]
+        )
+    assert whole.exit_code == 0 and [b["text"] for b in seen] == ["One. Two!"] and "1.45s" in whole.output
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        streamed = runner.invoke(
+            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
+        )
+    assert streamed.exit_code == 0 and [b["text"] for b in seen] == ["One.", "Two!"] and "2.75s" in streamed.output
+
+
+def test_say_picks_the_voice(server, monkeypatch) -> None:
+    def spoken(*args: str) -> dict:
+        with fake_tts(tone(0.2, 24000), 24000) as (tts_url, seen):
+            result = runner.invoke(
+                app, ["say", "Hi.", "--face", "test-head", "--url", server, "--tts-url", tts_url, *args]
+            )
+        assert result.exit_code == 0, result.output
+        return seen[0]
+
+    monkeypatch.delenv("ARGUS_MASK_TTS_VOICE", raising=False)
+    assert spoken() == {"text": "Hi."}
+    # A name is a stored clone, a number one of the service's own speakers; agent-composer's prefix is dropped.
+    assert spoken("--voice", "inara-nobility") == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("--voice", "clone:inara-nobility") == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("--voice", "1") == {"text": "Hi.", "speaker": "1"}
+    # An explicit field wins over the default voice.
+    monkeypatch.setenv("ARGUS_MASK_TTS_VOICE", "inara-nobility")
+    assert spoken() == {"text": "Hi.", "voice_clone_id": "inara-nobility"}
+    assert spoken("-p", "speaker=0") == {"text": "Hi.", "speaker": 0}
+    assert spoken("--voice", "2") == {"text": "Hi.", "speaker": "2"}
+    # A Wyoming server takes the name as it is.
+    with fake_wyoming(tone(0.2, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(app, ["say", "Hi.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert result.exit_code == 0, result.output
+    assert seen == [{"text": "Hi.", "voice": {"name": "inara-nobility"}}]
 
 
 def test_say_reports_a_tts_error_and_a_missing_url(server, monkeypatch) -> None:
@@ -146,8 +209,10 @@ def test_say_reports_a_tts_error_and_a_missing_url(server, monkeypatch) -> None:
     missing = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server])
     assert missing.exit_code == 1 and "ARGUS_MASK_TTS_URL is not set" in missing.output
     with fake_tts(tone(0.1), status=422) as (tts_url, _):
-        refused = runner.invoke(app, ["say", "", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+        refused = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
     assert refused.exit_code == 1 and "answered 422" in refused.output
+    empty = runner.invoke(app, ["say", " ", "--face", "test-head", "--url", server, "--tts-url", "http://127.0.0.1:9"])
+    assert empty.exit_code == 1 and "nothing to say" in empty.output
 
 
 def test_a_tts_stream_that_breaks_ends_the_session_cleanly(server) -> None:
@@ -186,3 +251,33 @@ def test_settings_reject_an_unknown_driver_and_read_the_environment(monkeypatch)
     cfg = Settings.from_env()
     assert (cfg.driver, cfg.fps, cfg.read_only) == ("a2f", 60, True)
     assert cfg.cors_origins == ("https://mask.example", "http://localhost:3000")
+
+
+async def test_cancelling_say_while_the_tts_thinks_returns_at_once(server) -> None:
+    """Ctrl-C must not leave the process waiting on the TTS socket until the service gives up."""
+    import time
+
+    with fake_tts(tone(1.0), stall_s=5.0) as (tts_url, _):
+        task = asyncio.ensure_future(client.say(server, "test-head", tts_url, {"text": "slow"}))
+        await asyncio.sleep(0.4)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The cut socket ends the reader thread at once; `_cancellable` would otherwise wait up to 2 s for it.
+        assert time.monotonic() - started < 1.0
+
+
+def test_say_speaks_through_a_wyoming_server(server) -> None:
+    with fake_wyoming(tone(1.0, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", "Hello there.", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "voice=0"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "speech: 1.00s, playing" in result.output and "done: 44 frames, 1.45s" in result.output
+    assert seen == [{"text": "Hello there.", "voice": {"name": "0"}}]
+    with fake_wyoming(tone(0.5), error="no such voice") as (tts_url, _):
+        failed = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert failed.exit_code == 1 and "no such voice" in failed.output
+    bad = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", "ftp://x"])
+    assert bad.exit_code == 1 and "wyoming://" in bad.output

@@ -7,14 +7,15 @@ Run it headless, inside Blender, with MPFB enabled and its asset packs installed
         --preset scripts/stock_heads/stock-01.json --out assets/stock-01/head.glb
 
 The preset is the recipe: the MakeHuman phenotype, which skin, hair, eyes and
-so on, where the bust is cut, and the size budget. The same preset, Blender,
+so on, what the bust wears, where it is cut, and the size budget. The same preset, Blender,
 MPFB and asset packs build the same head. A second file, ``<out>.recipe.json``,
 records what was actually used, for the face manifest's provenance.
 
 What it does, in order:
 
 1. refuses a preset that is not an adult;
-2. creates the human and adds the skin and the body parts;
+2. creates the human and adds the skin, the body parts and the clothes (the
+   body under a garment is removed, as MakeHuman does);
 3. bakes the modelling shape keys, loads MPFB's ARKit face units
    (``faceunits01``) and interpolates them onto the eyes, lashes, brows, teeth
    and tongue, because glTF cannot drive one mesh's morph targets from another;
@@ -49,6 +50,9 @@ from mathutils.bvhtree import BVHTree
 ADULT_AGE = 0.5
 
 BODY_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue", "hair")
+# ``assets.clothes`` is a list of garments. Each is named in the model after its asset (the mhclo's
+# base name), so ``texture_gain`` and ``blend_parts`` can refer to it.
+CLOTHES = "clothes"
 # Parts that must carry the face shapes. Hair may stay static.
 MOVING_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue")
 PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", "cupsize", "firmness")
@@ -113,12 +117,23 @@ def resolve_asset(services, fragment: str) -> str:
     raise RecipeError(f"asset {fragment!r} is not installed: is the asset pack that holds it in MPFB's data directory?")
 
 
+def asset_name(fragment: str) -> str:
+    """``clothes/suit01/suit01.mhclo`` to ``suit01``."""
+    return os.path.splitext(os.path.basename(fragment))[0]
+
+
 def mesh_children(basemesh) -> dict[str, object]:
-    """The body-part objects hanging off the basemesh, by part name."""
+    """The body-part and garment objects hanging off the basemesh: body parts by part name, garments
+    by asset name."""
     found = {}
     for obj in bpy.data.objects:
         if obj.type == "MESH" and obj is not basemesh and obj.parent is basemesh:
             kind = str(obj.get("MPFB_GEN_object_type") or "").lower()
+            if kind == CLOTHES:
+                # MPFB names a garment "<human>.<asset>" after the human it was fitted to.
+                kind = obj.name.split(".", 1)[-1]
+            if kind in found:
+                raise RecipeError(f"two parts are both called {kind!r}")
             found[kind or obj.name] = obj
     return found
 
@@ -429,6 +444,13 @@ def build(preset: dict, out: str) -> dict:
     for part in BODY_PARTS:
         if assets.get(part):
             human.add_mhclo_asset(resolve_asset(services, assets[part]), basemesh, asset_type=part, subdiv_levels=0, material_type="GAMEENGINE")
+    clothes = assets.get(CLOTHES) or []
+    if isinstance(clothes, str):
+        clothes = [clothes]
+    for garment in clothes:
+        if asset_name(garment) in BODY_PARTS:
+            raise RecipeError(f"a garment cannot be called {asset_name(garment)!r}")
+        human.add_mhclo_asset(resolve_asset(services, garment), basemesh, asset_type="Clothes", subdiv_levels=0, material_type="GAMEENGINE")
 
     # The order MPFB's own "export copy" uses: bake the modelling keys, then load the face units onto
     # the finished shape, carry them to the child meshes, and only then drop the helper geometry the
