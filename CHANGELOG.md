@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `say` says it is waiting for the TTS service, and Ctrl-C stops the wait at once instead of hanging on the socket.
 - **`say --voice`** and `ARGUS_MASK_TTS_VOICE`: the voice to ask the TTS service for, a stored clone's name or a
   speaker number, put in the field each kind of service expects.
+- **`say --pause`**: the text goes to the TTS service one sentence at a time, with 300 ms of silence between
+  sentences and 600 ms between paragraphs, so sentences no longer run into each other; `--pause 0` sends it whole.
 - `say` pads the utterance with 150 ms of silence before and 300 ms after, so a waking output device does not eat the
   first syllable and the mouth closes before the stream ends.
 - The viewer counts audio chunks that arrived while the browser had paused its audio clock (`__mask.audioDropped`) and

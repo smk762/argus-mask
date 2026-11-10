@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import http.client
 import json
+import re
 import socket
 import time
 import urllib.parse
@@ -31,6 +32,24 @@ LEAD_S = 1.0  # how far ahead of real time a source may run
 TTS_TIMEOUT_S = 180.0  # the first byte waits for a cold model to load
 SAY_LEAD_MS = 150  # silence before a TTS utterance: the output device is awake before the first sound
 SAY_TAIL_MS = 300  # silence after: the mouth closes while the sound is still live, and nothing clips the last word
+SAY_PAUSE_MS = 300  # silence between sentences; a blank line in the text gets twice this
+_SENTENCE_END = re.compile(r"(?:(?<=[.!?])|(?<=[.!?][\"'\u201d\u2019)\]]))\s+(?=\S)")
+_PARAGRAPH = re.compile(r"\n\s*\n")
+
+
+def sentences(text: str) -> list[tuple[str, int]]:
+    """*text* as sentences, each with the number of pauses to leave after it: one between sentences, two
+    between paragraphs, none after the last."""
+    out: list[tuple[str, int]] = []
+    paragraphs = [p.strip() for p in _PARAGRAPH.split(text) if p.strip()]
+    for i, paragraph in enumerate(paragraphs):
+        parts = [part.strip() for part in _SENTENCE_END.split(paragraph) if part.strip()]
+        for j, part in enumerate(parts):
+            last_in_paragraph = j == len(parts) - 1
+            out.append((part, 0 if last_in_paragraph and i == len(paragraphs) - 1 else 2 if last_in_paragraph else 1))
+    return out
+
+
 _FORMATS = {"pcm_f32le": "f32le", "f32le": "f32le", "pcm_s16le": "s16le", "s16le": "s16le"}
 
 
@@ -374,61 +393,100 @@ async def say(
     *,
     seed: int = 0,
     stream: bool = False,
+    pause_ms: int = SAY_PAUSE_MS,
     on_ready: Callable[[dict], None] | None = None,
     on_audio: Callable[[float], None] | None = None,
     on_wait: Callable[[], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Ask the TTS service for *body*'s speech and play it into a face.
+
+    The text is sent one sentence at a time, with *pause_ms* of silence between sentences
+    (twice that between paragraphs): TTS models run sentences into each other, and a short
+    request wanders less than a long one. *pause_ms* 0 sends the text whole.
 
     By default the whole utterance is fetched first and then pushed in real time: a
     TTS model slower than real time (Miso TTS 8B runs at about a quarter of real
     time on an RTX 3090) would otherwise stall the face mid-sentence. *stream*
     forwards the audio as it is generated, for a service that is faster than real
-    time. *on_wait* is called once the request is out and the wait for audio
-    begins; *on_audio* is told the utterance's length in seconds once it is known.
+    time. *on_wait* is called once the first request is out and the wait for audio
+    begins; *on_progress* before each sentence with its index and the count;
+    *on_audio* is told the utterance's length in seconds once it is known.
 
     Cancelling this (Ctrl-C in the CLI) cuts the TTS socket, so the thread reading
     it ends at once instead of holding the process open until the service gives up.
     """
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ClientError("nothing to say")
+    parts = sentences(text) if pause_ms > 0 else [(text, 0)]
     if on_wait:
         on_wait()
-    reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, body), cut=None)
+
+    async def open_part(i: int) -> TtsReply | WyomingReply:
+        if on_progress and len(parts) > 1:
+            on_progress(i + 1, len(parts))
+        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
+        if i and reply.fmt != fmt:
+            reply.close()
+            raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
+        return reply
+
+    reply = await open_part(0)
     fmt = reply.fmt
     frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
     block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+
+    def silence(ms: int) -> bytes:
+        return bytes(fmt.sample_rate * ms // 1000 * frame_bytes)
+
     # TTS models start speaking on their first sample. A little silence either side gives the output
     # device time to wake before the first sound, and the mouth time to close before the stream ends.
-    lead = bytes(fmt.sample_rate * SAY_LEAD_MS // 1000 * frame_bytes)
-    tail = bytes(fmt.sample_rate * SAY_TAIL_MS // 1000 * frame_bytes)
+    lead, tail = silence(SAY_LEAD_MS), silence(SAY_TAIL_MS)
 
     if stream:
 
         async def streamed() -> AsyncIterator[bytes]:
+            nonlocal reply
             yield lead
-            try:
-                while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
-                    yield data
-            except OSError as exc:
-                raise ClientError(f"the TTS stream broke: {exc}") from exc
+            for i, (_, pauses) in enumerate(parts):
+                if i:
+                    reply = await open_part(i)
+                try:
+                    while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
+                        yield data
+                except OSError as exc:
+                    raise ClientError(f"the TTS stream broke: {exc}") from exc
+                finally:
+                    reply.close()
+                if pauses:
+                    yield silence(pause_ms * pauses)
             yield tail
 
-        try:
-            return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
-        finally:
-            reply.close()
+        return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
 
     # Fetch everything before the face is claimed: the service answers its headers at once and
     # then generates for as long as it takes, and the face stays free for others meanwhile.
-    try:
-        whole = await _cancellable(asyncio.to_thread(reply.read), cut=reply.cut)
-    except OSError as exc:
-        raise ClientError(f"the TTS stream broke: {exc}") from exc
-    finally:
-        reply.close()
-    if not whole:
-        raise ClientError("the TTS service sent no audio")
+    pieces: list[bytes] = []
+    spoken = 0
+    for i, (_, pauses) in enumerate(parts):
+        if i:
+            reply = await open_part(i)
+        try:
+            whole = await _cancellable(asyncio.to_thread(reply.read), cut=reply.cut)
+        except OSError as exc:
+            raise ClientError(f"the TTS stream broke: {exc}") from exc
+        finally:
+            reply.close()
+        if not whole:
+            raise ClientError("the TTS service sent no audio" + (f" for sentence {i + 1}" if len(parts) > 1 else ""))
+        spoken += len(whole)
+        pieces.append(whole)
+        if pauses:
+            pieces.append(silence(pause_ms * pauses))
     if on_audio:
-        on_audio(len(whole) / frame_bytes / fmt.sample_rate)
+        on_audio(spoken / frame_bytes / fmt.sample_rate)
+    whole = b"".join(pieces)
 
     async def buffered() -> AsyncIterator[bytes]:
         yield lead

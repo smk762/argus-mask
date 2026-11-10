@@ -211,10 +211,17 @@ def say(
     stream: bool = Option(
         False, "--stream", help="Forward audio as the TTS generates it (only for a service faster than real time)"
     ),
+    pause: int = Option(
+        300,
+        "--pause",
+        min=0,
+        help="Silence between sentences in ms, each sentence its own request; 0 sends the text whole",
+    ),
 ) -> None:
     """Speak text through a TTS service into a running server. The text goes to that service and nowhere else.
 
-    The whole utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
+    The text goes one sentence at a time with a pause between them (twice as long between paragraphs). The whole
+    utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
     """
     from argus_mask import client
 
@@ -241,7 +248,9 @@ def say(
                     body,
                     seed=seed,
                     stream=stream,
+                    pause_ms=pause,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
+                    on_progress=lambda i, n: typer.echo(f"sentence {i}/{n}", err=True),
                     on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
                     on_wait=lambda: typer.echo(
                         "waiting for the TTS service (a cold model takes a minute or two)", err=True

@@ -148,7 +148,7 @@ argus-mask say "Hello from the other side of the room." --face stock-01
 argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 --voice "Claribel Dervla"
 ```
 
-`say` puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
+`say` sends the text one sentence at a time and leaves `--pause` ms of silence between sentences (default 300; twice that between paragraphs, which are blank lines in the text). TTS models run sentences into each other, and a short request wanders less than a long one. `--pause 0` sends the text whole. It also puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
 
 ## Wire
 

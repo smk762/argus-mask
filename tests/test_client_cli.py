@@ -142,6 +142,41 @@ def test_say_streams_tts_audio_into_the_server(server) -> None:
     assert streamed.exit_code == 0 and "done: 44 frames, 1.45s" in streamed.output
 
 
+def test_sentences_split_where_a_pause_belongs() -> None:
+    assert client.sentences("Hello there. How are you?  Fine!") == [
+        ("Hello there.", 1),
+        ("How are you?", 1),
+        ("Fine!", 0),
+    ]
+    assert client.sentences('He said "Go." Then left.') == [('He said "Go."', 1), ("Then left.", 0)]
+    assert client.sentences("One.\n\nTwo. Three.\n") == [("One.", 2), ("Two.", 1), ("Three.", 0)]
+    assert client.sentences("No full stop at the end") == [("No full stop at the end", 0)]
+    assert client.sentences("Version 2.5 is out. Yes.") == [("Version 2.5 is out.", 1), ("Yes.", 0)]
+
+
+def test_say_sends_one_sentence_at_a_time_with_pauses_between(server) -> None:
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        result = runner.invoke(
+            app,
+            ["say", "One. Two!\n\nThree?", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "x=1"],
+        )
+    assert result.exit_code == 0, result.output
+    assert [b["text"] for b in seen] == ["One.", "Two!", "Three?"] and all(b["x"] == 1 for b in seen)
+    assert "sentence 1/3" in result.output and "sentence 3/3" in result.output
+    # 3 x 1.0 s of speech, 0.3 s after the first sentence, 0.6 s after the paragraph, 0.15 + 0.3 s either side.
+    assert "speech: 3.00s, playing" in result.output and "4.35s" in result.output
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        whole = runner.invoke(
+            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--pause", "0"]
+        )
+    assert whole.exit_code == 0 and [b["text"] for b in seen] == ["One. Two!"] and "1.45s" in whole.output
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
+        streamed = runner.invoke(
+            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
+        )
+    assert streamed.exit_code == 0 and [b["text"] for b in seen] == ["One.", "Two!"] and "2.75s" in streamed.output
+
+
 def test_say_picks_the_voice(server, monkeypatch) -> None:
     def spoken(*args: str) -> dict:
         with fake_tts(tone(0.2, 24000), 24000) as (tts_url, seen):
@@ -174,8 +209,10 @@ def test_say_reports_a_tts_error_and_a_missing_url(server, monkeypatch) -> None:
     missing = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server])
     assert missing.exit_code == 1 and "ARGUS_MASK_TTS_URL is not set" in missing.output
     with fake_tts(tone(0.1), status=422) as (tts_url, _):
-        refused = runner.invoke(app, ["say", "", "--face", "test-head", "--url", server, "--tts-url", tts_url])
+        refused = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", tts_url])
     assert refused.exit_code == 1 and "answered 422" in refused.output
+    empty = runner.invoke(app, ["say", " ", "--face", "test-head", "--url", server, "--tts-url", "http://127.0.0.1:9"])
+    assert empty.exit_code == 1 and "nothing to say" in empty.output
 
 
 def test_a_tts_stream_that_breaks_ends_the_session_cleanly(server) -> None:
