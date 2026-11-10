@@ -21,9 +21,11 @@ import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlencode
 
 import numpy as np
 
+from argus_mask.client import ClientError, view_url
 from argus_mask.models import Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
 
@@ -67,12 +69,6 @@ class Recording:
         return out
 
 
-def view_url(base: str, face_id: str) -> str:
-    scheme = "wss" if base.startswith("https://") else "ws"
-    host = base.split("://", 1)[-1].rstrip("/")
-    return f"{scheme}://{host}/session/{face_id}/view"
-
-
 async def capture(base: str, face_id: str, *, on_wait: Callable[[], None] | None = None) -> Recording:
     """Wait on *face_id*'s viewer socket for the next whole session and keep it.
 
@@ -85,30 +81,37 @@ async def capture(base: str, face_id: str, *, on_wait: Callable[[], None] | None
     if on_wait:
         on_wait()
     recording: Recording | None = None
-    async with websockets.connect(view_url(base, face_id), max_size=2**22, proxy=None) as ws:
-        async for raw in ws:
-            if isinstance(raw, bytes):
-                if recording is not None:
-                    (start_ms,) = struct.unpack_from("<d", raw, 0)
-                    recording.audio.append((start_ms, np.frombuffer(raw[8:], dtype="<f4")))
-                continue
-            message = json.loads(raw)
-            kind = message.get("type")
-            if kind == "header":
-                recording = Recording(StreamHeader.model_validate(message))
-            elif kind == "frame" and recording is not None:
-                frame = Frame.model_validate(message)
-                if frame.seq != len(recording.frames):
-                    recording = None  # joined mid-stream (or lost a frame): wait for the next session
+    try:
+        async with websockets.connect(view_url(base, face_id), max_size=2**22, proxy=None) as ws:
+            async for raw in ws:
+                if isinstance(raw, bytes):
+                    if recording is not None:
+                        (start_ms,) = struct.unpack_from("<d", raw, 0)
+                        recording.audio.append((start_ms, np.frombuffer(raw[8:], dtype="<f4")))
                     continue
-                recording.frames.append(frame)
-            elif kind == "end" and recording is not None:
-                if message.get("error"):
-                    raise RecordError(f"the session failed: {message['error']}")
-                recording.end = StreamEnd.model_validate(message)
-                return recording
-            elif kind == "error":
-                raise RecordError(str(message.get("detail")))
+                message = json.loads(raw)
+                kind = message.get("type")
+                if kind == "header":
+                    recording = Recording(StreamHeader.model_validate(message))
+                elif kind == "frame" and recording is not None:
+                    frame = Frame.model_validate(message)
+                    if frame.seq != len(recording.frames):
+                        recording = None  # joined mid-stream (or lost a frame): wait for the next session
+                        continue
+                    recording.frames.append(frame)
+                elif kind == "end" and recording is not None:
+                    if message.get("error"):
+                        raise RecordError(f"the session failed: {message['error']}")
+                    recording.end = StreamEnd.model_validate(message)
+                    return recording
+                elif kind == "error":
+                    raise RecordError(str(message.get("detail")))
+    except ClientError as exc:
+        raise RecordError(str(exc)) from exc
+    except websockets.ConnectionClosed as exc:
+        raise RecordError(f"the server closed the viewer socket: {exc.reason or exc.code}") from exc
+    except (OSError, websockets.InvalidURI, websockets.InvalidHandshake) as exc:
+        raise RecordError(f"cannot reach {base}: {exc}") from exc
     raise RecordError("the server closed the viewer socket before a session ended")
 
 
@@ -244,6 +247,8 @@ async def record(
     on_renderer: Callable[[str], None] | None = None,
 ) -> Recording:
     """Capture the next session on *face_id* and write *out*, with the take and WAV beside it."""
+    if width % 2 or height % 2:
+        raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
     recording = await capture(base, face_id, on_wait=on_wait)
     if not recording.frames:
         raise RecordError("the session had no frames")
@@ -252,13 +257,14 @@ async def record(
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     stem = out.with_suffix("")
-    wav, take = stem.with_suffix(".wav"), Path(f"{stem}.take.ndjson")
+    wav, take = Path(f"{stem}.wav"), Path(f"{stem}.take.ndjson")
     write_wav(wav, recording)
     write_take(take, recording)
     frames_dir = Path(f"{stem}.frames")
-    params = f"face={face_id}&record=1&hud=0&display={display}" + (f"&bg={bg}" if bg else "")
+    shutil.rmtree(frames_dir, ignore_errors=True)  # frames kept from an earlier, longer clip would join this one
+    params = {"face": face_id, "record": "1", "hud": "0", "display": display} | ({"bg": bg} if bg else {})
     await render_frames(
-        f"{base.rstrip('/')}/?{params}",
+        f"{base.rstrip('/')}/?{urlencode(params)}",
         recording,
         frames_dir,
         width=width,

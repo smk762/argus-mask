@@ -57,11 +57,19 @@ class ClientError(RuntimeError):
     """The server or the TTS service refused, or went away."""
 
 
-def source_url(base: str, face_id: str) -> str:
+def _session_url(base: str, face_id: str, end: str) -> str:
     scheme, sep, rest = base.rstrip("/").partition("://")
     if not sep:
         raise ClientError(f"{base!r} is not a URL")
-    return f"{'wss' if scheme in ('https', 'wss') else 'ws'}://{rest}/session/{face_id}/source"
+    return f"{'wss' if scheme in ('https', 'wss') else 'ws'}://{rest}/session/{face_id}/{end}"
+
+
+def source_url(base: str, face_id: str) -> str:
+    return _session_url(base, face_id, "source")
+
+
+def view_url(base: str, face_id: str) -> str:
+    return _session_url(base, face_id, "view")
 
 
 def _frame_bytes(fmt: AudioFormat) -> int:
