@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stock heads republished**: `stock-01` revision 4 and `stock-02`'s first lock, both built by the recipe with the wet
+  line and baked skin maps (about 10 MB each). `fetch_stock_head.py --id stock-02` fetches the second.
 - **Recipe: wet line and skin maps** (#11, #9). A tear line along each lower lid (`wetline`, found by casting
   rays at the eye, moving with the lid under every shape key), and normal and roughness maps baked from the skin's
   colour map into the `.glb`. The viewer gives the wet line a fading glossy film and lays its generated pores over

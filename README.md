@@ -24,7 +24,7 @@ Not yet seen by a person: the stock head speaking on a real screen with sound. I
 
 ```bash
 make install
-make head        # downloads the stock head into assets/stock-01 (5 MB, CC0)
+make head        # downloads the stock head into assets/stock-01 (10 MB, CC0)
 uv run argus-mask serve --assets-dir assets
 ```
 
@@ -70,7 +70,7 @@ No real person's likeness belongs in this repo, its fixtures or its examples.
 
 ### The stock head
 
-The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
+The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform and carry the wet line and baked skin maps (revision 4 of `stock-01`, the first of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
 
 ### Your own head
 
