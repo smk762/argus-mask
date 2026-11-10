@@ -46,11 +46,12 @@ const DEFAULT = {
 
 const fixed = (v) => Number(v).toFixed(2);
 const signed = (v) => (v > 0 ? '+' : '') + fixed(v);
-const years = (a) => `${Math.round(25 + 130 * (a - 0.5))} y`;
+const years = (a) => `${Math.round(a < 0.5 ? 1 + 48 * a : 25 + 130 * (a - 0.5))} y`;  // MakeHuman's scale
+const ADULT_AGE = 0.3542;  // 18 years; preset.py and build_head.py hold the same
 // [path in the preset, label, min, max, step, how to show the value, the value it rests at]
 const BODY = [
   ['phenotype.gender', 'Female – male', 0, 1, 0.01, fixed, 0],
-  ['phenotype.age', 'Age', 0.5, 1, 0.005, years, 0.5],
+  ['phenotype.age', 'Age', ADULT_AGE, 1, 0.005, years, 0.5],
   ['phenotype.muscle', 'Muscle', 0, 1, 0.01, fixed, 0.5],
   ['phenotype.weight', 'Weight', 0, 1, 0.01, fixed, 0.5],
   ['phenotype.proportions', 'Proportions', 0, 1, 0.01, fixed, 0.5],
@@ -70,7 +71,7 @@ const ADVANCED = [
 // Asset pickers: [key, title, library part, optional, clothes slot, enlarge on hover]
 const PICKERS = [
   ['skin', 'Skin', 'skin', false, null, true], ['hair', 'Hair', 'hair', true, null, true],
-  ['outfit', 'Clothes', 'clothes', true, 'outfit', true], ['hat', 'Hat', 'clothes', true, 'hat', true],
+  ['outfit', 'Clothes', 'clothes', false, 'outfit', true], ['hat', 'Hat', 'clothes', true, 'hat', true],
   ['eyebrows', 'Eyebrows', 'eyebrows', false], ['eyelashes', 'Eyelashes', 'eyelashes', false],
   ['eyes', 'Eyeballs', 'eyes', false], ['teeth', 'Teeth', 'teeth', false], ['tongue', 'Tongue', 'tongue', false],
 ];

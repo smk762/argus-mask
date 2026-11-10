@@ -13,7 +13,7 @@ records what was actually used, for the face manifest's provenance.
 
 What it does, in order:
 
-1. refuses a preset that is not an adult;
+1. refuses a preset under 18 or with no clothes;
 2. creates the human and adds the skin, the body parts and the clothes (the
    body under a garment is removed, as MakeHuman does);
 3. bakes the modelling shape keys, loads MPFB's ARKit face units
@@ -44,10 +44,10 @@ import numpy as np  # bundled with Blender
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-# MakeHuman's age macro: 0.0 is a baby, 0.1875 a child of about 10, 0.5 a young adult of about 25,
-# 1.0 about 90. Below 0.5 the mesh blends the child target in, so "about 18" (0.35) is a head that
-# is partly a child's. This recipe therefore starts at the young-adult target and goes no lower.
-ADULT_AGE = 0.5
+# MakeHuman's age macro: 0.0 is 1 year, 0.5 about 25, 1.0 about 90; below 0.5 it maps to years as
+# 1 + 48 * age. The youngest a head may be is 18 years, 17/48 (0.35417), rounded up here. The editor's
+# preset model holds the same value.
+ADULT_AGE = 0.3542
 
 BODY_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue", "hair")
 # ``assets.clothes`` is a list of garments. Each is named in the model after its asset (the mhclo's
@@ -89,9 +89,8 @@ def load_preset(path: str) -> dict:
     age = float(phenotype["age"])
     if age < ADULT_AGE:
         raise RecipeError(
-            f"{path}: phenotype.age {age} is about {age_years(age):.0f} years on MakeHuman's scale, and below "
-            f"{ADULT_AGE} the mesh blends in the child target. Stock heads are adults only: use {ADULT_AGE} "
-            "(about 25 years) or more."
+            f"{path}: phenotype.age {age} is about {age_years(age):.0f} years on MakeHuman's scale. "
+            f"Heads are 18 or older: use {ADULT_AGE} or more."
         )
     assets = preset.get("assets") or {}
     for key in ("skin", *MOVING_PARTS):
@@ -102,6 +101,8 @@ def load_preset(path: str) -> dict:
         clothes = assets[CLOTHES] = [clothes]
     if not isinstance(clothes, list) or not all(isinstance(c, str) and c for c in clothes):
         raise RecipeError(f"{path}: assets.clothes must be a list of clothes assets")
+    if not clothes:
+        raise RecipeError(f"{path}: assets.clothes is required: every head is dressed")
     names = [asset_name(c) for c in clothes]
     if clash := [n for n in names if n in BODY_PARTS]:
         raise RecipeError(f"{path}: a garment cannot be called {clash[0]!r}")

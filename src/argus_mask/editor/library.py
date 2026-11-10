@@ -143,6 +143,8 @@ class AssetLibrary:
     def resolve(self, preset: Preset) -> dict[str, Asset]:
         """The installed asset behind each part and each item of clothing, or :class:`LibraryError` naming the first that is not.
 
+        A preset with no outfit among its clothes is refused too.
+
         Keys are the part names, and ``clothes <name>`` for each item of clothing.
         """
         index = {a.ref: a for assets in self.scan().values() for a in assets}
@@ -153,6 +155,8 @@ class AssetLibrary:
             if asset is None or asset.part != part:
                 raise LibraryError(f"{part}: {ref} is not an installed asset with a stated licence")
             resolved[f"{CLOTHES} {asset.name}" if part == CLOTHES else part] = asset
+        if not any(a.slot == "outfit" for a in resolved.values()):
+            raise LibraryError(f"{CLOTHES}: every head is dressed; choose an outfit, not only a hat")
         return resolved
 
 

@@ -114,6 +114,7 @@ def preset(**changes) -> dict:
             "teeth": "teeth/t1/t1.mhclo",
             "tongue": "tongue/g1/g1.mhclo",
             "hair": "hair/h1/h1.mhclo",
+            "clothes": ["clothes/top1/top1.mhclo"],
         },
         "mouth": {"tongue_flatten": 0.6, "upper_teeth_drop_mm": 2.5, "cavity_shade": 0.02},
     }
@@ -225,11 +226,39 @@ def test_targets_are_named_from_the_list_and_bounded() -> None:
             Preset.model_validate(preset(targets=bad))
 
 
-def test_a_preset_below_the_adult_line_is_refused() -> None:
+def test_a_preset_under_18_is_refused() -> None:
     body = preset()
-    body["phenotype"]["age"] = 0.49
+    body["phenotype"]["age"] = 0.35  # about 17.8 years on MakeHuman's scale
     with pytest.raises(ValidationError, match="age"):
         Preset.model_validate(body)
+
+
+def test_the_age_floor_is_18_years() -> None:
+    body = preset()
+    body["phenotype"]["age"] = ADULT_AGE
+    assert Preset.model_validate(body).age_years() == 18
+    body["phenotype"]["age"] = 0.5
+    assert Preset.model_validate(body).age_years() == 25
+    assert 1 + 48 * ADULT_AGE >= 18 > 1 + 48 * (ADULT_AGE - 0.0001)
+
+
+@pytest.mark.parametrize("clothes", [[], None])
+def test_a_preset_with_no_clothes_is_refused(clothes) -> None:
+    body = preset()
+    if clothes is None:
+        del body["assets"]["clothes"]
+    else:
+        body["assets"]["clothes"] = clothes
+    with pytest.raises(ValidationError, match="clothes"):
+        Preset.model_validate(body)
+
+
+def test_a_hat_alone_never_reaches_blender(client, rig) -> None:
+    body = preset()
+    body["assets"]["clothes"] = ["clothes/hat1/hat1.mhclo"]
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 422 and "outfit" in reply.json()["detail"]
+    assert calls(rig) == []
 
 
 @pytest.mark.parametrize(

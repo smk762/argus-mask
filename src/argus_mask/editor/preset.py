@@ -17,9 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from argus_mask.arkit import ARKIT_52
 from argus_mask.models import FACE_ID_PATTERN
 
-# MakeHuman's age macro: 0.5 is a young adult of about 25. Below it the mesh blends in the child
-# target, so presets go no lower (build_head.py refuses the same).
-ADULT_AGE = 0.5
+# The youngest a head may be: 18 years on MakeHuman's scale. Below 0.5 the age macro maps to years as
+# 1 + 48 * age, so 18 years is 17/48 (0.35417); this is that, rounded up. build_head.py holds the same.
+ADULT_AGE = 0.3542
 
 # The parts a preset names, and MPFB's data directory for each.
 PART_DIRS: dict[str, str] = {
@@ -88,12 +88,15 @@ class Assets(_Strict):
     teeth: AssetRef
     tongue: AssetRef
     hair: AssetRef | None = None
-    # Worn on top: an outfit, a hat. Fitted like the body parts; MPFB hides the skin under them.
-    clothes: list[AssetRef] = Field(default_factory=list, max_length=MAX_CLOTHES)
+    # Worn on top: an outfit, a hat. Fitted like the body parts; MPFB hides the skin under them. Every
+    # head is dressed: at least one garment here, and the library checks that one is an outfit.
+    clothes: list[AssetRef] = Field(..., max_length=MAX_CLOTHES)
 
     @field_validator("clothes")
     @classmethod
     def _each_once(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("every head is dressed: choose an outfit")
         if len(set(value)) != len(value):
             raise ValueError("the same clothes are listed twice")
         return value
@@ -142,5 +145,6 @@ class Preset(_Strict):
         return value
 
     def age_years(self) -> int:
-        """MakeHuman's own mapping of the age macro to years, for an adult."""
-        return round(25 + 130 * (self.phenotype.age - 0.5))
+        """MakeHuman's own mapping of the age macro to years."""
+        age = self.phenotype.age
+        return round(1 + 48 * age if age < 0.5 else 25 + 130 * (age - 0.5))

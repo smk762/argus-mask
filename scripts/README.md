@@ -74,7 +74,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | Field | Meaning |
 |---|---|
 | `phenotype` | MakeHuman's macro settings, each 0 to 1: `gender`, `age`, `muscle`, `weight`, `proportions`, `height`, `cupsize`, `firmness`, and `race` (`asian`, `caucasian`, `african`). |
-| `assets` | Paths under MPFB's data directory: `skin` (`.mhmat`), and `eyes`, `eyebrows`, `eyelashes`, `teeth`, `tongue`, `hair` (`.mhclo`). Hair is optional. `clothes` is a list of up to three `.mhclo` paths under `clothes/` (an outfit, a hat); MPFB hides the skin under them, so they add few triangles. The system pack's clothes are CC0. |
+| `assets` | Paths under MPFB's data directory: `skin` (`.mhmat`), and `eyes`, `eyebrows`, `eyelashes`, `teeth`, `tongue`, `hair` (`.mhclo`). Hair is optional. `clothes` is a list of one to three `.mhclo` paths under `clothes/` (an outfit, and optionally a hat); it is required; MPFB hides the skin under them, so they add few triangles. The system pack's clothes are CC0. |
 | `targets` | MakeHuman modelling targets beyond the phenotype, by name from `src/argus_mask/editor/modifiers.json`: 117 sliders over the head, forehead, brow ridge, eyes, ears, cheeks, nose, mouth, chin and neck, -1 to 1 (0 to 1 for the one-way face shapes such as `head-square`). Left and right are one slider. They are baked with the phenotype, so the face shapes, teeth and clothes fit the result. CC0, bundled with MPFB. `modifiers.json` is generated from MPFB's own catalogue by `scripts/make_modifiers.py --mpfb <MPFB's extension directory>`; run it again after an MPFB upgrade. |
 | `bust` | Where the body is cut: `height_m` below the top of the head, `half_width_m` either side of the centre line. |
 | `max_texture_px` | Cap for opaque textures, stored as JPEG. |
@@ -88,7 +88,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | `texture_gain` | Brightness multiplier for a part's texture, by part: `{"teeth": 1.3}`. |
 | `blend_parts` | Parts whose transparency stays blended (soft edges) instead of becoming a cut-out. Only for parts that lie flat on the skin: `["eyebrows", "eyelashes"]`. |
 
-**Adults only.** `phenotype.age` below 0.5 is refused. On MakeHuman's scale 0.5 is about 25 years and 0.35 about 18, but below 0.5 the mesh blends in the child target, so the recipe starts at the young-adult target and goes no lower.
+**18 and over, and dressed.** `phenotype.age` below 0.3542 is refused: on MakeHuman's scale that is 18 years (below 0.5 the macro maps to years as 1 + 48 × age; 0.5 is about 25). Every head wears clothes: `assets.clothes` must name at least one garment, and the editor also requires one of them to be an outfit, not only a hat.
 
 ## What the script does to the model
 
