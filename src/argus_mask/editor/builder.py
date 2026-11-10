@@ -123,7 +123,15 @@ class Builder:
         recipe = hashlib.sha256()
         for part in (SCRIPT, SCRIPT.with_name("modifiers.json")):
             recipe.update(part.read_bytes() if part.is_file() else b"")
-        recipe.update(str(blender).encode())
+        # The Blender that runs, not just its name: an upgrade in place is a new binary on the same PATH entry.
+        # And MPFB's data, and this version (it is written into the provenance).
+        found = shutil.which(blender)
+        try:
+            binary = f"{os.path.realpath(found)}:{os.stat(found).st_mtime_ns}" if found else str(blender)
+        except OSError:
+            binary = str(blender)
+        for part in (binary, str(library.data_dir), __version__):
+            recipe.update(part.encode() + b"\n")
         self._recipe = recipe.hexdigest()
 
     # ---- the build cache ---------------------------------------------------------------------------
@@ -134,24 +142,21 @@ class Builder:
         text = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(f"{self._recipe}\n{text}".encode()).hexdigest()
 
-    def cached(self, key: str) -> Path | None:
-        """The cached build for *key*, if it is whole: its model still matches its manifest."""
-        if not _KEY.match(key):
+    def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
+        """The cached build for *key* and its model, if it is whole: the model still matches its manifest."""
+        if self.cache_size == 0 or not _KEY.match(key):
             return None
         directory = self.cache_dir / key
         try:
             manifest = FaceManifest.model_validate_json((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
             model = directory / manifest.model.file
-            return directory if model.is_file() and sha256_file(model) == manifest.model.sha256 else None
+            return (manifest, model) if model.is_file() and sha256_file(model) == manifest.model.sha256 else None
         except (OSError, ValueError):
             return None
 
-    def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
-        directory = self.cached(key)
-        if directory is None:
-            return None
-        manifest = FaceManifest.model_validate_json((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
-        return manifest, directory / manifest.model.file
+    def cached(self, key: str) -> Path | None:
+        """The directory of the cached build for *key*, if it is whole."""
+        return None if self.cached_face(key) is None else self.cache_dir / key
 
     def _keep(self, work: Path, key: str) -> None:
         """Copy a finished build into the cache, then drop the least recently used beyond the cap."""
@@ -160,8 +165,10 @@ class Builder:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         target = self.cache_dir / key
         if target.exists():
-            os.utime(target)
-            return
+            if self.cached(key) is not None:
+                os.utime(target)
+                return
+            shutil.rmtree(target)  # damaged: replace it with this build, or it is rebuilt every time
         tmp = Path(tempfile.mkdtemp(prefix=".keep-", dir=self.cache_dir))
         try:
             shutil.copytree(work, tmp, dirs_exist_ok=True)

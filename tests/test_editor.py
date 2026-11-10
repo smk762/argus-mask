@@ -547,6 +547,9 @@ def test_a_changed_or_damaged_cache_entry_is_rebuilt(client, rig) -> None:
     model.write_bytes(model.read_bytes()[:-4] + b"oops")
     again = client.post("/build", json=preset()).json()
     assert again["cached"] is False and len(calls(rig)) == 2
+    # The rebuild replaced the damaged entry: the third time comes from the cache.
+    third = client.post("/build", json=preset()).json()
+    assert third["cached"] is True and len(calls(rig)) == 2
 
 
 def test_no_cache_when_it_is_off(rig) -> None:
