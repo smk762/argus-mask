@@ -7,11 +7,16 @@
 //   ?hud=0           hide the status line
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
 //   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
+//   ?quality=medium  low | medium (default) | high: the look's profile (see look.js); record uses high
+//   ?ao= ?shadows= ?skin= ?cornea= ?ibl= ?smaa= ?dof= ?grain= ?bloom=   1 or 0, over the profile
+//   ?hair=a2c        a2c (alpha to coverage) | hash | cutout: how hair cards meet the background
+//   ?tone=agx        agx | aces | neutral | none, with ?exposure=1.0
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
+import { Look, lookOptions } from './look.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -33,6 +38,7 @@ if (params.get('hud') === '0') hudEl.hidden = true;
 const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
+  look: null,   // the profile and effects in use: see look.js
 };
 
 function notice(text, button, onClick) {
@@ -70,11 +76,9 @@ if (DISPLAY === 'hld') {
   const colour = params.get('bg') || '#101216';
   try { scene.background = new THREE.Color(colour); document.body.style.background = colour; } catch { /* keep the default */ }
 }
-scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f4a, 1.6));
-const key = new THREE.DirectionalLight(0xffffff, 2.2);
-key.position.set(0.6, 0.8, 1.5);
-scene.add(key);
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+// Lights, environment, tone mapping, materials and post: a recording renders offline, so it gets the most.
+const look = new Look(renderer, scene, camera, lookOptions(params, RECORD ? 'high' : 'medium'));
 const pivot = new THREE.Group();   // head rotation is applied here unless the model has a head bone
 scene.add(pivot);
 
@@ -88,12 +92,15 @@ function resize() {
     renderer.domElement.style.width = `${HLD.width * scale}px`;
     renderer.domElement.style.height = `${HLD.height * scale}px`;
     camera.aspect = HLD.width / HLD.height;
+    look.setSize(HLD.width, HLD.height);
   } else {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     camera.aspect = width / Math.max(1, height);
+    look.setSize(width, height);
   }
   camera.updateProjectionMatrix();
+  state.look = look.summary;
 }
 window.addEventListener('resize', resize);
 
@@ -115,6 +122,7 @@ async function loadFace() {
   const manifest = await reply.json();
   const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model`);
   pivot.add(gltf.scene);
+  look.apply(gltf.scene);
   gltf.scene.traverse((node) => {
     if (node.isMesh && node.morphTargetDictionary) {
       for (const [name, index] of Object.entries(node.morphTargetDictionary)) {
@@ -130,6 +138,8 @@ async function loadFace() {
   camera.position.set(0, framing.height || 0, framing.distance || 0.6);
   camera.lookAt(0, framing.height || 0, 0);
   resize();
+  look.focus(gltf.scene);
+  state.look = look.summary;
   state.face = faceId;
   state.ready = true;
   return faceId;
@@ -311,7 +321,7 @@ function draw() {
   }
   if (!live) localIdle(wall / 1000);
   applyHead();
-  renderer.render(scene, camera);
+  look.render();
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 
   drawn += 1;

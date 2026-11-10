@@ -273,6 +273,7 @@ def record(
     height: int = Option(720, "--height", min=16),
     display: str = Option("flat", "--display", help="The viewer's display tier: flat or hld"),
     bg: str = Option("", "--bg", help="Background colour, as the viewer takes it (e.g. '#202020')"),
+    quality: str = Option("high", "--quality", help="The viewer's look: low, medium or high (lighting, shadows, post)"),
     keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
 ) -> None:
     """Record the next session on a face as a video, offline and frame-exact.
@@ -303,6 +304,7 @@ def record(
                 height=height,
                 display=display,
                 bg=bg,
+                quality=quality,
                 keep=keep,
                 on_wait=lambda: typer.echo(f"waiting for a session on {face_id} (run say or push now)", err=True),
                 on_captured=captured,

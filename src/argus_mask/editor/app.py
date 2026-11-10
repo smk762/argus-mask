@@ -233,6 +233,11 @@ def create_editor_app(
         return {"trash": str(trash)}
 
     # three.js is the viewer's vendored copy: one copy in the package.
+    @app.get("/look.js")
+    def look() -> FileResponse:
+        # The viewer's lighting and materials, so the editor's previews look as the face will on a screen.
+        return FileResponse(VIEWER_DIR / "look.js", media_type="text/javascript")
+
     app.mount("/vendor", StaticFiles(directory=VIEWER_DIR / "vendor"), name="vendor")
     app.mount("/", StaticFiles(directory=PAGE_DIR, html=True), name="page")
     return app

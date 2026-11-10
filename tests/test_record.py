@@ -114,3 +114,28 @@ def test_record_renders_a_clip(server, tmp_path: Path) -> None:
             check=True,
         ).stdout.split()
         assert sorted(streams) == ["audio", "video"]
+
+
+def test_an_unknown_quality_is_refused_before_waiting(tmp_path: Path) -> None:
+    # No server is listening: the refusal must come before record() reaches for one.
+    with pytest.raises(record.RecordError, match="quality 'ultra'"):
+        asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / "c.mp4", quality="ultra"))
+
+
+@pytest.mark.parametrize(("given", "sent"), [({}, "high"), ({"quality": "low"}, "low")])
+def test_the_viewer_is_asked_for_the_look(server, tmp_path: Path, monkeypatch, given, sent) -> None:
+    urls = []
+
+    async def render(page_url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003 - stands in for the browser
+        urls.append(page_url)
+
+    monkeypatch.setattr(record, "render_frames", render)
+    monkeypatch.setattr(record, "mux", lambda *a, **k: None)
+
+    async def run():
+        pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
+        await record.record(server, "test-head", tmp_path / "c.mp4", width=160, height=120, **given)
+        await pushed
+
+    asyncio.run(run())
+    assert f"quality={sent}" in urls[0] and "record=1" in urls[0]

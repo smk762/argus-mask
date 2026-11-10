@@ -647,7 +647,11 @@ def test_rename_and_delete_are_guarded_writes(client, rig) -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("script", sorted((SCRIPT.parent / "page").glob("*.js")), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "script",
+    sorted((SCRIPT.parent / "page").glob("*.js")) + sorted((SCRIPT.parent.parent / "viewer").glob("*.js")),
+    ids=lambda p: p.name,
+)
 def test_the_page_scripts_parse(script) -> None:
     # The pages have no build step and no browser test in CI: at least they must parse.
     done = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True, check=False)

@@ -92,6 +92,20 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
 | `bg` | a CSS colour, or `transparent` (flat tier) |
 | `hud` | `0` hides the status line |
 | `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
+| `quality` | the look: `low`, `medium` (default) or `high`. See below. |
+| `ibl`, `shadows`, `skin`, `cornea`, `ao`, `smaa`, `dof`, `grain`, `bloom` | `1` or `0`: one effect on or off over the profile |
+| `hair` | `a2c` (default: alpha to coverage, soft hair edges), `hash`, or `cutout` |
+| `tone`, `exposure` | tone mapping: `neutral` (default), `agx`, `aces` or `none`; exposure, default `1.0` |
+
+The look (`viewer/look.js`, shared with the face editor's previews) lights the head with a three-point rig (warm key, cool fill, cool rims that lift it off a dark background), image-based light from a neutral room, and PBR Neutral tone mapping. On the profiles:
+
+| Profile | Adds | For |
+|---|---|---|
+| `low` | the rig, image-based light, the cornea's catch-lights, soft hair edges | weak screens: a Raspberry Pi |
+| `medium` | soft shadows from the key light, physical skin (wrap lighting for subsurface scatter, sheen, pore-scale detail) | the default |
+| `high` | post-processing: ambient occlusion (GTAO), a little depth of field, light bloom on highlights, fine grain | `record`, which renders offline |
+
+It finds the parts by the names the head recipe gives them: `head` is skin, `eyes` holds MakeHuman's eyeball and its cornea shell (drawn again as a reflection, for catch-lights that follow the gaze), `hair` is hair cards. A face without those names still gets the lighting. A transparent background turns the post-processing off, since it would lose the alpha. `window.__mask.look` says what is on.
 
 Lip sync runs on the page's audio clock: audio plays `buffer` ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
 
@@ -188,7 +202,7 @@ argus-mask record --face stock-01 --out clip.mp4 &
 argus-mask say "Hello from the bridge." --face stock-01
 ```
 
-`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
+`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser with the viewer's `high` look (`--quality low|medium|high`) at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
 
 ## Wire
 
