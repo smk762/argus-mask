@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Broadcast page** in the editor: the server's faces with their readiness, and a form with every `say` option
+  (voice listed from a Wyoming service, pause, seed, stream, TTS URL, `-p` fields) or a WAV to `push`, run through
+  the CLI's own client with live progress, Stop, and the matching command line. `client.tts_voices()` asks a Wyoming
+  service for its voices.
 - **Editor to screen** (#28). On screen… in the editor and on Saved faces: checks the server lists the exported
   face (and says plainly when it does not), builds the viewer link at `ARGUS_MASK_VIEWER_URL` with display, quality,
   kiosk and background, to open, copy or scan as a QR code, shows whether screens are watching and can be heard,
@@ -94,6 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `say --voice <name> -p speaker=<n>` against a Wyoming service dropped the voice name: a speaker now goes with the
+  voice (Wyoming's `{name, speaker}`), and only a name in the request stands instead of `--voice`.
 - **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the
   face and plays it at the speed of speech (`--stream` keeps the old behaviour for a service faster than real time),
   and a source's pacing clock now starts at its first chunk rather than at connect.
