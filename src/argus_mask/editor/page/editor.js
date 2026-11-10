@@ -40,7 +40,7 @@ const DEFAULT = {
   blend_parts: ['eyebrows', 'eyelashes'],
   max_texture_px: 2048,
   max_alpha_texture_px: 1024,
-  max_triangles: 35000,
+  max_triangles: 45000,
 };
 
 // How each value reads: in the units it means, not MakeHuman's 0..1 or -1..+1.
@@ -76,7 +76,7 @@ const ADVANCED = [
   ['shape_scale.mouthPucker', 'Pucker strength', 0, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.5],
   ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.3],
   ['bust.height_m', 'Bust height', 0.2, 0.6, 0.01, (v) => `${Math.round(v * 100)} cm`, 0.4],
-  ['max_triangles', 'Triangle budget', 1000, 35000, 500, (v) => Number(v).toLocaleString(), 35000],
+  ['max_triangles', 'Triangle budget', 1000, 45000, 500, (v) => Number(v).toLocaleString(), 45000],
 ];
 // Asset pickers: [key, title, library part, optional, clothes slot, enlarge on hover]
 const PICKERS = [

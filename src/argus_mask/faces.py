@@ -26,8 +26,10 @@ from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, ModelFile,
 
 MANIFEST_NAME = "manifest.json"
 # The stock head's budget: a Raspberry Pi renders it once a frame, a Looking Glass Go 66 times.
-# 35k: 30k was too tight once a head wears clothes (a uniform is ~5k) beside MakeHuman's 7k teeth.
-MAX_TRIANGLES = 35_000
+# 45k: room for a dressed head (a uniform is ~5k triangles, MakeHuman's teeth 7k) with long hair or a hat.
+# The weakest panels (a Raspberry Pi, the Go's 66 views a frame) are not targets for now; when they are,
+# their faces will want a smaller budget of their own.
+MAX_TRIANGLES = 45_000
 MAX_TEXTURE = 2048
 
 _GLB_MAGIC = 0x46546C67  # "glTF"

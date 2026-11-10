@@ -9,7 +9,7 @@
 // URL switches (the viewer passes its query string): quality=low|medium|high picks a profile, and
 // each effect can be set on its own over it:
 //   ibl, shadows, skin, cornea, ao, smaa, dof, grain, bloom   =1 or =0
-//   hair=a2c|hash|cutout    tone=neutral|agx|aces|none    exposure=<number>
+//   hair=blend|a2c|hash|cutout    tone=neutral|agx|aces|none    exposure=<number>
 
 import * as THREE from 'three';
 import { RoomEnvironment } from './vendor/environments/RoomEnvironment.js';
@@ -25,9 +25,9 @@ import { OutputPass } from './vendor/postprocessing/OutputPass.js';
 // low: anything that renders, a Raspberry Pi included. medium: the default; shadows and skin, no
 // post. high: everything; for `record`, which renders offline and need not keep up.
 export const PROFILES = {
-  low: { ibl: true, shadows: false, skin: false, cornea: true, hair: 'a2c', ao: false, smaa: false, dof: false, grain: false, bloom: false },
-  medium: { ibl: true, shadows: true, skin: true, cornea: true, hair: 'a2c', ao: false, smaa: false, dof: false, grain: false, bloom: false },
-  high: { ibl: true, shadows: true, skin: true, cornea: true, hair: 'a2c', ao: true, smaa: false, dof: true, grain: true, bloom: true },
+  low: { ibl: true, shadows: false, skin: false, cornea: true, hair: 'blend', ao: false, smaa: false, dof: false, grain: false, bloom: false },
+  medium: { ibl: true, shadows: true, skin: true, cornea: true, hair: 'blend', ao: false, smaa: false, dof: false, grain: false, bloom: false },
+  high: { ibl: true, shadows: true, skin: true, cornea: true, hair: 'blend', ao: true, smaa: false, dof: true, grain: true, bloom: true },
 };
 const SWITCHES = ['ibl', 'shadows', 'skin', 'cornea', 'ao', 'smaa', 'dof', 'grain', 'bloom'];
 const TONES = { agx: THREE.AgXToneMapping, aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, none: THREE.NoToneMapping };
@@ -41,7 +41,7 @@ export function lookOptions(params, fallback = 'medium') {
     if (params.get(key) === '1') o[key] = true;
     if (params.get(key) === '0') o[key] = false;
   }
-  if (['a2c', 'hash', 'cutout'].includes(params.get('hair'))) o.hair = params.get('hair');
+  if (['blend', 'a2c', 'hash', 'cutout'].includes(params.get('hair'))) o.hair = params.get('hair');
   if (TONES[params.get('tone')] !== undefined) o.tone = params.get('tone');
   const exposure = Number(params.get('exposure'));
   if (params.has('exposure') && Number.isFinite(exposure) && exposure > 0) o.exposure = Math.min(4, exposure);
@@ -171,6 +171,33 @@ function shellTriangles(geometry) {
   return out.length ? out : null;
 }
 
+// ---- hair: an opaque core, then the fringe blended over it ---------------------------------------
+
+// MakeHuman's hair textures fade out through half-transparent wisps. A cut-out (with or without
+// alpha to coverage) draws each of those all or nothing: a hard, flat band at the hairline and a
+// hard outline. So: draw the hair solid only where it is all but opaque, writing depth and casting the
+// shadow, then draw it again blended, not writing depth, so the wisps fade into skin and background.
+const HAIR_CORE = 0.6;
+function twoPassHair(mesh) {
+  const core = mesh.material;
+  core.alphaTest = HAIR_CORE;
+  core.alphaToCoverage = true;  // the core's own outline, smoothed by MSAA where there is MSAA
+  core.needsUpdate = true;
+  const fringe = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, core.clone()) : new THREE.Mesh(mesh.geometry, core.clone());
+  if (mesh.isSkinnedMesh) { fringe.bindMode = mesh.bindMode; fringe.bind(mesh.skeleton, mesh.bindMatrix); }
+  Object.assign(fringe.material, { alphaTest: 0.02, alphaToCoverage: false, transparent: true, depthWrite: false });
+  fringe.name = 'hair-fringe';
+  fringe.morphTargetInfluences = mesh.morphTargetInfluences;  // one array: the hair's shapes move both
+  fringe.morphTargetDictionary = mesh.morphTargetDictionary;
+  fringe.renderOrder = (mesh.renderOrder || 0) + 2;  // after the face and the core
+  fringe.castShadow = false;
+  fringe.receiveShadow = mesh.receiveShadow;
+  fringe.position.copy(mesh.position);
+  fringe.quaternion.copy(mesh.quaternion);
+  fringe.scale.copy(mesh.scale);
+  mesh.parent.add(fringe);
+}
+
 function cornea(mesh) {
   const triangles = shellTriangles(mesh.geometry);
   if (!triangles) return;
@@ -271,6 +298,7 @@ export class Look {
       // Hair cards only: other cut-outs (the eyes' cornea layer, the teeth) are not edges to soften, and
       // partial coverage would draw the eyes' all-but-transparent cornea as a skin-coloured film.
       if (mesh.name === 'hair' && m.alphaTest > 0 && !m.transparent) {
+        if (this.o.hair === 'blend') { twoPassHair(mesh); continue; }
         if (this.o.hair === 'a2c') m.alphaToCoverage = true;  // soft edges from MSAA's samples
         if (this.o.hair === 'hash') { m.alphaHash = true; m.alphaTest = 0; }  // dithered, smoothed by grain or AA
         m.needsUpdate = true;
