@@ -62,6 +62,14 @@
   #log .at { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
   #log .error, #log .stopped { color: var(--bad); } #log .done { color: var(--good); }
   #log .head { font-weight: 600; margin-bottom: 4px; }
+  .rec { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .rec select { width: auto; }
+  #log .clip { display: grid; gap: 6px; margin: 6px 0 2px 60px; }
+  #log .clip video { width: min(480px, 100%); border-radius: 8px; background: #000; }
+  #log a, #recordings a { color: var(--accent); }
+  #recordings { margin-top: 16px; font-size: 13px; }
+  #recordings h3 { margin: 0 0 6px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  #recordings div { display: flex; gap: 10px; color: var(--dim); }
   @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
 </style>
 <script src="./qr/qrcode.js"></script>  <!-- qrcode-generator 1.4.4, MIT: QR codes for screen links -->
@@ -119,7 +127,14 @@
       <div class="cli"><input type="text" id="push-cli" readonly><button type="button" class="small" id="copy-push-cli">Copy</button></div>
       <div class="actions"><button type="submit" class="primary" id="push-send">Play</button><button type="button" id="push-stop" disabled>Stop</button></div>
     </form>
+    <div class="rec">
+      <label class="check" title="Record this broadcast to an MP4, as argus-mask record does: it listens first, then renders every frame with the audio once the broadcast ends"><input type="checkbox" id="record"> Record to file</label>
+      <select id="rec-size" title="Frame size"><option value="1280x720">1280×720</option><option value="1920x1080">1920×1080</option><option value="1080x1920">1080×1920 (HLD portrait)</option></select>
+      <select id="rec-quality" title="The viewer's look while rendering"><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select>
+      <span class="hint" id="rec-hint"></span>
+    </div>
     <div id="log"></div>
+    <div id="recordings"></div>
   </section>
 </main>
 <script type="module" src="./broadcast.js"></script>

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Record a broadcast from the Broadcast page**: a Record to file switch (frame size, look) for Say and Push. The
+  recorder listens on the face first, the broadcast goes, then the clip renders and muxes, as `argus-mask record` does,
+  into `ARGUS_MASK_RECORDINGS_DIR`; the page plays it, offers it to download and lists recent clips. `record` now
+  tells its caller it is waiting only once its socket is open, and muxes off the event loop.
 - **Temperature on the Broadcast page**: a slider (0.1 to 1.5, Miso's range), left to the service's own value unless
   set; it goes as the request's `temperature` (`-p temperature=…`). Over Wyoming, `-p` fields other than the voice's
   now ride beside the text in the `synthesize` event, for a bridge to pass on, instead of being dropped.

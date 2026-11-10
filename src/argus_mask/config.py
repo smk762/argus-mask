@@ -93,6 +93,9 @@ class EditorSettings:
     # screen opens the viewer at: the TLS proxy, on a LAN. The viewer's defaults to the server's.
     server_url: str = f"http://127.0.0.1:{DEFAULT_PORT}"
     viewer_url: str = ""
+    # Where the Broadcast page's recordings go: an MP4 per broadcast, its WAV and take beside it.
+    # Not under the assets root, where the server would take a directory for a face.
+    recordings_dir: Path = Path("recordings")
 
     def __post_init__(self) -> None:
         for name in ("server_url", "viewer_url"):
@@ -130,4 +133,5 @@ class EditorSettings:
             build_cache=_cache_size(),
             server_url=(_env("SERVER_URL") or f"http://127.0.0.1:{DEFAULT_PORT}").rstrip("/"),
             viewer_url=_env("VIEWER_URL").rstrip("/"),
+            recordings_dir=Path(_env("RECORDINGS_DIR") or "recordings"),
         )

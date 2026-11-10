@@ -82,6 +82,10 @@ async function refresh() {
   s.className = state.server_ok ? 'ok' : 'bad';
   s.replaceChildren(el('b', { textContent: '● ' }), `Server ${state.server || ''}${state.server_ok ? '' : ': not answering'}${state.read_only ? ' (read-only)' : ''}`);
   if (!$('tts').value && state.tts_url) { $('tts').value = state.tts_url; loadVoices(); }
+  const rec = state.record || { ok: false, reason: 'the editor did not say whether it can record' };
+  $('record').disabled = !rec.ok;
+  if (!rec.ok) $('record').checked = false;
+  $('rec-hint').textContent = rec.ok ? `Saved in ${rec.dir}/, rendered once the broadcast ends.` : rec.reason;
   renderFaces();
   updateCli();
 }
@@ -177,12 +181,36 @@ function updateCli() {
 
 // ---- sending, and what happens -------------------------------------------------------------------
 
+// Record to file: its options, or null when not asked for (or not possible here).
+function recording() {
+  if (!$('record').checked || $('record').disabled) return null;
+  return { size: $('rec-size').value, quality: $('rec-quality').value };
+}
+
+async function loadRecordings() {
+  let clips = [];
+  try { clips = await json('/recordings'); } catch { /* none to show */ }
+  const box = $('recordings');
+  if (!clips.length) { box.replaceChildren(); return; }
+  box.replaceChildren(el('h3', { textContent: 'Recordings' }), ...clips.slice(0, 8).map((c) => {
+    const href = `/recordings/${encodeURIComponent(c.name)}`;
+    return el('div', {}, el('a', { href, target: '_blank', rel: 'noopener', textContent: c.name }),
+      el('span', { textContent: `${(c.bytes / 1048576).toFixed(1)} MB · ${new Date(c.modified * 1000).toLocaleString()}` }));
+  }));
+}
+
 function renderJob() {
   const log = $('log');
   if (!job) { log.replaceChildren(); return; }
   log.replaceChildren(
     el('div', { className: 'head', textContent: `${job.kind === 'say' ? 'Saying' : 'Playing'} as ${job.face}: ${job.summary} · ${job.state}` }),
-    ...job.events.map((e) => el('div', { className: `ev ${e.kind}` }, el('span', { className: 'at', textContent: `${e.at.toFixed(1)}s` }), el('span', { textContent: e.text }))),
+    ...job.events.map((e) => el('div', { className: `ev ${e.kind}` }, el('span', { className: 'at', textContent: `${e.at.toFixed(1)}s` }), el('span', { textContent: e.kind === 'file' ? `recorded ${e.text}` : e.text }))),
+    // The clip itself, once written: to watch here, or to keep.
+    ...(job.files || []).map((name) => {
+      const href = `/recordings/${encodeURIComponent(name)}`;
+      return el('div', { className: 'clip' }, el('video', { src: href, controls: true, preload: 'metadata' }),
+        el('a', { href, download: name, textContent: `Download ${name}` }));
+    }),
   );
   const running = job.state === 'running';
   for (const b of ['send', 'push-send']) $(b).disabled = running;
@@ -200,7 +228,7 @@ async function follow(id, misses = 0) {
   }
   renderJob();
   if (job.state === 'running') setTimeout(() => follow(id), 500);
-  else refresh();
+  else { refresh(); loadRecordings(); }
 }
 
 async function start(request) {
@@ -224,14 +252,17 @@ $('say').addEventListener('submit', (e) => {
   start(() => json('/broadcast/say', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ face, text: $('text').value, tts_url: $('tts').value.trim(), voice, params: params(),
-      seed: Number($('seed').value) || 0, stream: $('stream').checked, pause: Number($('pause').value) || 0 }),
+      seed: Number($('seed').value) || 0, stream: $('stream').checked, pause: Number($('pause').value) || 0,
+      ...(recording() ? { record: recording() } : {}) }),
   }));
 });
 $('push').addEventListener('submit', (e) => {
   e.preventDefault();
   const file = $('file').files[0];
   if (!file) return;
-  start(() => json(`/broadcast/push?face=${encodeURIComponent(face)}&seed=${Number($('push-seed').value) || 0}&name=${encodeURIComponent(file.name)}`,
+  const rec = recording();
+  const also = rec ? `&record=1&record_size=${rec.size}&record_quality=${rec.quality}` : '';
+  start(() => json(`/broadcast/push?face=${encodeURIComponent(face)}&seed=${Number($('push-seed').value) || 0}&name=${encodeURIComponent(file.name)}${also}`,
     { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: file }));
 });
 for (const b of ['stop', 'push-stop']) $(b).onclick = () => job && json(`/broadcast/${job.id}/stop`, { method: 'POST' }).catch(() => {});
@@ -255,6 +286,14 @@ for (const id of ['text', 'voice-other', 'pause', 'seed', 'stream', 'tts', 'file
 for (const id of ['temp', 'temp-default']) $(id).addEventListener('input', () => { paintTemperature(); updateCli(); });
 $('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('send').disabled) $('say').requestSubmit(); });
 
+const savedRec = store.get('record', {});
+if (savedRec.size) $('rec-size').value = savedRec.size;
+if (savedRec.quality) $('rec-quality').value = savedRec.quality;
+$('record').checked = Boolean(savedRec.on);
+for (const id of ['record', 'rec-size', 'rec-quality']) {
+  $(id).addEventListener('input', () => store.set('record', { on: $('record').checked, size: $('rec-size').value, quality: $('rec-quality').value }));
+}
+loadRecordings();
 const saved = store.get('form', {});
 if (saved.tts) $('tts').value = saved.tts;
 if (saved.pause !== undefined) $('pause').value = saved.pause;
