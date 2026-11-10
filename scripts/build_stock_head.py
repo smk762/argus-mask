@@ -39,6 +39,9 @@ import tempfile
 
 import bmesh
 import bpy
+import numpy as np  # bundled with Blender
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 # MakeHuman's age macro: 0.0 is a baby, 0.1875 a child of about 10, 0.5 a young adult of about 25,
 # 1.0 about 90. Below 0.5 the mesh blends the child target in, so "about 18" (0.35) is a head that
@@ -143,10 +146,168 @@ def cut_to_bust(objects, z_cut: float, half_width: float) -> None:
         obj.data.update()
 
 
+def key_coords(obj, key: str | None = None) -> np.ndarray:
+    """Vertex positions of *obj*: its mesh, or one of its shape keys (absolute, not a delta)."""
+    data = obj.data.shape_keys.key_blocks[key].data if key else obj.data.vertices
+    flat = np.empty(len(obj.data.vertices) * 3, dtype=np.float32)
+    data.foreach_get("co", flat)
+    return flat.reshape(-1, 3)
+
+
+def rewrite_keys(obj, basis: np.ndarray, deltas: dict[str, np.ndarray]) -> None:
+    """Give *obj* a new rest shape and, for each shape key, a new offset from it."""
+    blocks = obj.data.shape_keys.key_blocks
+    obj.data.vertices.foreach_set("co", basis.astype(np.float32).ravel())
+    blocks[0].data.foreach_set("co", basis.astype(np.float32).ravel())
+    for name, delta in deltas.items():
+        blocks[name].data.foreach_set("co", (basis + delta).astype(np.float32).ravel())
+    obj.data.update()
+
+
+def seat_tongue(tongue, *, flatten: float, drop_m: float, front_m: float = 0.015) -> dict:
+    """Lay the tongue on the floor of the mouth, and make it drop with the chin.
+
+    MakeHuman's tongue is a dome as tall as the palate, and MPFB carries the jaw shapes to it as
+    the jaw's own rotation about its hinge. The back half of the tongue is near that hinge and
+    hardly moves, so in an open mouth the dome still reaches the upper lip and, seen from the
+    front, fills the whole opening. Two changes:
+
+    * the rest shape is flattened toward its underside and lowered, so it lies below the crowns
+      of the lower teeth;
+    * under ``jawOpen`` the whole tongue moves as its tip does (the tip sits behind the lower
+      incisors and has their motion), so the back of it drops out of the opening too.
+
+    ``tongueOut`` keeps the shape MPFB gave it: a full, raised tongue pushed out between the teeth.
+    The sideways and forward jaw shapes are already plain translations and are left alone.
+    Coordinates are Blender's: Z up, the face looking down -Y.
+    """
+    names = [k.name for k in tongue.data.shape_keys.key_blocks[1:]] if tongue.data.shape_keys else []
+    old = key_coords(tongue)
+    absolute = {name: key_coords(tongue, name) for name in names}
+    floor = old[:, 2].min()
+    new = old.copy()
+    new[:, 2] = floor + (old[:, 2] - floor) * flatten - drop_m
+    deltas = {name: absolute[name] - old for name in names}
+    report = {"top_before_mm": round(float(old[:, 2].max()) * 1000, 1), "top_after_mm": round(float(new[:, 2].max()) * 1000, 1)}
+    if "jawOpen" in deltas:
+        tip = old[:, 1] <= old[:, 1].min() + front_m
+        fall = deltas["jawOpen"][tip].mean(axis=0)
+        deltas["jawOpen"] = np.tile(fall, (len(old), 1))
+        report["jaw_open_move_mm"] = [round(float(v) * 1000, 1) for v in fall]
+    if "tongueOut" in deltas:
+        deltas["tongueOut"] = absolute["tongueOut"] - new
+    rewrite_keys(tongue, new, deltas)
+    return report
+
+
+def lower_upper_teeth(teeth, drop_m: float) -> dict:
+    """Move the upper teeth down, so their edge shows below the upper lip when the mouth opens.
+
+    As fitted, the upper incisors end level with the lip's edge and are never seen, while the
+    lower ones stand well clear of the lower lip: an open mouth shows only lower teeth. The upper
+    teeth are the vertices ``jawOpen`` does not move.
+    """
+    old = key_coords(teeth)
+    names = [k.name for k in teeth.data.shape_keys.key_blocks[1:]]
+    deltas = {name: key_coords(teeth, name) - old for name in names}
+    upper = np.linalg.norm(deltas["jawOpen"], axis=1) < 0.0005
+    new = old.copy()
+    new[upper, 2] -= drop_m
+    rewrite_keys(teeth, new, deltas)
+    return {"upper_vertices": int(upper.sum()), "edge_before_mm": round(float(old[upper, 2].min()) * 1000, 1), "edge_after_mm": round(float(new[upper, 2].min()) * 1000, 1)}
+
+
+def scale_shapes(objects, factors: dict[str, float]) -> None:
+    """Exaggerate (or soften) named face shapes on every mesh that carries them."""
+    for obj in objects:
+        if not obj.data.shape_keys:
+            continue
+        basis = key_coords(obj)
+        for name, factor in factors.items():
+            if name in obj.data.shape_keys.key_blocks:
+                scaled = basis + (key_coords(obj, name) - basis) * float(factor)
+                obj.data.shape_keys.key_blocks[name].data.foreach_set("co", scaled.astype(np.float32).ravel())
+        obj.data.update()
+
+
+def smoothstep(lo: float, hi: float, x: np.ndarray) -> np.ndarray:
+    t = np.clip((x - lo) / (hi - lo), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def shade_mouth(head, teeth, tongue, floor: float) -> dict:
+    """Darken the inside of the mouth with vertex colours, deeper is darker.
+
+    The viewer has no shadows, so without this the back of the mouth is lit like a cheek and an
+    open mouth is a bright pink wall. A vertex colour multiplies the texture: 1 leaves it alone,
+    *floor* is the darkest. Three meshes get one:
+
+    * the head, for the vertices inside the mouth: those in a box around it that are hidden from
+      the front by the lips or the face (a ray cast forward from them hits the head);
+    * the teeth, so the incisors stay bright and the molars fall into the dark;
+    * the tongue, bright at the tip only.
+
+    Depth is measured back from the front of the lips. Coordinates are Blender's: Z up, the face
+    looking down -Y; the origin is at eye height.
+    """
+    base = key_coords(head)
+    box = (np.abs(base[:, 0]) < 0.034) & (base[:, 2] < -0.040) & (base[:, 2] > -0.110) & (base[:, 1] < 0.03)
+    # The lips themselves: a narrow band on the centre line, below the nose and above the chin's bulge.
+    lips = (np.abs(base[:, 0]) < 0.012) & (base[:, 2] < -0.060) & (base[:, 2] > -0.085)
+    lip_front = float(base[lips][:, 1].min())
+    tree = BVHTree.FromPolygons([tuple(v) for v in base.tolist()], [tuple(p.vertices) for p in head.data.polygons])
+    # Straight ahead, and a little up, down and to each side: a vertex seen through the gap
+    # between slightly parted lips on one ray is still inside if the others are blocked.
+    rays = [Vector(d).normalized() for d in ((0, -1, 0), (0, -1, 0.25), (0, -1, -0.25), (0.25, -1, 0), (-0.25, -1, 0))]
+    shade = np.ones(len(base), dtype=np.float32)
+    inside = 0
+    for index in np.flatnonzero(box):
+        origin = Vector(base[index].tolist())
+        blocked = sum(1 for ray in rays if tree.ray_cast(origin + ray * 0.0005, ray, 0.15)[0] is not None)
+        if blocked >= 3:
+            depth = base[index, 1] - lip_front
+            shade[index] = 1.0 - (1.0 - floor) * float(smoothstep(0.007, 0.020, np.array(depth)))
+            inside += 1
+    parts = [(head, shade)]
+    if teeth is not None:
+        depth = key_coords(teeth)[:, 1] - lip_front
+        parts.append((teeth, 1.0 - (1.0 - max(floor, 0.2)) * smoothstep(0.018, 0.048, depth)))
+    if tongue is not None:
+        depth = key_coords(tongue)[:, 1] - lip_front
+        parts.append((tongue, 0.85 - (0.85 - max(floor, 0.2)) * smoothstep(0.022, 0.045, depth)))
+    for obj, values in parts:
+        attribute = obj.data.color_attributes.new("Shade", "FLOAT_COLOR", "POINT")
+        rgba = np.ones((len(values), 4), dtype=np.float32)
+        rgba[:, :3] = np.asarray(values, dtype=np.float32)[:, None]
+        attribute.data.foreach_set("color", rgba.ravel())
+        obj.data.color_attributes.active_color = attribute
+        obj.data.color_attributes.render_color_index = 0
+    return {"lip_front_mm": round(lip_front * 1000, 1), "head_vertices_shaded": inside, "floor": floor}
+
+
+def part_images(obj) -> set:
+    """The images *obj*'s materials read."""
+    found = set()
+    for slot in obj.material_slots:
+        if slot.material and slot.material.node_tree:
+            for node in slot.material.node_tree.nodes:
+                if node.type == "TEX_IMAGE" and node.image:
+                    found.add(node.image)
+    return found
+
+
+def brighten(image, gain: float) -> None:
+    """Multiply an image's colour (not its alpha) by *gain*."""
+    pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    pixels = pixels.reshape(-1, image.channels)
+    pixels[:, :3] = np.clip(pixels[:, :3] * gain, 0.0, 1.0)
+    image.pixels.foreach_set(pixels.ravel())
+    image.update()
+
+
 def is_opaque(image) -> bool:
     """Whether every pixel's alpha is (near enough) 1."""
-    import numpy as np  # Blender bundles numpy
-
     if image.channels < 4:
         return True
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
@@ -184,7 +345,7 @@ def used_images() -> set:
     return used
 
 
-def fit_textures(max_px: int, max_alpha_px: int, workdir: str) -> list[dict]:
+def fit_textures(max_px: int, max_alpha_px: int, workdir: str, gains: dict | None = None) -> list[dict]:
     """Shrink every used image and store the opaque ones as JPEG. Returns what it did.
 
     Opaque images are capped at *max_px*. Images with real transparency stay PNG, which is far
@@ -206,6 +367,8 @@ def fit_textures(max_px: int, max_alpha_px: int, workdir: str) -> list[dict]:
         scale = min(1.0, (max_alpha_px if keep_alpha else max_px) / max(width, height))
         if scale < 1.0:
             image.scale(max(1, round(width * scale)), max(1, round(height * scale)))
+        if gains and image in gains:
+            brighten(image, gains[image])
         scene.render.image_settings.file_format = "PNG" if keep_alpha else "JPEG"
         scene.render.image_settings.color_mode = "RGBA" if keep_alpha else "RGB"
         scene.render.image_settings.quality = 90
@@ -218,19 +381,21 @@ def fit_textures(max_px: int, max_alpha_px: int, workdir: str) -> list[dict]:
     return report
 
 
-def patch_glb(path: str) -> dict:
+def patch_glb(path: str, blended: set[str]) -> dict:
     """Set cut-out transparency on the alpha materials, and return the glTF JSON.
 
-    Blended hair, lashes and brows sort wrongly against the face in a real-time
-    renderer; a mask with a cutoff does not. Blender's exporter only writes MASK
-    for one particular node pattern, so the exported JSON is edited instead.
+    Blended hair sorts wrongly against itself and the face in a real-time renderer; a mask with
+    a cutoff does not. Blender's exporter only writes MASK for one particular node pattern, so
+    the exported JSON is edited instead. Materials named in *blended* stay blended: brows and
+    lashes lie flat on the skin, never overlap themselves, and as cut-outs they are hard black
+    shapes.
     """
     with open(path, "rb") as handle:
         data = handle.read()
     json_len = struct.unpack_from("<I", data, 12)[0]
     doc = json.loads(data[20 : 20 + json_len])
     for material in doc.get("materials", []):
-        if material.get("alphaMode") == "BLEND":
+        if material.get("alphaMode") == "BLEND" and material.get("name") not in blended:
             material["alphaMode"] = "MASK"
             material["alphaCutoff"] = 0.35
             material["doubleSided"] = True
@@ -314,6 +479,17 @@ def build(preset: dict, out: str) -> dict:
     basemesh.name = basemesh.data.name = "head"
     for kind, obj in parts.items():
         obj.name = obj.data.name = kind
+
+    mouth = preset.get("mouth") or {}
+    mouth_report = {}
+    if "tongue" in parts and ("tongue_flatten" in mouth or "tongue_drop_mm" in mouth):
+        mouth_report["tongue"] = seat_tongue(parts["tongue"], flatten=float(mouth.get("tongue_flatten", 1.0)), drop_m=float(mouth.get("tongue_drop_mm", 0.0)) / 1000)
+    if "teeth" in parts and mouth.get("upper_teeth_drop_mm"):
+        mouth_report["upper_teeth"] = lower_upper_teeth(parts["teeth"], float(mouth["upper_teeth_drop_mm"]) / 1000)
+    shape_scale = {str(k): float(v) for k, v in (preset.get("shape_scale") or {}).items()}
+    scale_shapes(objects, shape_scale)
+    if mouth.get("cavity_shade"):
+        mouth_report["shade"] = shade_mouth(basemesh, parts.get("teeth"), parts.get("tongue"), float(mouth["cavity_shade"]))
     for obj in objects:
         for polygon in obj.data.polygons:
             polygon.use_smooth = True
@@ -330,7 +506,9 @@ def build(preset: dict, out: str) -> dict:
     drop_normal_maps()
     workdir = tempfile.mkdtemp(prefix="argus-mask-head-")
     max_px = int(preset.get("max_texture_px", 2048))
-    textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir)
+    gains = {image: float(gain) for kind, gain in (preset.get("texture_gain") or {}).items() if kind in parts for image in part_images(parts[kind])}
+    textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains)
+    blended = {slot.material.name for kind in preset.get("blend_parts") or [] if kind in parts for slot in parts[kind].material_slots if slot.material}
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     bpy.ops.export_scene.gltf(
@@ -349,10 +527,12 @@ def build(preset: dict, out: str) -> dict:
         export_lights=False,
         export_tangents=False,
         export_materials="EXPORT",
+        export_vertex_color="ACTIVE",
+        export_all_vertex_colors=False,
         export_image_format="AUTO",
         export_draco_mesh_compression_enable=False,
     )
-    doc = patch_glb(out)
+    doc = patch_glb(out, blended)
 
     lowest = min((obj.matrix_world @ v.co).z for obj in objects for v in obj.data.vertices)
     highest = max((obj.matrix_world @ v.co).z for obj in objects for v in obj.data.vertices)
@@ -367,6 +547,8 @@ def build(preset: dict, out: str) -> dict:
         "triangles_total": total,
         "shapes": {name: len(names) for name, names in shapes.items()},
         "parts_without_shapes": still,
+        "mouth": mouth_report,
+        "shape_scale": shape_scale,
         "textures": textures,
         "materials": [{"name": m.get("name"), "alphaMode": m.get("alphaMode", "OPAQUE")} for m in doc.get("materials", [])],
         "extent_m": {"below_eyes": round(-lowest, 3), "above_eyes": round(highest, 3)},

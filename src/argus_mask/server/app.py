@@ -22,6 +22,7 @@ import json
 import struct
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -54,6 +55,11 @@ MAX_CHUNK_BYTES = 4 * 1024 * 1024  # one source message: over 5 s of 48 kHz ster
 # A viewer this many messages behind is dropped. Sources send in real time plus a small lead, so a
 # healthy viewer's queue stays near empty.
 VIEWER_QUEUE = 2048
+# Audio is released once frames reach its end, give or take this many frames (the resampler holds
+# a few samples back, so the frame under a chunk's last milliseconds comes with the next chunk).
+AUDIO_SLACK_FRAMES = 2
+# A driver this far behind the audio is not going to catch up: the stream is ended.
+MAX_DRIVER_LAG_MS = 10_000.0
 
 # WebSocket close codes.
 POLICY = 1008
@@ -235,6 +241,17 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             decoder = PcmDecoder(hello)
             samples = 0
             failure: str | None = None
+            # A driver answers late: Audio2Face needs a quarter second of audio that has not been
+            # spoken yet. So audio is held until frames reach its end, and a viewer always has the
+            # mouth for a sound before it has the sound.
+            held: deque[tuple[float, bytes]] = deque()  # (where the chunk ends, in ms; the message)
+            covered_ms = 0.0
+            slack_ms = AUDIO_SLACK_FRAMES * 1000.0 / cfg.fps
+
+            def release(*, everything: bool = False) -> None:
+                while held and (everything or held[0][0] <= covered_ms + slack_ms):
+                    stage.send(held.popleft()[1])
+
             try:
                 while True:
                     message = await ws.receive()
@@ -257,9 +274,17 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                         continue
                     start_ms = samples * 1000.0 / hello.sample_rate
                     samples += mono.size
-                    stage.send(struct.pack("<d", start_ms) + mono.astype("<f4", copy=False).tobytes())
+                    end_ms = samples * 1000.0 / hello.sample_rate
+                    held.append((end_ms, struct.pack("<d", start_ms) + mono.astype("<f4", copy=False).tobytes()))
                     for frame in await performer.feed(mono):
                         stage.send(line(frame))
+                        covered_ms = frame.t_ms + 1000.0 / cfg.fps
+                    release()
+                    if end_ms - covered_ms > MAX_DRIVER_LAG_MS:
+                        failure = (
+                            f"the {driver.name} driver fell more than {MAX_DRIVER_LAG_MS / 1000:g}s behind the audio"
+                        )
+                        break
             except DriverError as exc:
                 failure = str(exc)
                 probe.forget()
@@ -273,6 +298,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     tail, end = await performer.finish()
                     for frame in tail:
                         stage.send(line(frame))
+                    release(everything=True)
                     stage.send(line(end))
                     frames, duration_ms = end.frames, end.duration_ms
                 except DriverError as exc:
@@ -280,6 +306,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     probe.forget()
             if failure is not None:
                 # Viewers are told the stream is over; what they already have is still valid.
+                release(everything=True)
                 stage.send(json.dumps({"type": "end", "frames": 0, "duration_ms": duration_ms, "error": failure}))
                 log.warning("source_failed", face=face_id, session=header.session_id, error=failure)
             else:

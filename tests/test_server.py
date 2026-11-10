@@ -248,3 +248,58 @@ def test_a2f_failing_mid_stream_ends_the_stream_and_tells_the_source(assets) -> 
         assert failure["type"] == "error" and "the model fell over" in failure["detail"]
         assert notes[-1]["type"] == "end" and "the model fell over" in notes[-1]["error"]
         assert client.get("/health").json()["live"] == []
+
+
+def test_audio_is_held_until_the_frames_for_it_exist(assets) -> None:
+    """A driver that answers late must not leave a viewer with sound and no mouth for it."""
+    with (
+        fake_a2f(lag_frames=9) as url,
+        TestClient(create_app(Settings(assets_dir=assets, driver="a2f", a2f_url=url))) as client,
+        client.websocket_connect("/session/test-head/view") as viewer,
+        client.websocket_connect("/session/test-head/source") as source,
+    ):
+        source.send_text(HELLO)
+        assert source.receive_json()["type"] == "ready"
+        for _ in range(10):
+            source.send_bytes(pcm(0.1))
+        source.send_text(json.dumps({"type": "end"}))
+        assert source.receive_json() == {"type": "done", "frames": 30, "duration_ms": 1000}
+        covered_ms = 0.0
+        chunks = 0
+        while True:
+            message = viewer.receive()
+            if message.get("bytes") is not None:
+                chunks += 1
+                start_ms = struct.unpack_from("<d", message["bytes"])[0]
+                end_ms = start_ms + (len(message["bytes"]) - 8) / 4 / 24000 * 1000
+                assert end_ms <= covered_ms + 2 * 1000 / 30 + 1e-6, (
+                    f"audio to {end_ms} ms sent with frames only to {covered_ms} ms"
+                )
+                continue
+            note = json.loads(message["text"])
+            if note["type"] == "frame":
+                covered_ms = note["t_ms"] + 1000 / 30
+            if note["type"] == "end":
+                break
+    assert chunks == 10  # every chunk still arrives, the last ones once the driver has finished
+
+
+def test_a_driver_that_falls_far_behind_ends_the_stream(assets, monkeypatch) -> None:
+    monkeypatch.setattr("argus_mask.server.app.MAX_DRIVER_LAG_MS", 500.0)
+    with (
+        fake_a2f(stall=True) as url,
+        TestClient(create_app(Settings(assets_dir=assets, driver="a2f", a2f_url=url))) as client,
+    ):
+        with (
+            client.websocket_connect("/session/test-head/view") as viewer,
+            client.websocket_connect("/session/test-head/source") as source,
+        ):
+            source.send_text(HELLO)
+            assert source.receive_json()["type"] == "ready"
+            for _ in range(8):
+                source.send_bytes(pcm(0.1))
+            failure = source.receive_json()
+            notes, audio = drain(viewer)
+        assert failure["type"] == "error" and "behind the audio" in failure["detail"]
+        assert notes[-1]["type"] == "end" and "behind the audio" in notes[-1]["error"]
+        assert client.get("/health").json()["live"] == []

@@ -1,0 +1,3 @@
+# The build context is this directory; only worker/ and server.py go into the image.
+README.md
+**/__pycache__
