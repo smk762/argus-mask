@@ -24,7 +24,7 @@ The rule is **no real person's face without consent**. A synthetic face involves
   
   A real person's face as an input makes the output *their* likeness. That needs their documented consent (see [#19](https://github.com/smk762/argus-mask/issues/19)), and it is a different kind of face, not a synthetic one.
 - **Look-alike check:** image models sometimes reproduce famous faces anyway. Before using a portrait, run a reverse image search and look at it honestly. If it looks like someone you could name, throw it away and change the seed. This is a best-effort check. The real guarantee is that nothing real went in.
-- **Adults only.** Write the age into the prompt (e.g. "a woman in her thirties"), and put "child, teenager, young-looking" in the negative prompt. Discard anything that could pass for under 25: the stock-head recipe draws the line there (spec.md § The stock head).
+- **18 and over.** Write the age into the prompt ("a woman in her twenties", "a man in his forties"), and put "child, minor" in the negative prompt. Discard anything that reads as under 18. This is the same floor the head recipe uses (spec.md § The stock head).
 - **The generator's license:**
   - SDXL base 1.0 is CreativeML Open RAIL++-M, which allows this use under its use restrictions.
   - Community "photoreal" fine-tunes each have their own license, and some don't say what they were trained on. Prefer the base model, or a fine-tune whose license and training data are stated.
@@ -68,7 +68,7 @@ Negative prompt:
 smile, open mouth, teeth, raised eyebrows, head tilt, profile, three-quarter view, looking away,
 glasses, hat, hands, hair over face, heavy makeup, harsh shadows, rim light, coloured light,
 bokeh, blur, beauty filter, airbrushed, cartoon, 3d render, painting, watermark, text,
-child, teenager, young-looking
+child, minor
 ```
 
 Generate a batch (16–32), shortlist using the table above, then refine.
@@ -127,7 +127,7 @@ argus-mask inspect assets/<face-id>/head.glb --write-manifest \
 ## Checklist
 
 - [ ] No real person in the prompt, the image inputs, or the LoRAs.
-- [ ] The person is clearly an adult; nothing could pass for under 25.
+- [ ] The person reads as 18 or over.
 - [ ] Look-alike check done and recorded.
 - [ ] Frontal, level, neutral, lips closed, eyes open to the lens.
 - [ ] Even light, plain background, nothing covering the face.
