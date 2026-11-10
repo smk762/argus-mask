@@ -63,6 +63,17 @@ class Settings:
         )
 
 
+def _cache_size() -> int:
+    raw = _env("BUILD_CACHE", "40")
+    try:
+        size = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"ARGUS_MASK_BUILD_CACHE {raw!r} is not a number") from exc
+    if not 0 <= size <= 1000:
+        raise ConfigError(f"ARGUS_MASK_BUILD_CACHE {size}: must be between 0 and 1000")
+    return size
+
+
 MPFB_DATA_UNDER_USER = Path("extensions/.user/user_default/mpfb/data")
 
 
@@ -76,6 +87,8 @@ class EditorSettings:
     # MPFB's data directory, if it is not the usual place under blender_user.
     mpfb_data: Path | None = None
     build_timeout_s: float = 300.0
+    # Builds kept so that asking for one again (undo, redo) copies it instead of running Blender. 0: none.
+    build_cache: int = 40
 
     @property
     def data_dir(self) -> Path | None:
@@ -99,4 +112,5 @@ class EditorSettings:
             blender_user=Path(user) if user else None,
             mpfb_data=Path(data) if data else None,
             build_timeout_s=timeout,
+            build_cache=_cache_size(),
         )

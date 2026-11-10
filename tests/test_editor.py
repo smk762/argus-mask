@@ -158,10 +158,15 @@ def calls(rig) -> list[dict]:
 
 
 def leftovers(assets: Path) -> list[str]:
-    """Half-made builds or exports: dot-directories other than the preview area, in either place."""
+    """Half-made builds, exports or cache entries: dot-directories other than the preview area and its cache."""
     found = [p.name for p in assets.iterdir() if p.name.startswith(".") and p.name != ".preview"]
     preview = assets / ".preview"
-    return found + ([p.name for p in preview.iterdir() if p.name.startswith(".")] if preview.is_dir() else [])
+    if preview.is_dir():
+        found += [p.name for p in preview.iterdir() if p.name.startswith(".") and p.name != ".cache"]
+    cache = preview / ".cache"
+    if cache.is_dir():
+        found += [p.name for p in cache.iterdir() if p.name.startswith(".")]
+    return found
 
 
 def nothing_built(assets: Path) -> bool:
@@ -464,7 +469,8 @@ def test_a_failed_build_leaves_nothing(client, rig, monkeypatch, mode) -> None:
 def test_a_failed_rebuild_keeps_the_face_that_was_there(client, rig, monkeypatch) -> None:
     assert client.post("/build", json=preset()).status_code == 200
     monkeypatch.setenv("FAKE_BLENDER", "crash")
-    assert client.post("/build", json=preset()).status_code == 500
+    # Something new, so Blender runs: the same preset would come from the cache.
+    assert client.post("/build", json=preset(targets={"head-square": 0.5})).status_code == 500
     assert FaceStore(rig["assets"] / ".preview").load("my-face")[0].id == "my-face"
     assert leftovers(rig["assets"]) == []
 
@@ -486,6 +492,67 @@ def test_the_editor_never_replaces_a_face_it_did_not_make(client, rig) -> None:
     assert calls(rig) == []
     # It may show one, read-only, for review: the same face the server serves.
     assert client.get("/face/stock-01").json()["id"] == "stock-01"
+
+
+# ---- the build cache --------------------------------------------------------------------------
+
+
+def test_the_same_preset_again_comes_from_the_cache(client, rig) -> None:
+    first = client.post("/build", json=preset()).json()
+    assert first["cached"] is False and len(first["key"]) == 64
+    second = client.post("/build", json=preset(targets={"head-square": 0.5})).json()
+    assert second["cached"] is False and second["key"] != first["key"]
+    # Undo: the first preset again. No Blender, the same model, the preview is the first face again.
+    again = client.post("/build", json=preset()).json()
+    assert again["cached"] is True and again["key"] == first["key"]
+    assert again["manifest"]["model"]["sha256"] == first["manifest"]["model"]["sha256"]
+    assert len(calls(rig)) == 2
+    assert "head-square" not in (rig["assets"] / ".preview" / "my-face" / "preset.json").read_text()
+    assert leftovers(rig["assets"]) == []
+
+
+def test_a_new_name_or_id_is_the_same_build(client, rig) -> None:
+    first = client.post("/build", json=preset()).json()
+    other = client.post("/build", json=preset(id="other-face", name="Other")).json()
+    assert other["cached"] is True and other["key"] == first["key"] and len(calls(rig)) == 1
+    manifest = FaceStore(rig["assets"] / ".preview").load("other-face")[0]
+    assert manifest.id == "other-face" and manifest.name == "Other"
+    assert json.loads((rig["assets"] / ".preview" / "other-face" / "preset.json").read_text())["id"] == "other-face"
+
+
+def test_an_earlier_build_can_be_shown_by_its_key(client, rig) -> None:
+    first = client.post("/build", json=preset()).json()
+    client.post("/build", json=preset(targets={"head-square": 0.5}))
+    assert client.get(f"/cache/{first['key']}").json()["model"]["sha256"] == first["manifest"]["model"]["sha256"]
+    assert client.get(f"/cache/{first['key']}/model").content[:4] == b"glTF"
+    for bad in ["0" * 64, "nothex", "A" * 64, "0" * 63 + "g"]:  # unknown, or not a key at all
+        assert client.get(f"/cache/{bad}").status_code == 404
+
+
+def test_the_cache_keeps_the_most_recently_used(rig) -> None:
+    builder = builder_for(rig, cache_size=2)
+    presets = [Preset.model_validate(preset(targets={"head-square": v})) for v in (0.1, 0.2, 0.3)]
+    keys = [builder.key(p) for p in presets]
+    for p in presets:
+        asyncio.run(builder.build(p))
+    assert builder.cached(keys[0]) is None and builder.cached(keys[1]) and builder.cached(keys[2])
+    asyncio.run(builder.build(presets[1]))  # used again: now the newest
+    asyncio.run(builder.build(Preset.model_validate(preset(targets={"head-square": 0.4}))))
+    assert builder.cached(keys[1]) and builder.cached(keys[2]) is None
+
+
+def test_a_changed_or_damaged_cache_entry_is_rebuilt(client, rig) -> None:
+    first = client.post("/build", json=preset()).json()
+    model = rig["assets"] / ".preview" / ".cache" / first["key"] / "head.glb"
+    model.write_bytes(model.read_bytes()[:-4] + b"oops")
+    again = client.post("/build", json=preset()).json()
+    assert again["cached"] is False and len(calls(rig)) == 2
+
+
+def test_no_cache_when_it_is_off(rig) -> None:
+    builder = builder_for(rig, cache_size=0)
+    result = asyncio.run(builder.build(Preset.model_validate(preset())))
+    assert not (rig["assets"] / ".preview" / ".cache").exists() and builder.cached(result.key) is None
 
 
 # ---- saved faces --------------------------------------------------------------------------

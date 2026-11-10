@@ -109,7 +109,7 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 
 ### Face editor
 
-`argus-mask editor` is a page for making heads. Pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails (hover for a large view). Set sex, age, build and ancestry, and shape the head, forehead, brow ridge, eyes, ears, cheeks, nose, lips, chin and neck with 117 sliders in collapsible panels (the filter box finds one by name). Press **Build** and a preview appears about ten seconds later (the preview fades behind a spinner and a timer while Blender works); click it for a large view that can rest, open, smile, talk or turn. With **Live update** on, it builds by itself a second after you stop changing things; changes made during a build get one more build, and typing a name or id never builds.
+`argus-mask editor` is a page for making heads. Pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails (hover for a large view). Set sex, age, build and ancestry, and shape the head, forehead, brow ridge, eyes, ears, cheeks, nose, lips, chin and neck with 117 sliders in collapsible panels (the filter box finds one by name). Press **Build** and a preview appears about ten seconds later (the preview fades behind a spinner and a timer while Blender works); click it for a large view that can rest, open, smile, talk or turn. Under it, a **Before** card shows the build before this one and what changed between them; the large view shows the two side by side, posed together. **Undo** and **Redo** (Ctrl+Z, Ctrl+Shift+Z) step back and forth through your builds. Every build is kept in a cache (`assets/.preview/.cache/`, the last `ARGUS_MASK_BUILD_CACHE` builds, 40 by default), so going back to one, or putting a slider back where it was, copies it in a fraction of a second instead of running Blender. With **Live update** on, it builds by itself a second after you stop changing things; changes made during a build get one more build, and typing a name or id never builds.
 
 A build is a preview, kept in `assets/.preview/`, which the server never lists. **Export** copies the preview on show into `assets/<id>`, and it is on the server's `/faces` at once. **Download preset** saves the form as a `.json` preset, the same format as `scripts/stock_heads/`, and **Open preset…** loads one.
 
@@ -144,6 +144,7 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_BLENDER_USER` | `$BLENDER_USER_RESOURCES` | Blender's user directory, holding MPFB and its asset packs |
 | `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
 | `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
+| `ARGUS_MASK_BUILD_CACHE` | `40` | Builds the editor keeps (about 6 MB each), so undo and repeats skip Blender; `0` keeps none |
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 

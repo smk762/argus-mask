@@ -15,6 +15,7 @@ The editor only replaces faces it made: a face directory holding
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -30,7 +31,7 @@ import structlog
 from argus_mask import __version__
 from argus_mask.editor.library import AssetLibrary, credits, licence_expression
 from argus_mask.editor.preset import Preset
-from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb
+from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb, sha256_file
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, Provenance
 
 log = structlog.get_logger(__name__)
@@ -40,6 +41,12 @@ PRESET_NAME = "preset.json"
 MODEL_NAME = "head.glb"
 RECIPE_NAME = "head.recipe.json"
 PREVIEW_DIR = ".preview"
+# Every build is also kept here, by what it was built from, so asking for the same face again (undo,
+# redo, or a slider put back) copies it instead of running Blender. Under the preview area: dot-named,
+# so neither the server nor the preview listing sees it.
+CACHE_DIR = ".cache"
+DEFAULT_CACHE_SIZE = 40  # builds kept, least recently used first out: about 6 MB each
+_KEY = re.compile(r"^[0-9a-f]{64}$")
 TRASH_DIR = ".trash"  # deleted faces go here, not away: the server skips it, and a move restores one
 PLACES = ("export", "preview")
 # Where the stock heads put the camera: a bust, not a face filling the screen.
@@ -77,6 +84,8 @@ class BuildResult:
     manifest: FaceManifest
     recipe: dict
     seconds: float
+    key: str = ""  # the cache key: GET /cache/<key> shows this build later without building it
+    cached: bool = False
 
 
 def _why(stderr: str, stdout: str) -> str:
@@ -98,6 +107,7 @@ class Builder:
         library: AssetLibrary,
         assets_dir: Path,
         timeout_s: float = 300.0,
+        cache_size: int = DEFAULT_CACHE_SIZE,
     ) -> None:
         self.blender = blender
         self.blender_user = blender_user
@@ -105,7 +115,77 @@ class Builder:
         self.assets_dir = Path(assets_dir)
         self.preview_dir = self.assets_dir / PREVIEW_DIR
         self.timeout_s = timeout_s
+        self.cache_dir = self.preview_dir / CACHE_DIR
+        self.cache_size = max(0, cache_size)
         self._lock = asyncio.Lock()
+        # What else decides the model: the recipe, the slider catalogue and the Blender it runs in. A
+        # change to any of them is a different key, so a cache never serves a model the recipe no longer makes.
+        recipe = hashlib.sha256()
+        for part in (SCRIPT, SCRIPT.with_name("modifiers.json")):
+            recipe.update(part.read_bytes() if part.is_file() else b"")
+        recipe.update(str(blender).encode())
+        self._recipe = recipe.hexdigest()
+
+    # ---- the build cache ---------------------------------------------------------------------------
+
+    def key(self, preset: Preset) -> str:
+        """What a build is made from: the preset without its id and name (they change no vertex), and the recipe."""
+        content = preset.model_dump(mode="json", exclude_none=True, exclude={"id", "name"})
+        text = json.dumps(content, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(f"{self._recipe}\n{text}".encode()).hexdigest()
+
+    def cached(self, key: str) -> Path | None:
+        """The cached build for *key*, if it is whole: its model still matches its manifest."""
+        if not _KEY.match(key):
+            return None
+        directory = self.cache_dir / key
+        try:
+            manifest = FaceManifest.model_validate_json((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+            model = directory / manifest.model.file
+            return directory if model.is_file() and sha256_file(model) == manifest.model.sha256 else None
+        except (OSError, ValueError):
+            return None
+
+    def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
+        directory = self.cached(key)
+        if directory is None:
+            return None
+        manifest = FaceManifest.model_validate_json((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+        return manifest, directory / manifest.model.file
+
+    def _keep(self, work: Path, key: str) -> None:
+        """Copy a finished build into the cache, then drop the least recently used beyond the cap."""
+        if self.cache_size == 0:
+            return
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        target = self.cache_dir / key
+        if target.exists():
+            os.utime(target)
+            return
+        tmp = Path(tempfile.mkdtemp(prefix=".keep-", dir=self.cache_dir))
+        try:
+            shutil.copytree(work, tmp, dirs_exist_ok=True)
+            tmp.rename(target)
+        finally:
+            if tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)
+        entries = sorted((p for p in self.cache_dir.iterdir() if _KEY.match(p.name)), key=lambda p: p.stat().st_mtime)
+        for old in entries[: max(0, len(entries) - self.cache_size)]:
+            shutil.rmtree(old, ignore_errors=True)
+
+    def _from_cache(self, source: Path, work: Path, preset: Preset) -> tuple[FaceManifest, dict]:
+        """Fill *work* from a cached build, with this preset's id and name."""
+        shutil.copytree(source, work, dirs_exist_ok=True)
+        os.utime(source)  # recently used: kept longest
+        manifest = FaceManifest.model_validate_json((work / MANIFEST_NAME).read_text(encoding="utf-8"))
+        manifest = manifest.model_copy(update={"id": preset.id, "name": preset.name})
+        (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        (work / PRESET_NAME).write_text(preset.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8")
+        try:
+            recipe = json.loads((work / RECIPE_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            recipe = {}
+        return manifest, recipe
 
     @property
     def busy(self) -> bool:
@@ -199,8 +279,20 @@ class Builder:
         target = self.preview_dir / preset.id
 
         self.preview_dir.mkdir(parents=True, exist_ok=True)
+        key = self.key(preset)
         work = Path(tempfile.mkdtemp(prefix=".build-", dir=self.preview_dir))
         started = time.monotonic()
+        source = await asyncio.to_thread(self.cached, key)
+        if source is not None:
+            try:
+                manifest, recipe = await asyncio.to_thread(self._from_cache, source, work, preset)
+                self._install(work, target, self.preview_dir)
+            finally:
+                if work.exists():
+                    shutil.rmtree(work, ignore_errors=True)
+            seconds = round(time.monotonic() - started, 2)
+            log.info("face_built", face=preset.id, seconds=seconds, cached=True)
+            return BuildResult(manifest=manifest, recipe=recipe, seconds=seconds, key=key, cached=True)
         try:
             preset_text = preset.model_dump_json(indent=2, exclude_none=True) + "\n"
             (work / PRESET_NAME).write_text(preset_text, encoding="utf-8")
@@ -234,13 +326,17 @@ class Builder:
                 build_manifest, model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
             )
             (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            try:
+                await asyncio.to_thread(self._keep, work, key)
+            except OSError as exc:  # a full disk loses the cache entry, not the build
+                log.warning("build_not_cached", face=preset.id, reason=str(exc))
             self._install(work, target, self.preview_dir)
         finally:
             if work.exists():
                 shutil.rmtree(work, ignore_errors=True)
         seconds = round(time.monotonic() - started, 2)
         log.info("face_built", face=preset.id, seconds=seconds, triangles=recipe.get("triangles_total"))
-        return BuildResult(manifest=manifest, recipe=recipe, seconds=seconds)
+        return BuildResult(manifest=manifest, recipe=recipe, seconds=seconds, key=key)
 
     async def _run_blender(self, preset_path: Path, out: Path) -> None:
         env = dict(os.environ)

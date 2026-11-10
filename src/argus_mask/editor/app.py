@@ -9,6 +9,7 @@
 ``POST /export/{id}``                   copy a preview into the assets root, where the server serves it
 ``GET  /face/{id}``, ``/face/{id}/model``  a face, for the page: ``?from=preview`` or ``export``; by default
                                         the editor's preview, else its export
+``GET  /cache/{key}``, ``/cache/{key}/model``  an earlier build, by the key /build answered with
 ``GET  /saved``                         every face in the assets root and every preview, newest first
 ``GET  /saved/{id}/preset``             the preset behind a face the editor made (``?from=preview|export``)
 ``POST /saved/{id}/rename``             ``{"id": new id, "name": new name}``: the export and the preview together
@@ -65,6 +66,7 @@ def create_editor_app(
         library=library,
         assets_dir=cfg.assets_dir,
         timeout_s=ed.build_timeout_s,
+        cache_size=ed.build_cache,
     )
     store = FaceStore(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
@@ -154,6 +156,8 @@ def create_editor_app(
             "triangles": recipe.get("triangles_total"),
             "bytes": recipe.get("bytes"),
             "age_years": preset.age_years(),
+            "key": result.key,
+            "cached": result.cached,
         }
 
     @app.post("/export/{face_id}")
@@ -168,6 +172,24 @@ def create_editor_app(
             log.warning("export_failed", face=face_id, reason=str(exc))
             raise HTTPException(500, f"export failed: {exc}") from exc
         return {"manifest": manifest.model_dump(mode="json"), "path": f"{cfg.assets_dir / face_id}"}
+
+    def from_cache(key: str) -> tuple[FaceManifest, Path]:
+        found = builder.cached_face(key)
+        if found is None:
+            raise HTTPException(404, "that build is no longer in the cache")
+        return found
+
+    @app.get("/cache/{key}", response_model=FaceManifest)
+    def cache_manifest(key: str) -> FaceManifest:
+        return from_cache(key)[0]
+
+    @app.get("/cache/{key}/model")
+    def cache_model(key: str) -> FileResponse:
+        manifest, path = from_cache(key)
+        # The key names what the build was made from, so its model never changes: cache it hard.
+        return FileResponse(
+            path, media_type="model/gltf-binary", headers={"Cache-Control": "private, max-age=86400, immutable"}
+        )
 
     @app.get("/saved")
     def saved() -> list[dict]:
