@@ -22,7 +22,7 @@ function dispose(root) {
     if (!node.isMesh) return;
     node.geometry?.dispose();
     for (const m of [].concat(node.material || [])) {
-      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      for (const v of Object.values(m)) if (v && v.isTexture && !v.userData.shared) v.dispose();  // look.js's skin detail is shared
       m.dispose();
     }
   });

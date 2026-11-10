@@ -100,6 +100,7 @@ function skinDetail() {
     t.minFilter = THREE.LinearMipmapLinearFilter;
     t.magFilter = THREE.LinearFilter;
     t.needsUpdate = true;
+    t.userData.shared = true;  // one copy for every face and stage: a page disposing a face must leave it
     return t;
   };
   detail = { normal: tex(normal, THREE.NoColorSpace), rough: tex(rough, THREE.NoColorSpace) };
@@ -148,22 +149,26 @@ function shellTriangles(geometry) {
   }
   const v = new THREE.Vector3();
   const shells = new Map();  // side (-1 or 1) -> { root, radius }
+  const pieces = new Map();  // side -> how many parts lie on it
   for (const [root, verts] of parts) {
-    if (verts.length < 64) continue;  // stray bits, not a sphere
     const c = new THREE.Vector3();
     for (const i of verts) c.add(v.fromBufferAttribute(pos, i));
     c.divideScalar(verts.length);
+    const side = Math.sign(c.x) || 1;
+    pieces.set(side, (pieces.get(side) || 0) + 1);
+    if (verts.length < 64) continue;  // stray bits, not a sphere
     let radius = 0;
     for (const i of verts) radius += v.fromBufferAttribute(pos, i).distanceTo(c);
     radius /= verts.length;
-    const side = Math.sign(c.x) || 1;
-    if (!shells.has(side) || shells.get(side).radius < radius) shells.set(side, { root, radius, count: verts.length });
+    if (!shells.has(side) || shells.get(side).radius < radius) shells.set(side, { root, radius });
   }
-  // Only a real pair of nested spheres: each side must have had an eyeball inside its shell.
+  // Only a real pair of nested spheres: each side must have had an eyeball inside its shell, or the
+  // "shell" found is an eyeball itself.
+  if (shells.size !== 2 || [...shells.keys()].some((side) => pieces.get(side) < 2)) return null;
   const roots = new Set([...shells.values()].map((s) => s.root));
   const out = [];
   for (let t = 0; t < index.count; t += 3) if (roots.has(find(index.getX(t)))) out.push(index.getX(t), index.getX(t + 1), index.getX(t + 2));
-  return parts.size >= 4 && out.length ? out : null;
+  return out.length ? out : null;
 }
 
 function cornea(mesh) {
@@ -181,7 +186,9 @@ function cornea(mesh) {
     specularIntensity: 1, envMapIntensity: 0.15, transparent: true, depthWrite: false,
     blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
   });
-  const shell = new THREE.Mesh(g, m);
+  // A face with a head bone skins its eyes: the shell must ride the same skeleton, or it stays behind.
+  const shell = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(g, m) : new THREE.Mesh(g, m);
+  if (mesh.isSkinnedMesh) { shell.bindMode = mesh.bindMode; shell.bind(mesh.skeleton, mesh.bindMatrix); }
   shell.name = 'cornea';
   shell.morphTargetInfluences = mesh.morphTargetInfluences;  // one array: weights set on the eyes reach it
   shell.morphTargetDictionary = mesh.morphTargetDictionary;
@@ -194,6 +201,8 @@ function cornea(mesh) {
 }
 
 // ---- the look ------------------------------------------------------------------------------------
+
+const WET = new Set(['head', 'eyes', 'teeth', 'tongue']);  // parts that keep the glTF's own roughness
 
 export class Look {
   constructor(renderer, scene, camera, options = lookOptions(new URLSearchParams())) {
@@ -210,8 +219,10 @@ export class Look {
 
     if (this.o.ibl) {  // image-based light from a lit room: soft, all round, and something for the eyes to reflect
       const pmrem = new THREE.PMREMGenerator(renderer);
-      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      const room = new RoomEnvironment();
+      scene.environment = pmrem.fromScene(room, 0.04).texture;
       scene.environmentIntensity = 0.3;  // fill and reflections; the lights do the modelling
+      room.dispose();
       pmrem.dispose();
     }
 
@@ -240,7 +251,8 @@ export class Look {
     scene.add(this.rig);
   }
 
-  // Dress a loaded face: shadows, skin, cornea, hair edges. Call once per model.
+  // Dress a loaded face: shadows, skin, cornea, hair edges. Call once per model, then focus() once the
+  // camera is placed.
   apply(root) {
     const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     const meshes = [];
@@ -254,7 +266,8 @@ export class Look {
       if (mesh.name === 'head' && this.o.skin) skin(mesh, anisotropy);
       if (mesh.name === 'eyes' && this.o.cornea) cornea(mesh);
       // Hair and cloth are matte: exported smooth, they mirror the room and the rim lights like plastic.
-      if (mesh.name !== 'head' && mesh.name !== 'eyes' && m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
+      // Not skin, eyes or the wet mouth.
+      if (!WET.has(mesh.name) && m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
       // Hair cards only: other cut-outs (the eyes' cornea layer, the teeth) are not edges to soften, and
       // partial coverage would draw the eyes' all-but-transparent cornea as a skin-coloured film.
       if (mesh.name === 'hair' && m.alphaTest > 0 && !m.transparent) {
@@ -264,7 +277,6 @@ export class Look {
       }
     }
     if (this.o.shadows) this.fitShadow(root);
-    if (this.composer) this.focus(root);
   }
 
   fitShadow(root) {  // the key light's shadow camera, just around the head: every texel spent on the face
@@ -326,9 +338,9 @@ export class Look {
   // What is on, for window.__mask and for anyone asking which look a recording used.
   get summary() {
     const o = this.o;
+    const post = Boolean(this.composer);
     return { quality: o.quality, tone: o.tone, exposure: o.exposure, ibl: o.ibl, shadows: o.shadows, skin: o.skin,
-      cornea: o.cornea, hair: o.hair, post: Boolean(this.composer), ao: o.ao && Boolean(this.composer),
-      smaa: o.smaa && Boolean(this.composer), dof: o.dof && Boolean(this.composer), grain: o.grain && Boolean(this.composer),
-      bloom: o.bloom && Boolean(this.composer) };
+      cornea: o.cornea, hair: o.hair, post, ao: o.ao && post, smaa: o.smaa && post, dof: o.dof && post,
+      grain: o.grain && post, bloom: o.bloom && post };
   }
 }

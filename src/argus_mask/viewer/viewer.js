@@ -139,7 +139,6 @@ async function loadFace() {
   camera.lookAt(0, framing.height || 0, 0);
   resize();
   look.focus(gltf.scene);
-  state.look = look.summary;
   state.face = faceId;
   state.ready = true;
   return faceId;
