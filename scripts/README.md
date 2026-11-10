@@ -110,6 +110,11 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 - Rewrites blended materials as alpha cut-outs (`MASK`, cutoff 0.35), because blended hair sorts wrongly against itself and the face in a real-time renderer. Parts listed in `blend_parts` stay blended.
 - Fixes the mouth, which MakeHuman's assets leave wrong for speech (see below).
 
+## The eyes and the skin
+
+- **The wet line.** A thin strip along each lower lid where it meets the eye, the tear line that makes an eye look wet: an object of its own, `wetline`, about 40 triangles. MakeHuman's lids are not an opening in the mesh, so the margin is found as a camera sees it: rays cast at the face from the front, in columns across each eye, stepping down from the pupil; the first to meet skin before eye marks the lid. Each strip vertex moves with the skin triangle there under every shape key, so it blinks and squints with the lid. The viewer gives it a glossy film that fades up the eye; another glTF viewer shows a faint, glossy strip.
+- **Skin maps.** MakeHuman's skins ship a colour map only. The recipe reads its fine detail (the colour minus a 3-pixel blur of it) as a height field and bakes a tangent-space normal map and a roughness map from it, at the colour map's size, as JPEG. They go into the `.glb` as glTF's own `normalTexture` and `metallicRoughnessTexture`, so any viewer uses them; the argus viewer adds generated pores over them. About 4.4 MB more per head.
+
 ## The mouth
 
 As MPFB fits them, three things make an open mouth look wrong, and the `mouth` settings correct each:

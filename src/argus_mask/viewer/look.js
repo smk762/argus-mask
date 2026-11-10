@@ -42,6 +42,7 @@ export function lookOptions(params, fallback = 'medium') {
     if (params.get(key) === '0') o[key] = false;
   }
   if (['blend', 'a2c', 'hash', 'cutout'].includes(params.get('hair'))) o.hair = params.get('hair');
+  o.pores = params.get('pores') !== '0';
   if (TONES[params.get('tone')] !== undefined) o.tone = params.get('tone');
   const exposure = Number(params.get('exposure'));
   if (params.has('exposure') && Number.isFinite(exposure) && exposure > 0) o.exposure = Math.min(4, exposure);
@@ -107,6 +108,7 @@ function skinDetail() {
   return detail;
 }
 
+let skinPores = true;  // pores over baked maps; lookOptions' pores=0 turns them off (for comparing)
 function skin(mesh, anisotropy) {
   const source = mesh.material;
   const m = new THREE.MeshPhysicalMaterial();
@@ -114,16 +116,32 @@ function skin(mesh, anisotropy) {
   m.defines = { STANDARD: '', PHYSICAL: '' };  // the standard copy resets these to STANDARD alone: no sheen
   const { normal, rough } = skinDetail();
   normal.anisotropy = rough.anisotropy = anisotropy;
-  if (!m.normalMap) { m.normalMap = normal; m.normalScale.set(0.35, 0.35); }
-  if (!m.roughnessMap) m.roughnessMap = rough;
-  m.roughness = 0.62;
+  // A head from the recipe brings its own maps, baked from its colour map: face-aligned creases and
+  // lip lines. The generated pores then go on top of them, finer, as a second normal. Without baked
+  // maps, the pores are the normal map.
+  const baked = Boolean(m.normalMap);
+  if (!baked) { m.normalMap = normal; m.normalScale.set(0.35, 0.35); }
+  if (m.roughnessMap) m.roughness = 1.0;  // the baked map holds the roughness itself
+  else { m.roughnessMap = rough; m.roughness = 0.62; }
+  const pores = baked && skinPores;
   m.metalness = 0;
   m.specularIntensity = 0.55;
   m.sheen = 0.15;  // a little velvet at grazing angles; more whitens the skin
   m.sheenRoughness = 0.6;
   m.sheenColor = new THREE.Color(1.0, 0.86, 0.8);
-  m.onBeforeCompile = skinShader;
-  m.customProgramCacheKey = () => 'argus-skin';
+  m.onBeforeCompile = (shader) => {
+    skinShader(shader);
+    if (!pores) return;
+    shader.uniforms.skinPores = { value: normal };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D skinPores;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        #ifdef USE_NORMALMAP_TANGENTSPACE
+          vec3 pore = texture2D( skinPores, vNormalMapUv * ${normal.repeat.x.toFixed(1)} ).xyz * 2.0 - 1.0;
+          normal = normalize( normal + tbn * vec3( pore.xy * 0.3, 0.0 ) );
+        #endif`);
+  };
+  m.customProgramCacheKey = () => (pores ? 'argus-skin-pores' : 'argus-skin');
   mesh.material = m;
 }
 
@@ -196,6 +214,29 @@ function twoPassHair(mesh) {
   fringe.quaternion.copy(mesh.quaternion);
   fringe.scale.copy(mesh.scale);
   mesh.parent.add(fringe);
+}
+
+// ---- the wet line: the recipe's strip along each lower lid, a film of tear ---------------------------
+
+let tearFade = null;
+function wetLine(mesh) {
+  if (!tearFade) {  // across the strip (its v): wettest at the lid, gone a millimetre up the eye
+    const n = 32, data = new Uint8Array(n * 4);
+    for (let i = 0; i < n; i += 1) {
+      const a = Math.round(255 * 0.55 * (1 - i / (n - 1)) ** 1.5);
+      data.set([a, a, a, 255], i * 4);
+    }
+    tearFade = new THREE.DataTexture(data, 1, n);
+    tearFade.magFilter = THREE.LinearFilter;
+    tearFade.needsUpdate = true;
+  }
+  mesh.material = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(0.96, 0.86, 0.84), roughness: 0.03, metalness: 0, ior: 1.336,
+    specularIntensity: 1, envMapIntensity: 0.7, transparent: true, alphaMap: tearFade, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  mesh.renderOrder = 3;  // over the eye and its cornea
+  mesh.castShadow = false;
 }
 
 function cornea(mesh) {
@@ -290,8 +331,9 @@ export class Look {
         mesh.receiveShadow = true;
         mesh.castShadow = !m.transparent;  // blended brows and lashes would shadow as solid cards
       }
-      if (mesh.name === 'head' && this.o.skin) skin(mesh, anisotropy);
+      if (mesh.name === 'head' && this.o.skin) { skinPores = this.o.pores !== false; skin(mesh, anisotropy); }
       if (mesh.name === 'eyes' && this.o.cornea) cornea(mesh);
+      if (mesh.name === 'wetline') { wetLine(mesh); continue; }
       // Hair and cloth are matte: exported smooth, they mirror the room and the rim lights like plastic.
       // Not skin, eyes or the wet mouth.
       if (!WET.has(mesh.name) && m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);

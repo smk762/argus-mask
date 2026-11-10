@@ -776,3 +776,12 @@ def test_the_triangle_budget_is_45k() -> None:
     assert Preset.model_validate(preset()).max_triangles == 45_000  # the default is the whole budget
     with pytest.raises(ValidationError, match="max_triangles"):
         Preset.model_validate(preset(max_triangles=45_001))
+
+
+def test_the_viewer_dresses_the_parts_the_recipe_names() -> None:
+    # look.js finds parts by name; a rename on either side would silently lose the wet line or the skin maps.
+    recipe = SCRIPT.read_text()
+    look = (SCRIPT.parent.parent / "viewer" / "look.js").read_text()
+    assert 'WET_LINE = "wetline"' in recipe and "mesh.name === 'wetline'" in look
+    assert 'basemesh.name = basemesh.data.name = "head"' in recipe and "mesh.name === 'head'" in look
+    assert "SKIN_DETAIL" in recipe and "const baked = Boolean(m.normalMap)" in look

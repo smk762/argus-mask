@@ -61,7 +61,7 @@ Run one test: `uv run --no-sync pytest tests/test_x.py::test_name -q`.
 - **The viewer handler uses an anyio task group, not bare asyncio tasks.** Bare tasks made the test client raise `CancelledError` on exit about one run in three.
 - **The editor only replaces faces with a `preset.json`, and only offers assets a pack licenses.** A preset's asset references are looked up in the installed library before anything reaches Blender; never pass a request's path to Blender's command line.
 - **Faces carry provenance or are not served.** `curated` is refused until spec.md's 0.3 work defines it. No real person's face or voice goes in the repo or the tests.
-- **The viewer has no automated test** beyond `node --check`. After touching `viewer/`, run the server and `argus-mask push` a WAV, and watch a browser. `window.__mask` exposes its state, `window.__mask.look` the profile. The look recognises parts by name (`head`, `eyes`, `hair`): a recipe change that renames them silently loses skin, catch-lights or soft hair.
+- **The viewer has no automated test** beyond `node --check`. After touching `viewer/`, run the server and `argus-mask push` a WAV, and watch a browser. `window.__mask` exposes its state, `window.__mask.look` the profile. The look recognises parts by name (`head`, `eyes`, `hair`, `wetline`): a recipe change that renames them silently loses skin, catch-lights or soft hair.
 - Template-managed files (`Makefile`, `Dockerfile`, workflows) have local edits; `copier update` will ask about them.
 
 ## CI / release
