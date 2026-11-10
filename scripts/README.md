@@ -38,7 +38,8 @@ python3 -m zipfile -e makehuman_system_assets_cc0.zip $DATA
 python3 -m zipfile -e faceunits01.zip $DATA
 
 # Clothes: the stock heads wear a garment from the community's suits02 pack (CC0, 183 MB).
-# Only its clothes/<garment>/ directory is needed; the whole pack merges in the same way.
+# Only its clothes/<garment>/ directory and packs/suits02.json (the index MPFB reads the
+# licence and author from) are needed; the whole pack merges in the same way.
 python3 -m zipfile -e suits02_cc0.zip $DATA
 ```
 
