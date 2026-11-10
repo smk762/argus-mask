@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from argus_mask.arkit import ARKIT_52
+from argus_mask.faces import MAX_TRIANGLES
 from argus_mask.models import FACE_ID_PATTERN
 
 # The youngest a head may be: 18 years on MakeHuman's scale. Below 0.5 the age macro maps to years as
@@ -134,7 +135,7 @@ class Preset(_Strict):
     blend_parts: list[Literal["eyebrows", "eyelashes"]] = Field(default_factory=list)
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
-    max_triangles: int = Field(30_000, ge=1000, le=30_000)
+    max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
 
     @field_validator("targets")
     @classmethod

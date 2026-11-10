@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gaze (#11); alpha-to-coverage hair edges (#12); and post-processing (GTAO, depth of field, bloom, grain, optional
   SMAA) in `low`, `medium` and `high` profiles with a URL switch per effect (#10). `record` renders with `high`
   (`--quality`). The editor's previews use the same look.
+- **Triangle budget 35k** (was 30k): a dressed head (a uniform is ~5k triangles, MakeHuman's teeth 7k) ran just over it.
 - **Editor: compare, undo, build cache.** A Before card beside the preview shows the previous build and what
   changed; the large view shows both side by side, posed together. Undo and redo step through the builds. Each
   build is cached by what it was made from (the preset without id and name, the recipe, the Blender), so a repeat

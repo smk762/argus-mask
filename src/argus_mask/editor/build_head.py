@@ -611,7 +611,7 @@ def build(preset: dict, out: str) -> dict:
 
     counts = {obj.name: triangles(obj) for obj in objects}
     total = sum(counts.values())
-    budget = int(preset.get("max_triangles", 30000))
+    budget = int(preset.get("max_triangles", 35000))
     if total > budget:
         raise RecipeError(f"{total} triangles is over the budget of {budget}: {counts}")
 
