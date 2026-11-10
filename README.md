@@ -57,6 +57,8 @@ A face is a directory under the assets root holding a `.glb` and a `manifest.jso
 
 No real person's likeness belongs in this repo, its fixtures or its examples.
 
+To make a synthetic source portrait (an SDXL image of a person who does not exist) for the photoreal face routes, see [docs/synthetic-faces.md](docs/synthetic-faces.md).
+
 ### The stock head
 
 The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
