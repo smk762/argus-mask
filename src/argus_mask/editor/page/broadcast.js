@@ -181,8 +181,15 @@ function renderJob() {
   for (const b of ['stop', 'push-stop']) $(b).disabled = !running;
 }
 
-async function follow(id) {
-  try { job = await json(`/broadcast/${id}`); } catch (err) { job = { ...(job || {}), state: 'failed', events: [...(job?.events || []), { at: 0, kind: 'error', text: err.message }] }; }
+async function follow(id, misses = 0) {
+  try {
+    job = await json(`/broadcast/${id}`);
+  } catch (err) {
+    // A poll that fails says nothing about the broadcast, which runs on in the editor: keep following
+    // (and Stop working) for a while before giving up on it.
+    if (misses < 10) { setTimeout(() => follow(id, misses + 1), 1000); return; }
+    job = { ...(job || {}), state: 'lost', events: [...(job?.events || []), { at: 0, kind: 'error', text: err.message }] };
+  }
   renderJob();
   if (job.state === 'running') setTimeout(() => follow(id), 500);
   else refresh();

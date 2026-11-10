@@ -332,11 +332,15 @@ def tts_voices(tts_url: str) -> list[dict] | None:
     """
     if not tts_url.startswith("wyoming://"):
         return None
-    parts = urllib.parse.urlsplit(tts_url)
-    if not parts.hostname or not parts.port:
+    try:
+        parts = urllib.parse.urlsplit(tts_url)
+        port = parts.port
+    except ValueError as exc:
+        raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port") from exc
+    if not parts.hostname or not port:
         raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port")
     try:
-        with socket.create_connection((parts.hostname, parts.port), timeout=VOICES_TIMEOUT_S) as sock:
+        with socket.create_connection((parts.hostname, port), timeout=VOICES_TIMEOUT_S) as sock:
             WyomingReply.send(sock, "describe")
             buffer = b""
             while True:
@@ -348,9 +352,12 @@ def tts_voices(tts_url: str) -> list[dict] | None:
                     break
     except OSError as exc:
         raise ClientError(f"the Wyoming server at {tts_url} does not answer: {exc}") from exc
+    except ValueError as exc:  # an event's data that is not JSON
+        raise ClientError(f"the Wyoming server at {tts_url} sent an event that is not JSON") from exc
     voices = []
-    for program in info.get("tts") or []:
-        for v in (program or {}).get("voices") or []:
+    programs = info.get("tts")
+    for program in programs if isinstance(programs, list) else []:
+        for v in (program.get("voices") if isinstance(program, dict) else None) or []:
             if not isinstance(v, dict) or not v.get("name"):
                 continue
             voices.append(

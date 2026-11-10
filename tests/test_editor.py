@@ -971,6 +971,16 @@ def test_the_voices_come_from_a_wyoming_service(broadcasting) -> None:
         http = c.get("/voices", params={"tts": "http://127.0.0.1:9/tts"}).json()
         assert not http["listed"] and "does not list" in http["reason"]
         assert "does not answer" in c.get("/voices", params={"tts": "wyoming://127.0.0.1:9"}).json()["reason"]
+        assert "wyoming://host:port" in c.get("/voices", params={"tts": "wyoming://127.0.0.1:99999"}).json()["reason"]
+        # Another site may not use the editor to reach a host of its choosing.
+        evil = {"Origin": "http://evil.example"}
+        assert c.get("/voices", params={"tts": "wyoming://127.0.0.1:9"}, headers=evil).status_code == 403
+        assert (
+            c.get(
+                "/voices", params={"tts": "wyoming://10.0.0.1:22"}, headers={"Sec-Fetch-Site": "cross-site"}
+            ).status_code
+            == 403
+        )
 
 
 def test_push_plays_a_file_into_the_face(broadcasting, tmp_path) -> None:

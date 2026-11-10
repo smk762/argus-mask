@@ -7,7 +7,8 @@ terminal. What happens is kept as a list of events for the page to show: the ses
 sentence, the speech's length, done or the reason it failed. Stopping a job cancels it, which
 cuts the TTS socket as Ctrl-C does in the CLI.
 
-The text goes to the TTS service and nowhere else.
+The text goes to the TTS service, and is never logged. A job's summary (its first 80
+characters) is kept for the page to show, so anyone who can read this editor can read it.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ class Job:
     events: list[dict] = field(default_factory=list)
     result: dict | None = None
     started: float = field(default_factory=time.monotonic)
+    ended: float | None = None
     task: asyncio.Task | None = None
 
     def note(self, kind: str, text: str) -> None:
@@ -51,7 +53,7 @@ class Job:
             "state": self.state,
             "events": self.events,
             "result": self.result,
-            "seconds": round(time.monotonic() - self.started, 1),
+            "seconds": round((self.ended or time.monotonic()) - self.started, 1),
         }
 
 
@@ -95,6 +97,8 @@ class Broadcasts:
                 job.state = "failed"
                 job.note("error", f"{type(exc).__name__}: {exc}")
                 log.warning("broadcast_failed", face=face, kind=kind, reason=str(exc))
+            finally:
+                job.ended = time.monotonic()
 
         job.task = asyncio.create_task(body())
         return job
@@ -140,3 +144,10 @@ class Broadcasts:
             return False
         job.task.cancel()
         return True
+
+    async def stop_all(self) -> None:
+        """Cancel every running job and wait for each to end: on shutdown, so no TTS socket outlives the app."""
+        tasks = [j.task for j in self.jobs.values() if j.state == "running" and j.task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
