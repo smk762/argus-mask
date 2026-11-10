@@ -305,8 +305,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     failure = str(exc)
                     probe.forget()
             if failure is not None:
-                # Viewers are told the stream is over; what they already have is still valid.
-                release(everything=True)
+                # Viewers are told the stream is over; what they already have is still valid. Audio no
+                # frame reached is dropped: playing it would be sound with no mouth for it.
+                held.clear()
                 stage.send(json.dumps({"type": "end", "frames": 0, "duration_ms": duration_ms, "error": failure}))
                 log.warning("source_failed", face=face_id, session=header.session_id, error=failure)
             else:

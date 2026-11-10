@@ -14,7 +14,8 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
-const BUFFER_S = Math.min(2, Math.max(0.05, (Number(params.get('buffer')) || 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
+const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
+const BUFFER_S = Math.min(2, Math.max(0.05, (Number.isFinite(BUFFER_MS) ? BUFFER_MS : 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
 const RESYNC_S = 0.05;        // after an underrun, how soon the late audio starts
 const RELAX_PER_S = 6;        // how fast the face settles when a stream ends
 const HLD = { width: 1080, height: 1920 };

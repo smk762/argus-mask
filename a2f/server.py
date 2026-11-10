@@ -380,7 +380,7 @@ class Server:
         await old.stop()
         try:
             worker = await Worker.start(self.config, self.model_json, fps)
-        except (OSError, RuntimeError, TimeoutError) as exc:
+        except (OSError, RuntimeError, ValueError, KeyError, TimeoutError) as exc:
             self._recover(f"could not load the model at {fps} fps: {exc}")
             raise WorkerDied(f"could not load the model at {fps} fps: {exc}") from exc
         self._adopt(worker)

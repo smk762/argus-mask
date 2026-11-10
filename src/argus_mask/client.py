@@ -39,6 +39,11 @@ def source_url(base: str, face_id: str) -> str:
     return f"{'wss' if scheme in ('https', 'wss') else 'ws'}://{rest}/session/{face_id}/source"
 
 
+def _frame_bytes(fmt: AudioFormat) -> int:
+    """Bytes in one sample of every channel."""
+    return (4 if fmt.format == "f32le" else 2) * fmt.channels
+
+
 async def _reply(ws, expect: str) -> dict:  # noqa: ANN001 - websockets is optional
     import websockets  # noqa: PLC0415
 
@@ -70,7 +75,7 @@ async def send(
         import websockets  # noqa: PLC0415
     except ImportError as exc:
         raise ClientError("push and say need websockets: install argus-mask[cli]") from exc
-    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
+    frame_bytes = _frame_bytes(fmt)
     try:
         async with websockets.connect(source_url(base, face_id), max_size=2**22, proxy=None) as ws:
             await ws.send(SourceHello(**fmt.model_dump(), seed=seed).model_dump_json())
@@ -164,7 +169,7 @@ async def say(
     time. *on_audio* is told the utterance's length in seconds once it is known.
     """
     reply, fmt = await asyncio.to_thread(open_tts, tts_url, body)
-    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
+    frame_bytes = _frame_bytes(fmt)
     block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
 
     if stream:
