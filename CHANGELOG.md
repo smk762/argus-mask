@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Recipe: wet line and skin maps** (#11, #9). A tear line along each lower lid (`wetline`, found by casting
+  rays at the eye, moving with the lid under every shape key), and normal and roughness maps baked from the skin's
+  colour map into the `.glb`. The viewer gives the wet line a fading glossy film and lays its generated pores over
+  the baked maps.
+- **Two-pass hair** (#12): an opaque core, then the fringe blended over it. On a 10 s recording, 26% less edge
+  shimmer and 59% fewer edge pops than the cut-out; alpha to coverage alone managed 6%. The default in every profile.
+- **Triangle budget 45k** (was 35k), while the weakest panels are not targets.
 - **Viewer look** (`viewer/look.js`, issue #20 tier 1): a three-point light rig, image-based light and PBR Neutral
   tone mapping (#8); soft shadows from the key light (#8); physical skin with wrap lighting for subsurface scatter,
   sheen and a generated pore-scale detail map (#9); catch-lights from the eyes' cornea shell, which follow the

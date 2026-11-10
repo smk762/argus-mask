@@ -353,6 +353,199 @@ def shade_mouth(head, teeth, tongue, floor: float) -> dict:
     return {"lip_front_mm": round(lip_front * 1000, 1), "head_vertices_shaded": inside, "floor": floor}
 
 
+WET_LINE = "wetline"
+SKIN_DETAIL = "argus_skin_detail"  # the baked normal map's node, which drop_normal_maps keeps
+
+
+def bake_skin_maps(head, workdir: str, *, strength: float = 0.18, radius: int = 3) -> dict:
+    """Normal and roughness maps for the skin, from its own colour map.
+
+    MakeHuman's skins ship a colour map only. Its fine detail (the colour minus a blur of it: creases,
+    lip lines, blotches, the larger pores) is read as a height field, and becomes a tangent-space normal
+    map (OpenGL convention, as glTF has it) and a roughness map, a touch rougher in the dark creases.
+    Saved here, raw, so nothing colour-manages the data on the way into the .glb.
+    """
+    material = head.active_material
+    if material is None or not material.node_tree:
+        return {"made": False, "why": "the head has no node material"}
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+    textures = [n for n in nodes if n.type == "TEX_IMAGE" and n.image is not None and n.image.size[0]]
+    if bsdf is None or not textures:
+        return {"made": False, "why": "no principled BSDF or colour map on the head"}
+    colour = max(textures, key=lambda n: n.image.size[0] * n.image.size[1]).image
+    w, h = colour.size
+    px = np.empty(w * h * 4, dtype=np.float32)
+    colour.pixels.foreach_get(px)
+    rgb = px.reshape(h, w, 4)[:, :, :3]
+    lum = rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+
+    def blur(a: np.ndarray, r: int) -> np.ndarray:  # a box blur twice over, about a Gaussian of r
+        for _ in range(2):
+            for axis in (0, 1):
+                c = np.cumsum(
+                    np.pad(a, [(r + 1, r) if ax == axis else (0, 0) for ax in (0, 1)], mode="edge"), axis=axis
+                )
+                a = (
+                    np.take(c, range(2 * r + 1, c.shape[axis]), axis=axis)
+                    - np.take(c, range(0, c.shape[axis] - 2 * r - 1), axis=axis)
+                ) / (2 * r + 1)
+        return a
+
+    detail = lum - blur(lum, radius)
+    height = np.clip(detail / (detail.std() + 1e-6), -3, 3)
+    gy, gx = np.gradient(height)  # rows run up the image in Blender's pixel order: gy is +V, as OpenGL's +Y
+    n = np.dstack([-gx * strength, -gy * strength, np.ones_like(height)])
+    n /= np.linalg.norm(n, axis=2, keepdims=True)
+    rough = np.clip(0.62 - 0.05 * height, 0.4, 0.85)
+    report = {"made": True, "source": colour.name, "size": [w, h]}
+    for name, data in (
+        ("skin_detail_normal", n * 0.5 + 0.5),
+        ("skin_detail_roughness", np.dstack([rough, rough, rough])),
+    ):
+        image = bpy.data.images.new(name, w, h, alpha=False)
+        image.colorspace_settings.name = "Non-Color"
+        image.pixels.foreach_set(np.dstack([data, np.ones((h, w, 1))]).astype(np.float32).ravel())
+        image["argus_baked"] = True  # fit_textures leaves it: already sized, and not colour
+        path = os.path.join(workdir, f"{name}.jpg")
+        image.filepath_raw = path
+        image.file_format = "JPEG"
+        image.save(filepath=path, quality=92)
+        image.source = "FILE"
+        image.reload()
+        report[name] = path
+    normal_tex = nodes.new("ShaderNodeTexImage")
+    normal_tex.image = bpy.data.images["skin_detail_normal"]
+    normal_map = nodes.new("ShaderNodeNormalMap")
+    normal_map.name = SKIN_DETAIL
+    links.new(normal_tex.outputs["Color"], normal_map.inputs["Color"])
+    links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
+    rough_tex = nodes.new("ShaderNodeTexImage")
+    rough_tex.image = bpy.data.images["skin_detail_roughness"]
+    split = nodes.new("ShaderNodeSeparateColor")
+    links.new(rough_tex.outputs["Color"], split.inputs["Color"])
+    links.new(split.outputs["Green"], bsdf.inputs["Roughness"])  # glTF reads roughness from green
+    return report
+
+
+def wet_line(head, eyes, *, columns: int = 14, width_m: float = 0.0012, lift_m: float = 0.00015) -> dict:
+    """A thin strip along each lower lid where it meets the eye: the tear line that makes an eye look wet.
+
+    MakeHuman's lids are not an opening in the mesh (the skin folds over the margin into the socket),
+    and its eye is not one sphere to measure from. So the margin is found as the camera sees it: in
+    columns across each eye, rays cast straight at the face from the front, stepping down from the
+    pupil; the first that meets skin before eye marks the lower lid. The strip lies on the eye from
+    there a little way up, just off its surface, and each strip vertex moves under every shape key
+    with the skin triangle at the margin, so it blinks and squints with the lid. It is its own object,
+    named for the viewer to give it a wet, fading material.
+    """
+    from mathutils.geometry import barycentric_transform  # noqa: PLC0415 - Blender's own
+
+    head_co = key_coords(head)
+    eye_co = key_coords(eyes)
+    keys = [k.name for k in head.data.shape_keys.key_blocks[1:]] if head.data.shape_keys else []
+    key_delta = {k: key_coords(head, k) - head_co for k in keys}
+    head.data.calc_loop_triangles()
+    tris = [tuple(t.vertices) for t in head.data.loop_triangles]
+    skin = BVHTree.FromPolygons([tuple(v) for v in head_co.tolist()], tris)
+    eye_tris = []
+    eyes.data.calc_loop_triangles()
+    eye_tris = [tuple(t.vertices) for t in eyes.data.loop_triangles]
+    eye = BVHTree.FromPolygons([tuple(v) for v in eye_co.tolist()], eye_tris)
+    ahead = Vector((0.0, 1.0, 0.0))  # from the camera into the face: the face looks down -Y
+    front = float(head_co[:, 1].min()) - 0.05
+
+    def first_hit(x: float, z: float):
+        """What a ray from the front meets first at (x, z): 'eye', 'skin' or None, and where."""
+        o = Vector((x, front, z))
+        e = eye.ray_cast(o, ahead, 1.0)
+        k = skin.ray_cast(o, ahead, 1.0)
+        if e[0] is None and k[0] is None:
+            return None, None
+        if k[0] is None or (e[0] is not None and e[3] < k[3]):
+            return "eye", e
+        return "skin", k
+
+    verts, faces, uvs, anchors = [], [], [], []  # anchors: per strip vertex, (triangle, barycentric weights)
+    report = {}
+    for side in (1, -1):
+        mine = eye_co[np.sign(eye_co[:, 0]) == side]
+        if len(mine) < 64:
+            continue
+        pupil = mine[np.argmin(mine[:, 1])]  # the eye's frontmost point
+        half = (mine[:, 0].max() - mine[:, 0].min()) / 2
+        row = []
+        for x in np.linspace(pupil[0] - half * 0.85, pupil[0] + half * 0.85, columns):
+            # down from the pupil's height while the eye shows; the first skin is the lower lid
+            z, seen, last_eye = pupil[2], False, None
+            while z > pupil[2] - 0.02:
+                what, hit = first_hit(x, z)
+                if what == "eye":
+                    seen, last_eye = True, hit
+                elif what == "skin" and seen:
+                    break
+                z -= 0.0002
+            else:
+                continue  # never saw the eye here, or never reached the lid
+            if not seen or what != "skin":
+                continue
+            row.append((x, z, hit, last_eye))
+        if len(row) < 4:
+            report[side] = "lid margin not found"
+            continue
+        start = len(verts)
+        for n, (x, z, lid, above) in enumerate(row):
+            # the margin, pushed back onto the eye's surface depth there; and the eye a little way up
+            low = Vector((x, above[0].y, z)) - ahead * lift_m
+            up_hit = eye.ray_cast(Vector((x, front, z + width_m)), ahead, 1.0)
+            high = (up_hit[0] if up_hit[0] is not None else Vector((x, above[0].y, z + width_m))) - ahead * lift_m
+            tri = tris[lid[2]]
+            a, b, c = (Vector(head_co[i]) for i in tri)
+            weights = barycentric_transform(lid[0], a, b, c, Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1)))
+            for p in (low, high):
+                verts.append(np.array(p))
+                anchors.append((tri, (weights.x, weights.y, weights.z)))
+            u = n / (len(row) - 1)
+            uvs += [(u, 0.0), (u, 1.0)]
+        for n in range(len(row) - 1):
+            a = start + 2 * n
+            faces.append((a, a + 2, a + 3, a + 1))
+        report[side] = len(row)
+    if not faces:
+        return {"made": False, "sides": report}
+    mesh = bpy.data.meshes.new(WET_LINE)
+    mesh.from_pydata([tuple(v) for v in verts], [], faces)
+    layer = mesh.uv_layers.new(name="UVMap")
+    for poly in mesh.polygons:
+        for li in poly.loop_indices:
+            layer.data[li].uv = uvs[mesh.loops[li].vertex_index]
+    obj = bpy.data.objects.new(WET_LINE, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    basis = np.array(verts)
+    obj.shape_key_add(name="Basis", from_mix=False)
+    corner = np.array([a[0] for a in anchors])  # (n, 3) vertex indices
+    weight = np.array([a[1] for a in anchors])[:, :, None]  # (n, 3, 1)
+    for k in keys:
+        delta = (key_delta[k][corner] * weight).sum(axis=1)
+        if np.abs(delta).max() < 1e-7:
+            continue  # this shape does not move the lids
+        block = obj.shape_key_add(name=k, from_mix=False)
+        block.data.foreach_set("co", (basis + delta).astype(np.float32).ravel())
+    material = bpy.data.materials.new(WET_LINE)
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:  # for any glTF viewer: a faint, glossy film; the argus viewer fades it across
+        bsdf.inputs["Base Color"].default_value = (0.92, 0.78, 0.76, 1.0)
+        bsdf.inputs["Roughness"].default_value = 0.05
+        bsdf.inputs["Alpha"].default_value = 0.35
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    elif hasattr(material, "blend_method"):
+        material.blend_method = "BLEND"
+    obj.data.materials.append(material)
+    return {"made": True, "sides": report, "object": obj}
+
+
 def part_images(obj) -> set:
     """The images *obj*'s materials read."""
     found = set()
@@ -403,7 +596,7 @@ def drop_normal_maps() -> None:
         if not material.node_tree:
             continue
         for node in list(material.node_tree.nodes):
-            if node.type == "NORMAL_MAP":
+            if node.type == "NORMAL_MAP" and node.name != SKIN_DETAIL:
                 material.node_tree.nodes.remove(node)
 
 
@@ -427,6 +620,9 @@ def fit_textures(max_px: int, max_alpha_px: int, workdir: str, gains: dict | Non
     scene.view_settings.view_transform = "Standard"  # save_render must not grade the texture
     report = []
     for image in sorted(used_images(), key=lambda i: i.name):
+        if image.get("argus_baked"):
+            report.append({"source": image.name, "size": list(image.size), "format": "JPEG", "baked": True})
+            continue
         width, height = image.size
         if not width or not height:
             continue
@@ -605,13 +801,16 @@ def build(preset: dict, out: str) -> dict:
         mouth_report["shade"] = shade_mouth(
             basemesh, parts.get("teeth"), parts.get("tongue"), float(mouth["cavity_shade"])
         )
+    wet = wet_line(basemesh, parts["eyes"]) if "eyes" in parts else {"made": False}
+    if wet.get("made"):
+        objects.append(wet.pop("object"))
     for obj in objects:
         for polygon in obj.data.polygons:
             polygon.use_smooth = True
 
     counts = {obj.name: triangles(obj) for obj in objects}
     total = sum(counts.values())
-    budget = int(preset.get("max_triangles", 35000))
+    budget = int(preset.get("max_triangles", 45000))
     if total > budget:
         raise RecipeError(f"{total} triangles is over the budget of {budget}: {counts}")
 
@@ -620,11 +819,12 @@ def build(preset: dict, out: str) -> dict:
     }
     still = [kind for kind in MOVING_PARTS if kind in parts and not shapes[kind]]
 
-    drop_normal_maps()
     # The shrunk textures only live until the exporter has packed them into the .glb: the editor runs
     # this for every build, so they must not pile up in the temp directory.
     workdir = tempfile.mkdtemp(prefix="argus-mask-head-")
     try:
+        skin_maps = bake_skin_maps(basemesh, workdir)
+        drop_normal_maps()
         max_px = int(preset.get("max_texture_px", 2048))
         gains = {
             image: float(gain)
@@ -639,7 +839,7 @@ def build(preset: dict, out: str) -> dict:
             if kind in parts
             for slot in parts[kind].material_slots
             if slot.material
-        }
+        } | {WET_LINE}  # a film, not a cut-out
 
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
         bpy.ops.export_scene.gltf(
@@ -682,6 +882,8 @@ def build(preset: dict, out: str) -> dict:
         "shapes": {name: len(names) for name, names in shapes.items()},
         "parts_without_shapes": still,
         "mouth": mouth_report,
+        "wet_line": {str(k): v for k, v in (wet.get("sides") or {}).items()},
+        "skin_maps": {k: v for k, v in skin_maps.items() if k in ("made", "why", "source", "size")},
         "shape_scale": shape_scale,
         "textures": textures,
         "materials": [
