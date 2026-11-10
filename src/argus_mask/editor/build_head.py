@@ -57,41 +57,12 @@ CLOTHES = "clothes"
 MOVING_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue")
 PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", "cupsize", "firmness")
 RACE_KEYS = ("asian", "caucasian", "african")
-# Modelling targets a preset may set under ``targets``, from -1 to +1: base name, and the suffixes of
-# the negative and positive files under MPFB's data/targets/<group>/. ("", "") is a one-way target, one
-# file named as the target, from 0 to 1. The editor's preset.py holds the same table.
-MODIFIERS = {
-    # Lips
-    "mouth-upperlip-volume": ("decr", "incr"),
-    "mouth-lowerlip-volume": ("decr", "incr"),
-    "mouth-upperlip-height": ("decr", "incr"),
-    "mouth-lowerlip-height": ("decr", "incr"),
-    "mouth-scale-horiz": ("decr", "incr"),
-    "mouth-cupidsbow": ("decr", "incr"),
-    "mouth-angles": ("down", "up"),
-    "mouth-philtrum-volume": ("decr", "incr"),
-    # Face shape: one-way, 0 to 1
-    "head-square": ("", ""),
-    "head-round": ("", ""),
-    "head-oval": ("", ""),
-    "head-invertedtriangular": ("", ""),
-    "head-diamond": ("", ""),
-    # Chin and jaw
-    "chin-bones": ("decr", "incr"),
-    "chin-width": ("decr", "incr"),
-    "chin-height": ("decr", "incr"),
-    "chin-prominent": ("decr", "incr"),
-    "chin-triangle": ("", ""),
-    # Nose
-    "nose-volume": ("decr", "incr"),
-    "nose-scale-horiz": ("decr", "incr"),
-    "nose-scale-vert": ("decr", "incr"),
-    "nose-scale-depth": ("decr", "incr"),
-    "nose-point-width": ("decr", "incr"),
-    "nose-point": ("down", "up"),
-    "nose-hump": ("decr", "incr"),
-    "nose-flaring": ("decr", "incr"),
-}
+# Modelling targets a preset may set under ``targets``: the allow-list in modifiers.json beside this
+# script (generated from MPFB's catalogue by scripts/make_modifiers.py; the editor reads the same file).
+# Each names its negative and positive files under MPFB's data/targets; one with no negative files is
+# one-way, 0 to 1. Two-way ones go from -1 to +1.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "modifiers.json"), encoding="utf-8") as _fh:
+    MODIFIERS = {m["name"]: m for m in json.load(_fh)["modifiers"]}
 
 
 class RecipeError(Exception):
@@ -142,7 +113,7 @@ def load_preset(path: str) -> dict:
     for name, value in shaping.items():
         if name not in MODIFIERS:
             raise RecipeError(f"{path}: targets.{name} is not one of {', '.join(MODIFIERS)}")
-        low = 0.0 if MODIFIERS[name] == ("", "") else -1.0
+        low = -1.0 if MODIFIERS[name]["negative"] else 0.0
         if not isinstance(value, (int, float)) or not low <= value <= 1.0:
             raise RecipeError(f"{path}: targets.{name} must be between {low:g} and 1")
     return preset
@@ -188,12 +159,12 @@ def apply_modifiers(mpfb, targets, basemesh, values: dict) -> dict[str, float]:
         value = float(value)
         if value == 0.0:
             continue
-        negative, positive = MODIFIERS[name]
-        target = name if (negative, positive) == ("", "") else f"{name}-{positive if value > 0 else negative}"
-        path = os.path.join(root, name.split("-", 1)[0], f"{target}.target.gz")
-        if not os.path.isfile(path):
-            raise RecipeError(f"MPFB has no target {target!r} (looked for {path})")
-        targets.load_target(basemesh, path, weight=abs(value), name=target)
+        files = MODIFIERS[name]["positive" if value > 0 else "negative"]
+        for fragment in files:
+            path = os.path.join(root, *fragment.split("/")) + ".target.gz"
+            if not os.path.isfile(path):
+                raise RecipeError(f"MPFB has no target {fragment!r} (looked for {path})")
+            targets.load_target(basemesh, path, weight=abs(value), name=os.path.basename(fragment))
         applied[name] = value
     return applied
 

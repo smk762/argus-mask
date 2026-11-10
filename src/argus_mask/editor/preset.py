@@ -8,6 +8,8 @@ committed stock presets.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -32,42 +34,19 @@ PART_DIRS: dict[str, str] = {
 OPTIONAL_PARTS = ("hair",)
 CLOTHES_DIR = "clothes"
 MAX_CLOTHES = 3
-# MakeHuman modelling targets a preset may set: the target's base name, and the suffixes of the files
-# for the negative and the positive direction (-1 to +1). ("", "") is a one-way target, a single file
-# named as the target, from 0 to 1. CC0, bundled with MPFB. A fixed list: a preset cannot name any
-# other file. build_head.py holds the same table (a test keeps them equal).
-MODIFIERS: dict[str, tuple[str, str]] = {
-    # Lips
-    "mouth-upperlip-volume": ("decr", "incr"),
-    "mouth-lowerlip-volume": ("decr", "incr"),
-    "mouth-upperlip-height": ("decr", "incr"),
-    "mouth-lowerlip-height": ("decr", "incr"),
-    "mouth-scale-horiz": ("decr", "incr"),
-    "mouth-cupidsbow": ("decr", "incr"),
-    "mouth-angles": ("down", "up"),
-    "mouth-philtrum-volume": ("decr", "incr"),
-    # Face shape: one-way, 0 to 1
-    "head-square": ("", ""),
-    "head-round": ("", ""),
-    "head-oval": ("", ""),
-    "head-invertedtriangular": ("", ""),
-    "head-diamond": ("", ""),
-    # Chin and jaw
-    "chin-bones": ("decr", "incr"),
-    "chin-width": ("decr", "incr"),
-    "chin-height": ("decr", "incr"),
-    "chin-prominent": ("decr", "incr"),
-    "chin-triangle": ("", ""),
-    # Nose
-    "nose-volume": ("decr", "incr"),
-    "nose-scale-horiz": ("decr", "incr"),
-    "nose-scale-vert": ("decr", "incr"),
-    "nose-scale-depth": ("decr", "incr"),
-    "nose-point-width": ("decr", "incr"),
-    "nose-point": ("down", "up"),
-    "nose-hump": ("decr", "incr"),
-    "nose-flaring": ("decr", "incr"),
-}
+# MakeHuman modelling targets a preset may set (CC0, bundled with MPFB): the allow-list in
+# modifiers.json, generated from MPFB's own catalogue by scripts/make_modifiers.py. build_head.py reads
+# the same file. A preset cannot name any other target, and so no other file.
+_CATALOGUE = json.loads(Path(__file__).with_name("modifiers.json").read_text(encoding="utf-8"))
+MODIFIERS: dict[str, dict] = {m["name"]: m for m in _CATALOGUE["modifiers"]}
+MODIFIER_GROUPS: dict[str, str] = _CATALOGUE["groups"]
+
+
+def one_way(name: str) -> bool:
+    """A target with no opposite: 0 to 1, not -1 to +1."""
+    return not MODIFIERS[name]["negative"]
+
+
 # An asset reference: <part directory>/<asset>/<asset>.<mhmat|mhclo>. No dot-leading names, so no "..".
 ASSET_REF = r"^[a-z]+/[A-Za-z0-9][A-Za-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9_-]*\.(mhmat|mhclo)$"
 
@@ -158,7 +137,7 @@ class Preset(_Strict):
     @classmethod
     def _one_way_targets_are_not_negative(cls, value: dict[str, float]) -> dict[str, float]:
         for name, weight in value.items():
-            if MODIFIERS[name] == ("", "") and weight < 0:
+            if one_way(name) and weight < 0:
                 raise ValueError(f"{name} goes from 0 to 1")
         return value
 

@@ -4,6 +4,7 @@ import ast
 import asyncio
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from starlette.testclient import TestClient
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.editor.builder import SCRIPT, Builder, BuildError, Busy
 from argus_mask.editor.library import AssetLibrary
-from argus_mask.editor.preset import ADULT_AGE, MODIFIERS, Preset
+from argus_mask.editor.preset import ADULT_AGE, MODIFIER_GROUPS, MODIFIERS, Preset, one_way
 from argus_mask.faces import FaceStore
 from argus_mask.server.app import create_app
 from tests.helpers import make_face, make_glb
@@ -154,7 +155,22 @@ def calls(rig) -> list[dict]:
 
 
 def leftovers(assets: Path) -> list[str]:
-    return [p.name for p in assets.iterdir() if p.name.startswith(".")]
+    """Half-made builds or exports: dot-directories other than the preview area, in either place."""
+    found = [p.name for p in assets.iterdir() if p.name.startswith(".") and p.name != ".preview"]
+    preview = assets / ".preview"
+    return found + ([p.name for p in preview.iterdir() if p.name.startswith(".")] if preview.is_dir() else [])
+
+
+def nothing_built(assets: Path) -> bool:
+    preview = assets / ".preview"
+    return [p.name for p in assets.iterdir() if p.name != ".preview"] == [] and (
+        not preview.is_dir() or list(preview.iterdir()) == []
+    )
+
+
+def served(assets: Path) -> list[str]:
+    with TestClient(create_app(Settings(assets_dir=assets))) as server:
+        return [f["id"] for f in server.get("/faces").json()]
 
 
 # ---- the preset ----------------------------------------------------------------------------
@@ -175,21 +191,30 @@ def test_the_editor_and_the_recipe_agree_on_the_adult_line() -> None:
     assert values == [ADULT_AGE]
 
 
-def test_the_editor_and_the_recipe_offer_the_same_targets() -> None:
-    tree = ast.parse(SCRIPT.read_text())
-    [table] = [
-        ast.literal_eval(node.value)
-        for node in tree.body
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "MODIFIERS" for t in node.targets)
-    ]
-    assert table == MODIFIERS
+def test_the_target_catalogue_is_well_formed() -> None:
+    names = list(MODIFIERS)
+    assert len(names) == len(set(names)) > 100
+    for m in MODIFIERS.values():
+        assert m["positive"] and m["group"] in MODIFIER_GROUPS and m["label"]
+        for fragment in m["negative"] + m["positive"]:
+            group, stem = fragment.split("/")
+            assert group == m["group"] and re.fullmatch(r"[a-z0-9][a-z0-9-]*", stem)
+    assert one_way("head-square") and not one_way("chin-width")
+
+
+def test_the_recipe_reads_the_same_catalogue() -> None:
+    assert '"modifiers.json"' in SCRIPT.read_text()
+    assert (SCRIPT.parent / "modifiers.json").is_file()
 
 
 def test_targets_are_named_from_the_list_and_bounded() -> None:
     assert Preset.model_validate(preset(targets={"mouth-upperlip-volume": 0.4})).targets == {
         "mouth-upperlip-volume": 0.4
     }
-    assert Preset.model_validate(preset(targets={"head-square": 0.7, "nose-point": -0.3})).targets["head-square"] == 0.7
+    assert (
+        Preset.model_validate(preset(targets={"head-square": 0.7, "nose-point-down-up": -0.3})).targets["head-square"]
+        == 0.7
+    )
     for bad in [
         {"mouth-upperlip-volume": 1.5},
         {"../../etc/passwd": 0.5},
@@ -259,7 +284,7 @@ def test_an_unconfigured_library_is_empty() -> None:
 # ---- building ------------------------------------------------------------------------------
 
 
-def test_a_build_becomes_a_face_the_server_serves(client, rig) -> None:
+def test_a_build_is_a_preview_and_export_makes_it_a_face(client, rig) -> None:
     reply = client.post("/build", json=preset())
     assert reply.status_code == 200, reply.text
     manifest = reply.json()["manifest"]
@@ -268,13 +293,8 @@ def test_a_build_becomes_a_face_the_server_serves(client, rig) -> None:
     assert "hair h1" in manifest["provenance"]["notes"] and "not a real person" in manifest["provenance"]["notes"]
     assert len(manifest["blendshapes"]) == 52
 
-    face_dir = rig["assets"] / "my-face"
-    assert sorted(p.name for p in face_dir.iterdir()) == [
-        "head.glb",
-        "head.recipe.json",
-        "manifest.json",
-        "preset.json",
-    ]
+    files = ["head.glb", "head.recipe.json", "manifest.json", "preset.json"]
+    assert sorted(p.name for p in (rig["assets"] / ".preview" / "my-face").iterdir()) == files
     assert leftovers(rig["assets"]) == []
 
     # Blender got the recipe, the user directory and a non-zero exit on a Python error.
@@ -282,10 +302,54 @@ def test_a_build_becomes_a_face_the_server_serves(client, rig) -> None:
     assert call["argv"][:5] == ["-b", "--python-exit-code", "3", "-P", str(SCRIPT)]
     assert call["user"] == str(rig["editor"].blender_user)
 
-    with TestClient(create_app(Settings(assets_dir=rig["assets"]))) as server:
-        assert [f["id"] for f in server.get("/faces").json()] == ["my-face"]
-    assert [p["id"] for p in client.get("/presets").json()] == ["my-face"]
+    # A preview is the editor's, not the server's.
+    assert served(rig["assets"]) == []
     assert client.get("/face/my-face/model").content[:4] == b"glTF"
+    assert client.get("/presets").json() == [
+        {"preset": client.get("/presets").json()[0]["preset"], "exported": False, "previewed": True}
+    ]
+
+    reply = client.post("/export/my-face")
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["manifest"]["model"]["sha256"] == manifest["model"]["sha256"]
+    assert sorted(p.name for p in (rig["assets"] / "my-face").iterdir()) == files
+    assert served(rig["assets"]) == ["my-face"]
+    [entry] = client.get("/presets").json()
+    assert entry["exported"] and entry["previewed"] and entry["preset"]["id"] == "my-face"
+    assert leftovers(rig["assets"]) == []
+
+
+def test_export_again_replaces_the_editors_own_export(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    assert client.post("/build", json=preset(name="Renamed")).status_code == 200
+    assert FaceStore(rig["assets"]).load("my-face")[0].name == "My face"  # a rebuild leaves the export alone
+    assert client.post("/export/my-face").status_code == 200
+    assert FaceStore(rig["assets"]).load("my-face")[0].name == "Renamed"
+    assert leftovers(rig["assets"]) == []
+
+
+@pytest.mark.parametrize("face_id", ["nothing-here", "..", "Bad Id"])
+def test_export_needs_a_finished_preview(client, rig, face_id) -> None:
+    # ".." never reaches the route: the client resolves /export/.. to /, which only takes GET.
+    assert client.post(f"/export/{face_id}").status_code in (404, 405)
+    assert nothing_built(rig["assets"])
+
+
+def test_export_never_replaces_a_face_the_editor_did_not_make(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    make_face(rig["assets"], "my-face")  # put there by hand after the build
+    before = (rig["assets"] / "my-face" / "manifest.json").read_text()
+    reply = client.post("/export/my-face")
+    assert reply.status_code == 409 and "did not make" in reply.json()["detail"]
+    assert (rig["assets"] / "my-face" / "manifest.json").read_text() == before
+    assert leftovers(rig["assets"]) == []
+
+
+def test_export_is_a_guarded_write(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face", headers={"Origin": "https://elsewhere.example"}).status_code == 403
+    assert served(rig["assets"]) == []
 
 
 def test_a_cc_by_asset_is_in_the_licence(client) -> None:
@@ -303,7 +367,7 @@ def test_clothes_go_into_the_build_and_the_credits(client, rig) -> None:
     assert reply.status_code == 200, reply.text
     notes = reply.json()["manifest"]["provenance"]["notes"]
     assert "clothes top1 (clothes, makehuman_system, CC0-1.0)" in notes and "clothes hat1" in notes
-    sent = json.loads((rig["assets"] / "my-face" / "preset.json").read_text())
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
     assert sent["assets"]["clothes"] == body["assets"]["clothes"]
 
 
@@ -317,10 +381,10 @@ def test_clothes_not_in_the_library_never_reach_blender(client, rig, ref) -> Non
 
 
 def test_targets_reach_the_recipe_and_the_credits(client, rig) -> None:
-    body = preset(targets={"mouth-upperlip-volume": 0.4, "mouth-angles": -0.25})
+    body = preset(targets={"mouth-upperlip-volume": 0.4, "mouth-angles-down-up": -0.25})
     manifest = client.post("/build", json=body).json()["manifest"]
-    assert "mouth-angles -0.25, mouth-upperlip-volume +0.40" in manifest["provenance"]["notes"]
-    sent = json.loads((rig["assets"] / "my-face" / "preset.json").read_text())
+    assert "mouth-angles-down-up -0.25, mouth-upperlip-volume +0.40" in manifest["provenance"]["notes"]
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
     assert sent["targets"] == body["targets"]
 
 
@@ -343,7 +407,7 @@ def test_the_recipe_refusing_is_reported_and_leaves_nothing(client, rig, monkeyp
     monkeypatch.setenv("FAKE_BLENDER", "refuse")
     reply = client.post("/build", json=preset())
     assert reply.status_code == 422 and reply.json()["detail"] == "phenotype.age is too young"
-    assert list(rig["assets"].iterdir()) == []
+    assert nothing_built(rig["assets"])
 
 
 @pytest.mark.parametrize("mode", ["crash", "silent"])
@@ -351,22 +415,22 @@ def test_a_failed_build_leaves_nothing(client, rig, monkeypatch, mode) -> None:
     monkeypatch.setenv("FAKE_BLENDER", mode)
     reply = client.post("/build", json=preset())
     assert reply.status_code == 500
-    assert list(rig["assets"].iterdir()) == []
+    assert nothing_built(rig["assets"])
 
 
 def test_a_failed_rebuild_keeps_the_face_that_was_there(client, rig, monkeypatch) -> None:
     assert client.post("/build", json=preset()).status_code == 200
     monkeypatch.setenv("FAKE_BLENDER", "crash")
     assert client.post("/build", json=preset()).status_code == 500
-    assert FaceStore(rig["assets"]).load("my-face")[0].id == "my-face"
+    assert FaceStore(rig["assets"] / ".preview").load("my-face")[0].id == "my-face"
     assert leftovers(rig["assets"]) == []
 
 
-def test_a_rebuild_replaces_the_editors_own_face(client, rig) -> None:
+def test_a_rebuild_replaces_the_preview(client, rig) -> None:
     assert client.post("/build", json=preset()).status_code == 200
     reply = client.post("/build", json=preset(name="Renamed"))
     assert reply.status_code == 200 and reply.json()["manifest"]["name"] == "Renamed"
-    assert FaceStore(rig["assets"]).load("my-face")[0].name == "Renamed"
+    assert FaceStore(rig["assets"] / ".preview").load("my-face")[0].name == "Renamed"
     assert leftovers(rig["assets"]) == []
 
 
@@ -392,6 +456,7 @@ def test_a_read_only_editor_does_not_build(rig) -> None:
     app = create_editor_app(Settings(assets_dir=rig["assets"], read_only=True), rig["editor"])
     with TestClient(app) as c:
         assert c.post("/build", json=preset()).status_code == 403
+        assert c.post("/export/my-face").status_code == 403
         assert c.get("/health").json()["read_only"] is True
     assert calls(rig) == []
 
@@ -419,6 +484,15 @@ def test_library_routes(client) -> None:
     assert [a["slot"] for a in library["clothes"]] == ["hat", "outfit"]
     for bad in ["/library/hair/rogue/thumb", "/library/nope/h1/thumb", "/library/hair/..%2F..%2Fpacks/thumb"]:
         assert client.get(bad).status_code == 404
+
+
+def test_the_modifiers_route_lists_the_catalogue(client) -> None:
+    body = client.get("/modifiers").json()
+    assert list(body["groups"]) == list(MODIFIER_GROUPS)
+    by_name = {m["name"]: m for m in body["modifiers"]}
+    assert len(by_name) == len(MODIFIERS)
+    assert by_name["head-square"]["min"] == 0.0 and by_name["chin-width"]["min"] == -1.0
+    assert "negative" not in by_name["chin-width"]  # file paths stay on the server
 
 
 def test_the_page_and_three_are_served(client) -> None:
@@ -459,7 +533,7 @@ async def test_a_build_that_hangs_is_stopped(rig, monkeypatch) -> None:
     builder = builder_for(rig, timeout_s=0.5)
     with pytest.raises(BuildError, match="was stopped"):
         await builder.build(Preset.model_validate(preset()))
-    assert not builder.busy and list(rig["assets"].iterdir()) == []
+    assert not builder.busy and nothing_built(rig["assets"])
 
 
 def test_editor_settings_from_env(monkeypatch, tmp_path) -> None:

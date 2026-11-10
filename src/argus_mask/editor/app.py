@@ -3,9 +3,11 @@
 ``GET  /health``                        whether a build can run, and why not; whether one is running
 ``GET  /library``                       the installed, licensed assets, by part (and ``clothes``, with a ``slot``)
 ``GET  /library/{part}/{name}/thumb``   an asset's thumbnail (PNG)
-``GET  /presets``                       the presets behind the faces the editor made
-``POST /build``                         build a preset into a face; answers when it is done (about 10 s)
-``GET  /face/{id}``, ``/face/{id}/model``  a face the editor made, for the preview
+``GET  /modifiers``                     the shape sliders a preset may set (MakeHuman targets), by group
+``GET  /presets``                       the faces the editor made: each preset, and whether it is previewed, exported
+``POST /build``                         build a preset into a preview; answers when it is done (about 10 s)
+``POST /export/{id}``                   copy a preview into the assets root, where the server serves it
+``GET  /face/{id}``, ``/face/{id}/model``  a face the editor made (its preview, else its export), for the page
 ``GET  /``                              the editor page
 
 ``POST /build`` starts Blender, so it is behind the same origin and read-only
@@ -25,9 +27,9 @@ from fastapi.staticfiles import StaticFiles
 
 from argus_mask import __version__
 from argus_mask.config import EditorSettings, Settings
-from argus_mask.editor.builder import Builder, BuildError, Busy, NotOwned, Refused
+from argus_mask.editor.builder import Builder, BuildError, Busy, NoPreview, NotOwned, Refused
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
-from argus_mask.editor.preset import PART_DIRS, Preset
+from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.faces import FaceError, FaceStore
 from argus_mask.models import FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards
@@ -51,6 +53,7 @@ def create_editor_app(
         timeout_s=ed.build_timeout_s,
     )
     store = FaceStore(cfg.assets_dir)
+    previews = FaceStore(builder.preview_dir)
     app = FastAPI(title="Argus Mask face editor", version=__version__)
     app.state.builder = builder
     install_guards(app, cfg)
@@ -77,17 +80,34 @@ def create_editor_app(
             raise HTTPException(404, "no thumbnail")
         return FileResponse(asset.thumb, media_type="image/png")
 
-    @app.get("/presets", response_model=list[Preset])
-    def presets() -> list[Preset]:
-        return builder.presets()
+    @app.get("/modifiers")
+    def modifiers() -> dict:
+        return {
+            "groups": MODIFIER_GROUPS,
+            "modifiers": [
+                {
+                    "name": m["name"],
+                    "group": m["group"],
+                    "label": m["label"],
+                    "min": 0.0 if one_way(m["name"]) else -1.0,
+                }
+                for m in MODIFIERS.values()
+            ],
+        }
+
+    @app.get("/presets")
+    def presets() -> list[dict]:
+        return [{**e, "preset": e["preset"].model_dump(mode="json", exclude_none=True)} for e in builder.presets()]
 
     def owned_face(face_id: str) -> tuple[FaceManifest, Path]:
-        if not builder.owned(face_id):
-            raise HTTPException(404, f"the editor made no face {face_id!r}")
-        try:
-            return store.load(face_id)
-        except FaceError as exc:
-            raise HTTPException(404, str(exc)) from exc
+        """The editor's preview of a face, else its exported copy. Never a face it did not make."""
+        for made, faces in ((builder.previewed, previews), (builder.owned, store)):
+            if made(face_id):
+                try:
+                    return faces.load(face_id)
+                except FaceError as exc:
+                    raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(404, f"the editor made no face {face_id!r}")
 
     @app.get("/face/{face_id}", response_model=FaceManifest)
     def face(face_id: str) -> FaceManifest:
@@ -119,6 +139,19 @@ def create_editor_app(
             "bytes": recipe.get("bytes"),
             "age_years": preset.age_years(),
         }
+
+    @app.post("/export/{face_id}")
+    async def export(face_id: str) -> dict:
+        try:
+            manifest = await builder.export(face_id)
+        except NoPreview as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (Busy, NotOwned) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (BuildError, OSError) as exc:
+            log.warning("export_failed", face=face_id, reason=str(exc))
+            raise HTTPException(500, f"export failed: {exc}") from exc
+        return {"manifest": manifest.model_dump(mode="json"), "path": f"{cfg.assets_dir / face_id}"}
 
     # three.js is the viewer's vendored copy: one copy in the package.
     app.mount("/vendor", StaticFiles(directory=VIEWER_DIR / "vendor"), name="vendor")

@@ -1,10 +1,19 @@
-// The face editor: a form that writes a preset, POST /build, and a preview of the face it made.
+// The face editor: panels that write a preset, POST /build, and a preview of the face it made.
 // Everything the server sends is put on the page as text, never as HTML.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 
 const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+const store = {  // per-browser conveniences only; the page works without them
+  get(key, fallback) { try { return JSON.parse(localStorage.getItem(`mask-editor.${key}`)) ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(`mask-editor.${key}`, JSON.stringify(value)); } catch { /* private window */ } },
+};
 
 // stock-02's recipe: a sensible starting point, and the mouth settings both stock heads use.
 const DEFAULT = {
@@ -22,8 +31,9 @@ const DEFAULT = {
     teeth: 'teeth/teeth_base/teeth_base.mhclo',
     tongue: 'tongue/tongue01/tongue01.mhclo',
     hair: 'hair/short02/short02.mhclo',
-    clothes: ['clothes/female_casualsuit01/female_casualsuit01.mhclo'],
+    clothes: ['clothes/thegreatengineer_galactic_warrior_uniform/thegreatengineer_galactic_warrior_uniform.mhclo'],
   },
+  targets: {},
   bust: { height_m: 0.4, half_width_m: 0.23 },
   mouth: { tongue_flatten: 0.6, tongue_drop_mm: 0.0, upper_teeth_drop_mm: 2.5, cavity_shade: 0.02 },
   shape_scale: { mouthPucker: 1.5 },
@@ -34,72 +44,42 @@ const DEFAULT = {
   max_triangles: 30000,
 };
 
-const PARTS = [
-  ['skin', 'Skin'], ['hair', 'Hair'], ['eyebrows', 'Eyebrows'], ['eyelashes', 'Eyelashes'],
-  ['eyes', 'Eyes'], ['teeth', 'Teeth'], ['tongue', 'Tongue'],
-];
-const OPTIONAL = new Set(['hair']);
-
-// [path in the preset, label, min, max, step, how to show the value]
+const fixed = (v) => Number(v).toFixed(2);
+const signed = (v) => (v > 0 ? '+' : '') + fixed(v);
 const years = (a) => `${Math.round(25 + 130 * (a - 0.5))} y`;
-const SLIDERS = [
-  ['phenotype.gender', 'Female – male', 0, 1, 0.01],
-  ['phenotype.age', 'Age', 0.5, 1, 0.005, years],
-  ['phenotype.muscle', 'Muscle', 0, 1, 0.01],
-  ['phenotype.weight', 'Weight', 0, 1, 0.01],
-  ['phenotype.proportions', 'Proportions', 0, 1, 0.01],
-  ['phenotype.race.african', 'African', 0, 1, 0.01],
-  ['phenotype.race.asian', 'Asian', 0, 1, 0.01],
-  ['phenotype.race.caucasian', 'Caucasian', 0, 1, 0.01],
-];
-// MakeHuman modelling targets, -1 to +1 (preset.targets; the server holds the same list).
-const signed = (v) => (v > 0 ? '+' : '') + Number(v).toFixed(2);
-const LIPS = [
-  ['targets.mouth-upperlip-volume', 'Upper lip fullness', -1, 1, 0.05, signed],
-  ['targets.mouth-lowerlip-volume', 'Lower lip fullness', -1, 1, 0.05, signed],
-  ['targets.mouth-upperlip-height', 'Upper lip height', -1, 1, 0.05, signed],
-  ['targets.mouth-lowerlip-height', 'Lower lip height', -1, 1, 0.05, signed],
-  ['targets.mouth-scale-horiz', 'Mouth width', -1, 1, 0.05, signed],
-  ['targets.mouth-cupidsbow', "Cupid's bow", -1, 1, 0.05, signed],
-  ['targets.mouth-angles', 'Corners down – up', -1, 1, 0.05, signed],
-  ['targets.mouth-philtrum-volume', 'Philtrum', -1, 1, 0.05, signed],
-];
-const unit = (v) => Number(v).toFixed(2);
-const FACE = [
-  ['targets.head-square', 'Square', 0, 1, 0.05, unit],
-  ['targets.head-round', 'Round', 0, 1, 0.05, unit],
-  ['targets.head-oval', 'Oval', 0, 1, 0.05, unit],
-  ['targets.head-invertedtriangular', 'Heart (narrow chin)', 0, 1, 0.05, unit],
-  ['targets.head-diamond', 'Diamond', 0, 1, 0.05, unit],
-];
-const CHIN = [
-  ['targets.chin-bones', 'Jaw width', -1, 1, 0.05, signed],
-  ['targets.chin-width', 'Chin width', -1, 1, 0.05, signed],
-  ['targets.chin-height', 'Chin height', -1, 1, 0.05, signed],
-  ['targets.chin-prominent', 'Chin forward', -1, 1, 0.05, signed],
-  ['targets.chin-triangle', 'Pointed chin', 0, 1, 0.05, unit],
-];
-const NOSE = [
-  ['targets.nose-volume', 'Size', -1, 1, 0.05, signed],
-  ['targets.nose-scale-horiz', 'Width', -1, 1, 0.05, signed],
-  ['targets.nose-scale-vert', 'Length', -1, 1, 0.05, signed],
-  ['targets.nose-scale-depth', 'Projection', -1, 1, 0.05, signed],
-  ['targets.nose-point-width', 'Tip width', -1, 1, 0.05, signed],
-  ['targets.nose-point', 'Tip down – up', -1, 1, 0.05, signed],
-  ['targets.nose-hump', 'Bridge hump', -1, 1, 0.05, signed],
-  ['targets.nose-flaring', 'Nostril flare', -1, 1, 0.05, signed],
+// [path in the preset, label, min, max, step, how to show the value, the value it rests at]
+const BODY = [
+  ['phenotype.gender', 'Female – male', 0, 1, 0.01, fixed, 0],
+  ['phenotype.age', 'Age', 0.5, 1, 0.005, years, 0.5],
+  ['phenotype.muscle', 'Muscle', 0, 1, 0.01, fixed, 0.5],
+  ['phenotype.weight', 'Weight', 0, 1, 0.01, fixed, 0.5],
+  ['phenotype.proportions', 'Proportions', 0, 1, 0.01, fixed, 0.5],
+  ['phenotype.race.african', 'African', 0, 1, 0.01, fixed, 0.2],
+  ['phenotype.race.asian', 'Asian', 0, 1, 0.01, fixed, 0.2],
+  ['phenotype.race.caucasian', 'Caucasian', 0, 1, 0.01, fixed, 0.6],
 ];
 const ADVANCED = [
-  ['mouth.tongue_flatten', 'Tongue height', 0.2, 1, 0.05],
-  ['mouth.upper_teeth_drop_mm', 'Upper teeth ↓ mm', 0, 6, 0.1],
-  ['mouth.cavity_shade', 'Mouth shade', 0, 1, 0.01],
-  ['shape_scale.mouthPucker', 'Pucker ×', 0, 3, 0.05],
-  ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05],
-  ['bust.height_m', 'Bust height m', 0.2, 0.6, 0.01],
-  ['max_triangles', 'Triangle budget', 1000, 30000, 500, (v) => String(v)],
+  ['mouth.tongue_flatten', 'Tongue height', 0.2, 1, 0.05, fixed, 0.6],
+  ['mouth.upper_teeth_drop_mm', 'Upper teeth ↓ mm', 0, 6, 0.1, fixed, 2.5],
+  ['mouth.cavity_shade', 'Mouth shade', 0, 1, 0.01, fixed, 0.02],
+  ['shape_scale.mouthPucker', 'Pucker ×', 0, 3, 0.05, fixed, 1.5],
+  ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05, fixed, 1.3],
+  ['bust.height_m', 'Bust height m', 0.2, 0.6, 0.01, fixed, 0.4],
+  ['max_triangles', 'Triangle budget', 1000, 30000, 500, String, 30000],
 ];
+// Asset pickers: [key, title, library part, optional, clothes slot, enlarge on hover]
+const PICKERS = [
+  ['skin', 'Skin', 'skin', false, null, true], ['hair', 'Hair', 'hair', true, null, true],
+  ['outfit', 'Clothes', 'clothes', true, 'outfit', true], ['hat', 'Hat', 'clothes', true, 'hat', true],
+  ['eyebrows', 'Eyebrows', 'eyebrows', false], ['eyelashes', 'Eyelashes', 'eyelashes', false],
+  ['eyes', 'Eyeballs', 'eyes', false], ['teeth', 'Teeth', 'teeth', false], ['tongue', 'Tongue', 'tongue', false],
+];
+const OPEN_BY_DEFAULT = new Set(['body', 'skin', 'hair', 'outfit', 'm:head']);
 
 let preset = structuredClone(DEFAULT);
+let built = null;   // the preset of the face on show, as JSON, to say when the form has moved on
+let made = new Map(); // face id -> { exported, previewed }, from /presets
+let busy = false;
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
 function set(obj, path, value) {
   const keys = path.split('.');
@@ -124,136 +104,192 @@ async function json(url, options) {
   return body;
 }
 
-// ---- the form ------------------------------------------------------------------------------
+// ---- panels ----------------------------------------------------------------------------------
 
-function slider(container, [path, label, min, max, step, show]) {
-  const row = document.createElement('label');
-  row.className = 'row';
-  const name = document.createElement('span');
-  name.textContent = label;
-  const input = Object.assign(document.createElement('input'), { type: 'range', min, max, step });
-  const out = document.createElement('output');
-  const fmt = show || ((v) => Number(v).toFixed(2));
+const panels = [];   // { key, details, rows: [{ el, text }], changed() }
+const controls = []; // everything with a sync()
+let filterText = '';
+
+function panel(key, title, { reset } = {}) {
+  const open = store.get('open', {})[key] ?? OPEN_BY_DEFAULT.has(key);
+  const count = el('span', { className: 'count' });
+  const summary = el('summary', {}, el('span', { className: 'title', textContent: title }), count);
+  if (reset) {
+    const b = el('button', { type: 'button', className: 'small', textContent: 'reset', title: `Reset ${title.toLowerCase()}` });
+    b.addEventListener('click', (e) => { e.preventDefault(); reset(); syncForm(); });
+    summary.append(b);
+  }
+  const body = el('div', { className: 'body' });
+  const details = el('details', { className: 'panel', open }, summary, body);
+  details.addEventListener('toggle', () => {
+    if (filterText) return;  // the filter opens panels; that is not the user's choice to remember
+    const state = store.get('open', {});
+    state[key] = details.open;
+    store.set('open', state);
+  });
+  const entry = { key, title, details, body, countEl: count, rows: [], changed: () => 0 };
+  panels.push(entry);
+  $('panels').append(details);
+  return entry;
+}
+
+function slider(entry, [path, label, min, max, step, show = fixed, rest = min < 0 ? 0 : min]) {
+  const input = el('input', { type: 'range', min, max, step });
+  const out = el('output');
+  const row = el('label', { className: 'row', title: `${label} (double-click to reset)` }, el('span', { textContent: label }), input, out);
+  const value = () => get(preset, path) ?? rest;
+  const paint = () => {
+    const v = value();
+    out.textContent = show(v);
+    row.classList.toggle('changed', Math.abs(v - rest) > 1e-9);
+  };
+  const sync = () => { input.value = value(); paint(); };
   input.addEventListener('input', () => {
     const v = step >= 1 ? parseInt(input.value, 10) : parseFloat(input.value);
-    if (path.startsWith('targets.') && v === 0) delete (preset.targets || {})[path.slice('targets.'.length)];
+    if (path.startsWith('targets.') && v === 0) delete preset.targets[path.slice(8)];
     else set(preset, path, v);
-    out.textContent = fmt(v);
+    paint();
+    changed();
   });
-  input.sync = () => {
-    const v = get(preset, path) ?? (min < 0 ? 0 : min);  // a two-way slider rests in the middle
-    input.value = v;
-    out.textContent = fmt(v);
-  };
-  row.append(name, input, out);
-  container.append(row);
-  return input;
+  row.addEventListener('dblclick', () => {
+    if (path.startsWith('targets.')) delete preset.targets[path.slice(8)];
+    else set(preset, path, rest);
+    sync();
+    changed();
+  });
+  entry.body.append(row);
+  entry.rows.push({ el: row, text: `${label} ${entry.title}`.toLowerCase() });
+  controls.push({ sync });
+  return { isChanged: () => Math.abs(value() - rest) > 1e-9 };
 }
 
-let controls = [];
-const tiles = new Map(); // group key -> { group, list: [{ ref, el }] }
+function sliderPanel(key, title, specs, { resetTo }) {
+  const entry = panel(key, title, { reset: resetTo });
+  const made = specs.map((s) => slider(entry, s));
+  entry.changed = () => made.filter((m) => m.isChanged()).length;
+  return entry;
+}
 
-// A row of tiles. A body part is one field of preset.assets; "outfit" and "hat" share preset.assets.clothes,
-// one item each.
-function groups(library) {
-  const body = PARTS.map(([part, label]) => ({
-    key: part, label, part, optional: OPTIONAL.has(part), choices: library[part] || [],
-    get: () => preset.assets[part] ?? null,
-    set: (ref) => { preset.assets[part] = ref; },
-  }));
-  const clothes = library.clothes || [];
-  const slotOf = new Map(clothes.map((a) => [a.ref, a.slot]));
-  const worn = (slot) => ({
-    key: slot, label: slot === 'hat' ? 'Hat' : 'Clothes', part: 'clothes', optional: true,
-    choices: clothes.filter((a) => a.slot === slot),
-    get: () => (preset.assets.clothes || []).find((r) => slotOf.get(r) === slot) ?? null,
-    set: (ref) => {
+// ---- the enlarged thumbnail on hover --------------------------------------------------------
+
+const peek = $('peek');
+function showPeek(tile, src, name, credit) {
+  peek.querySelector('img').src = src;
+  peek.querySelector('.cap').replaceChildren(el('b', { textContent: name }), credit);
+  peek.hidden = false;
+  // Beside the tile, on whichever side has room; never off the screen.
+  const r = tile.getBoundingClientRect();
+  const w = peek.offsetWidth, h = peek.offsetHeight, gap = 10;
+  let x = r.right + gap;
+  if (x + w > window.innerWidth - 8) x = r.left - gap - w;
+  if (x < 8) x = Math.min(window.innerWidth - w - 8, Math.max(8, r.left));
+  let y = r.top + r.height / 2 - h / 2;
+  y = Math.max(8, Math.min(window.innerHeight - h - 8, y));
+  peek.style.left = `${x}px`;
+  peek.style.top = `${y}px`;
+}
+function hidePeek() { peek.hidden = true; }
+window.addEventListener('scroll', hidePeek, { passive: true });
+
+function picker(library, [key, title, part, optional, slot, enlarge]) {
+  const all = library[part] || [];
+  const choices = slot ? all.filter((a) => a.slot === slot) : all;
+  const slotOf = new Map((library.clothes || []).map((a) => [a.ref, a.slot]));
+  const current = slot
+    ? () => (preset.assets.clothes || []).find((r) => slotOf.get(r) === slot) ?? null
+    : () => preset.assets[part] ?? null;
+  const choose = slot
+    ? (ref) => {
       const rest = (preset.assets.clothes || []).filter((r) => slotOf.get(r) !== slot);
       preset.assets.clothes = ref ? [...rest, ref] : rest;
-    },
-  });
-  // Clothes after skin and hair: they are the next thing a viewer sees.
-  return [body[0], body[1], worn('outfit'), worn('hat'), ...body.slice(2)];
-}
-
-function buildParts(library) {
-  const parts = $('parts');
-  parts.replaceChildren();
-  tiles.clear();
-  for (const group of groups(library)) {
-    const h = document.createElement('h2');
-    h.textContent = group.label;
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    const list = [];
-    const choices = [...(group.optional ? [null] : []), ...group.choices];
-    for (const asset of choices) {
-      const el = document.createElement('div');
-      el.className = 'tile';
-      el.tabIndex = 0;
-      if (asset) {
-        const img = Object.assign(document.createElement('img'), { loading: 'lazy', alt: '' });
-        img.src = `/library/${encodeURIComponent(group.part)}/${encodeURIComponent(asset.name)}/thumb`;
-        img.onerror = () => img.replaceWith(Object.assign(document.createElement('div'), { className: 'none', textContent: '?' }));
-        el.title = `${asset.name}\n${asset.license}${asset.author ? `, ${asset.author}` : ''}`;
-        const name = document.createElement('span');
-        name.textContent = asset.name.replaceAll('_', ' ');
-        el.append(img, name);
+    }
+    : (ref) => { preset.assets[part] = ref; };
+  const entry = panel(key, title);
+  const grid = el('div', { className: 'grid' });
+  const tiles = [];
+  for (const asset of [...(optional ? [null] : []), ...choices]) {
+    const tile = el('div', { className: 'tile', tabIndex: 0 });
+    if (asset) {
+      const src = `/library/${encodeURIComponent(part)}/${encodeURIComponent(asset.name)}/thumb`;
+      const name = asset.name.replaceAll('_', ' ');
+      const credit = `${asset.license}${asset.author ? ` · ${asset.author}` : ''}`;
+      const img = el('img', { loading: 'lazy', alt: '', src });
+      img.onerror = () => img.replaceWith(el('div', { className: 'none', textContent: '?' }));
+      tile.append(img, el('span', { textContent: name }));
+      if (enlarge) {
+        const show = () => showPeek(tile, src, name, credit);
+        tile.addEventListener('mouseenter', show);
+        tile.addEventListener('focus', show);
+        tile.addEventListener('mouseleave', hidePeek);
+        tile.addEventListener('blur', hidePeek);
       } else {
-        el.append(Object.assign(document.createElement('div'), { className: 'none', textContent: 'none' }));
-        el.title = `no ${group.label.toLowerCase()}`;
+        tile.title = `${name}\n${credit}`;
       }
-      const ref = asset ? asset.ref : null;
-      const choose = () => { group.set(ref); syncTiles(); };
-      el.addEventListener('click', choose);
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); } });
-      grid.append(el);
-      list.push({ ref, el });
+    } else {
+      tile.append(el('div', { className: 'none', textContent: 'none' }));
+      tile.title = `no ${title.toLowerCase()}`;
     }
-    if (!group.choices.length) {
-      const none = document.createElement('div');
-      none.className = 'tile';
-      none.textContent = 'nothing installed';
-      grid.append(none);
-    }
-    tiles.set(group.key, { group, list });
-    parts.append(h, grid);
+    const ref = asset ? asset.ref : null;
+    const pick = () => { choose(ref); syncTiles(); changed(); };
+    tile.addEventListener('click', pick);
+    tile.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    grid.append(tile);
+    tiles.push({ ref, tile });
+    entry.rows.push({ el: tile, text: `${asset ? asset.name.replaceAll('_', ' ') : 'none'} ${title}`.toLowerCase() });
   }
+  if (!choices.length) entry.body.append(el('div', { className: 'hint', textContent: 'Nothing installed. See scripts/README.md for the asset packs.' }));
+  entry.body.append(grid);
+  const syncTiles = () => { const c = current(); for (const t of tiles) t.tile.classList.toggle('on', c === t.ref); };
+  controls.push({ sync: syncTiles });
 }
 
-function syncTiles() {
-  for (const { group, list } of tiles.values()) {
-    const chosen = group.get();
-    for (const { ref, el } of list) el.classList.toggle('on', chosen === ref);
+// Within a group: the one-way shapes first, then by label, with moves and angles last.
+function order(a, b) {
+  const rank = (m) => (m.min === 0 ? 0 : /^(Move|Angle|Rotate)/.test(m.label) ? 2 : 1);
+  return rank(a) - rank(b) || a.label.localeCompare(b.label, undefined, { numeric: true });
+}
+
+function buildPanels(library, catalogue) {
+  sliderPanel('body', 'Body', BODY, { resetTo: () => { preset.phenotype = structuredClone(DEFAULT.phenotype); } });
+  for (const spec of PICKERS) picker(library, spec);
+  for (const [group, title] of Object.entries(catalogue.groups)) {
+    const mods = catalogue.modifiers.filter((m) => m.group === group).sort(order);
+    if (!mods.length) continue;
+    const specs = mods.map((m) => [`targets.${m.name}`, m.label, m.min, 1, 0.05, m.min < 0 ? signed : fixed, 0]);
+    sliderPanel(`m:${group}`, title, specs, { resetTo: () => { for (const m of mods) delete preset.targets[m.name]; } });
   }
+  const adv = sliderPanel('advanced', 'Advanced: mouth fixes and budgets', ADVANCED, {
+    resetTo: () => { for (const k of ['mouth', 'shape_scale', 'texture_gain', 'bust', 'max_triangles']) preset[k] = structuredClone(DEFAULT[k]); },
+  });
+  adv.body.prepend(el('div', { className: 'hint', textContent: 'The recipe’s fixes for speech. The defaults suit every head so far.' }));
 }
 
 function syncForm() {
   $('id').value = preset.id;
   $('name').value = preset.name;
   for (const c of controls) c.sync();
-  syncTiles();
+  changed();
 }
 
-async function loadStarts() {
-  const select = $('start');
-  const presets = await json('/presets').catch(() => []);
-  select.replaceChildren(new Option('New face (defaults)', ''));
-  for (const p of presets) select.append(new Option(`${p.name} (${p.id})`, p.id));
-  select.onchange = () => {
-    const chosen = presets.find((p) => p.id === select.value);
-    preset = structuredClone(chosen ? { ...DEFAULT, ...chosen } : DEFAULT);
-    syncForm();
-    if (chosen) showFace(chosen.id).catch(() => {});
-  };
-  return presets;
+function applyFilter() {
+  filterText = $('filter').value.trim().toLowerCase();
+  const open = store.get('open', {});
+  for (const p of panels) {
+    let any = false;
+    for (const r of p.rows) {
+      const hit = !filterText || r.text.includes(filterText);
+      r.el.hidden = !hit;
+      any ||= hit;
+    }
+    p.details.hidden = !!filterText && !any;
+    p.details.open = filterText ? any : (open[p.key] ?? OPEN_BY_DEFAULT.has(p.key));
+  }
 }
 
-// ---- the preview -----------------------------------------------------------------------------
+// ---- preview: one renderer, shown in the card or in the large view --------------------------
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-$('preview').prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#101216');
 scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3f4a, 1.6));
@@ -261,22 +297,23 @@ const key = new THREE.DirectionalLight(0xffffff, 2.2);
 key.position.set(0.6, 0.8, 1.5);
 scene.add(key);
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
-camera.position.set(0, -0.08, 0.9);
 const pivot = new THREE.Group();
 scene.add(pivot);
 let targets = new Map();
 let pose = 'rest';
-let turn = 0;
+let turn = false;
+let shown = null;   // the manifest on show
 
+function host() { return $('modal').hidden ? $('thumb') : $('stage'); }
 function resize() {
-  const box = $('preview').getBoundingClientRect();
+  const box = host().getBoundingClientRect();
+  if (!box.width || !box.height) return;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(box.width, box.height, false);
-  camera.aspect = box.width / Math.max(1, box.height);
+  camera.aspect = box.width / box.height;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
-resize();
 
 function weigh(name, value) {
   for (const { influences, index } of targets.get(name) || []) influences[index] = value;
@@ -286,7 +323,7 @@ const POSES = {
   rest: () => ({}),
   open: () => ({ jawOpen: 0.6, mouthFunnel: 0.1 }),
   smile: () => ({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),
-  // A rough syllable rhythm: enough to judge the mouth in motion. The real motion comes from Audio2Face.
+  // A rough syllable rhythm, to judge the mouth in motion. The real motion comes from Audio2Face.
   talk: (t) => {
     const s = Math.max(0, Math.sin(t * 9.0)) * (0.55 + 0.45 * Math.sin(t * 2.3));
     return { jawOpen: 0.45 * s, mouthFunnel: 0.25 * Math.max(0, Math.sin(t * 4.1)), mouthClose: 0.1 * (1 - s),
@@ -295,15 +332,16 @@ const POSES = {
 };
 
 function animate(now) {
+  requestAnimationFrame(animate);
+  if (!shown) return;
   const t = now / 1000;
   const weights = POSES[pose](t);
   const blink = (t % 4.2) < 0.12 ? 1 : 0;
   for (const name of targets.keys()) weigh(name, weights[name] ?? 0);
   weigh('eyeBlinkLeft', blink);
   weigh('eyeBlinkRight', blink);
-  pivot.rotation.y = turn;
+  pivot.rotation.y += ((turn ? 0.6 : 0) - pivot.rotation.y) * 0.08;
   renderer.render(scene, camera);
-  requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 
@@ -311,15 +349,58 @@ function poseButtons() {
   const bar = $('poses');
   bar.replaceChildren();
   for (const name of Object.keys(POSES)) {
-    const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
-    b.onclick = () => { pose = name; for (const x of bar.children) x.classList.toggle('on', x === b); };
+    const b = el('button', { type: 'button', textContent: name });
+    b.onclick = () => {
+      pose = name;
+      for (const x of bar.children) if (x.dataset.pose) x.classList.toggle('on', x === b);
+    };
+    b.dataset.pose = name;
     b.classList.toggle('on', name === pose);
     bar.append(b);
   }
-  const spin = Object.assign(document.createElement('button'), { type: 'button', textContent: 'turn' });
-  spin.onclick = () => { turn = turn ? 0 : 0.6; };
+  const spin = el('button', { type: 'button', textContent: 'turn' });
+  spin.onclick = () => { turn = !turn; spin.classList.toggle('on', turn); };
   bar.append(spin);
-  bar.hidden = false;
+}
+
+function openModal() {
+  if (!shown) return;
+  hidePeek();
+  $('modal').hidden = false;
+  $('stage').append(renderer.domElement);
+  resize();
+  $('close').focus();
+}
+function closeModal() {
+  $('modal').hidden = true;
+  $('thumb').prepend(renderer.domElement);
+  resize();
+}
+$('thumb').addEventListener('click', openModal);
+$('close').addEventListener('click', closeModal);
+$('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('modal').hidden) closeModal();
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('build').disabled) $('form').requestSubmit();
+});
+
+function meta() {
+  const box = $('meta');
+  const stale = !!shown && built !== null && JSON.stringify(current()) !== built;
+  const state = shown ? made.get(shown.id) || {} : {};
+  // Export the face on show, and only while it is what the form describes.
+  $('export').disabled = busy || !shown || !state.previewed || stale;
+  $('export').textContent = state.exported ? 'Export again' : 'Export';
+  if (!shown) { box.hidden = true; return; }
+  box.replaceChildren(
+    el('span', { className: 'name', textContent: `${shown.name} (${shown.id})` }),
+    el('span', { textContent: `${shown.provenance.license} · hover for credits`, title: shown.provenance.notes }),
+    el('span', { className: stale ? 'stale' : '', textContent: stale ? 'The form has changed since this build.' : 'Up to date with the form.' }),
+    state.exported
+      ? el('span', { className: 'live', textContent: `Exported: assets/${shown.id}, on the server's /faces.` })
+      : el('span', { textContent: 'Preview only. Export puts it in assets/ and on /faces.' }),
+  );
+  box.hidden = false;
 }
 
 async function showFace(faceId) {
@@ -340,54 +421,133 @@ async function showFace(faceId) {
   camera.fov = f.fov || 30;
   camera.position.set(0, f.height || 0, f.distance || 0.6);
   camera.lookAt(0, f.height || 0, 0);
-  resize();
+  shown = manifest;
+  if (!renderer.domElement.parentElement) $('thumb').prepend(renderer.domElement);
   $('empty').hidden = true;
-  $('credits').textContent = `${manifest.name} (${manifest.id}) · ${manifest.provenance.license} · hover for credits`;
-  $('credits').title = manifest.provenance.notes;
+  document.querySelector('#thumb .zoom').hidden = false;
+  $('modal-name').textContent = `${manifest.name} (${manifest.id})`;
+  $('modal-credits').textContent = manifest.provenance.license;
+  $('modal-credits').title = manifest.provenance.notes;
   poseButtons();
+  resize();
+  meta();
   window.__editor = { face: faceId, shapes: targets.size };
 }
 
-// ---- build -----------------------------------------------------------------------------------
+// ---- the preset in and out -----------------------------------------------------------------
+
+function current() {
+  const body = structuredClone(preset);
+  body.id = $('id').value.trim();
+  body.name = $('name').value.trim();
+  if (!body.assets.hair) delete body.assets.hair;
+  return body;
+}
+
+function changed() {
+  for (const p of panels) {
+    const n = p.changed();
+    p.countEl.textContent = n ? `${n} changed` : '';
+  }
+  meta();
+  store.set('draft', current());
+}
+
+async function loadStarts() {
+  const select = $('start');
+  const entries = await json('/presets').catch(() => []);
+  made = new Map(entries.map((e) => [e.preset.id, { exported: e.exported, previewed: e.previewed }]));
+  const presets = entries.map((e) => e.preset);
+  const value = select.value;
+  select.replaceChildren(el('option', { value: '', textContent: 'New face (defaults)' }));
+  for (const p of presets) {
+    const s = made.get(p.id);
+    select.append(el('option', { value: p.id, textContent: `${p.name} (${p.id})${s.exported ? ' · exported' : ' · preview'}` }));
+  }
+  if (presets.some((p) => p.id === value)) select.value = value;
+  meta();
+  select.onchange = async () => {
+    const chosen = presets.find((p) => p.id === select.value);
+    preset = structuredClone(chosen ? { ...DEFAULT, ...chosen, targets: chosen.targets || {} } : DEFAULT);
+    syncForm();
+    if (chosen) {
+      await showFace(chosen.id).catch(() => {});
+      built = JSON.stringify(current());
+      meta();
+    }
+  };
+  return presets;
+}
+
+$('id').addEventListener('input', changed);
+$('name').addEventListener('input', changed);
+$('filter').addEventListener('input', applyFilter);
 
 $('form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  preset.id = $('id').value.trim();
-  preset.name = $('name').value.trim();
-  const body = structuredClone(preset);
-  if (!body.assets.hair) delete body.assets.hair;
+  const body = current();
   $('build').disabled = true;
+  busy = true;
+  meta();
   status('Building…');
   const started = performance.now();
   try {
     const done = await json('/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     status('Built. Loading the preview…');
+    built = JSON.stringify(body);
     await showFace(done.manifest.id);
-    status(`Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. It is on the server's /faces now.`);
-    const presets = await loadStarts();
-    if (presets.some((p) => p.id === done.manifest.id)) $('start').value = done.manifest.id;
+    await loadStarts();
+    $('start').value = done.manifest.id;
+    status(`Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
   } catch (err) {
     status(`${err.message} (${((performance.now() - started) / 1000).toFixed(1)} s)`, true);
   } finally {
     $('build').disabled = false;
+    busy = false;
+    meta();
   }
 });
 
+$('export').addEventListener('click', async () => {
+  if (!shown) return;
+  const id = shown.id;
+  if (made.get(id)?.exported && !window.confirm(`Replace the exported ${id} in assets/ with this preview?`)) return;
+  busy = true;
+  meta();
+  status(`Exporting ${id}…`);
+  try {
+    const done = await json(`/export/${encodeURIComponent(id)}`, { method: 'POST' });
+    await loadStarts();
+    status(`Exported to ${done.path}: on the server's /faces now.`);
+  } catch (err) {
+    status(err.message, true);
+  } finally {
+    busy = false;
+    meta();
+  }
+});
+
+$('download').addEventListener('click', () => {
+  const body = current();
+  const blob = new Blob([JSON.stringify(body, null, 2) + '\n'], { type: 'application/json' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: `${body.id || 'preset'}.json` });
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+});
+
 async function main() {
-  const health = await json('/health');
+  const [health, library, catalogue] = await Promise.all([json('/health'), json('/library'), json('/modifiers')]);
   if (!health.ready || health.read_only) {
     $('banner').textContent = health.read_only ? 'This editor is read-only: it cannot build.' : `Cannot build: ${health.reason}`;
     $('banner').hidden = false;
     $('build').disabled = true;
   }
-  controls = SLIDERS.map((s) => slider($('sliders'), s));
-  controls.push(...FACE.map((s) => slider($('face'), s)));
-  controls.push(...CHIN.map((s) => slider($('chin'), s)));
-  controls.push(...NOSE.map((s) => slider($('nose'), s)));
-  controls.push(...LIPS.map((s) => slider($('lips'), s)));
-  controls.push(...ADVANCED.map((s) => slider($('advanced'), s)));
-  buildParts(await json('/library'));
+  buildPanels(library, catalogue);
   await loadStarts();
+  // An unsent draft survives a reload; anything the server no longer offers is refused at Build.
+  const draft = store.get('draft', null);
+  if (draft && draft.phenotype && draft.assets) preset = { ...structuredClone(DEFAULT), ...draft, targets: draft.targets || {} };
   syncForm();
 }
 

@@ -1,8 +1,12 @@
-"""Build a head from a preset and install it as a face.
+"""Build a head from a preset as a preview, and export a preview as a face.
 
-One build at a time. Blender runs ``build_head.py`` into a hidden directory
-under the assets root; only a build that succeeds, and whose model passes the
-face contract, is renamed into ``<assets>/<id>``. A failed build leaves nothing.
+A build is a preview: ``<assets>/.preview/<id>``. The server skips
+dot-directories, so previews never reach ``/faces``; the editor shows them.
+Export copies a preview to ``<assets>/<id>``, where the server serves it.
+
+One build or export at a time. Each is made in a hidden directory and renamed
+into place only once it is whole, so a failed build or export leaves nothing
+and keeps what was there.
 
 The editor only replaces faces it made: a face directory holding
 ``preset.json``. A stock face, or any face put there by hand, is refused.
@@ -26,7 +30,7 @@ import structlog
 from argus_mask import __version__
 from argus_mask.editor.library import AssetLibrary, credits, licence_expression
 from argus_mask.editor.preset import Preset
-from argus_mask.faces import MANIFEST_NAME, build_manifest, inspect_glb
+from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, Provenance
 
 log = structlog.get_logger(__name__)
@@ -35,6 +39,7 @@ SCRIPT = Path(__file__).resolve().with_name("build_head.py")
 PRESET_NAME = "preset.json"
 MODEL_NAME = "head.glb"
 RECIPE_NAME = "head.recipe.json"
+PREVIEW_DIR = ".preview"
 # Where the stock heads put the camera: a bust, not a face filling the screen.
 FRAMING = Framing(distance=0.9, height=-0.08)
 _ERROR_CHARS = 2000
@@ -51,6 +56,10 @@ class Busy(BuildError):
 
 class NotOwned(BuildError):
     """The face id is taken by a face the editor did not make."""
+
+
+class NoPreview(BuildError):
+    """Export was asked for a face that has no finished preview."""
 
 
 class Refused(BuildError):
@@ -88,6 +97,7 @@ class Builder:
         self.blender_user = blender_user
         self.library = library
         self.assets_dir = Path(assets_dir)
+        self.preview_dir = self.assets_dir / PREVIEW_DIR
         self.timeout_s = timeout_s
         self._lock = asyncio.Lock()
 
@@ -111,12 +121,15 @@ class Builder:
         return None
 
     def owned(self, face_id: str) -> bool:
+        """Whether ``<assets>/<id>`` is a face the editor exported (so it may replace it)."""
         return bool(_FACE_ID.match(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
 
-    def preset(self, face_id: str) -> Preset | None:
-        if not _FACE_ID.match(face_id):
-            return None
-        path = self.assets_dir / face_id / PRESET_NAME
+    def previewed(self, face_id: str) -> bool:
+        return bool(_FACE_ID.match(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
+
+    @staticmethod
+    def _read_preset(directory: Path) -> Preset | None:
+        path = directory / PRESET_NAME
         if not path.is_file():
             return None
         try:
@@ -124,29 +137,62 @@ class Builder:
         except ValueError:
             return None
 
-    def presets(self) -> list[Preset]:
-        """The presets behind every face the editor made."""
-        if not self.assets_dir.is_dir():
-            return []
-        found = (self.preset(p.name) for p in sorted(self.assets_dir.iterdir()) if p.is_dir())
-        return [p for p in found if p is not None]
+    def presets(self) -> list[dict]:
+        """Every face the editor made, previewed or exported: its preset (the preview's, if both), and which."""
+        found: dict[str, dict] = {}
+        for root, key in ((self.assets_dir, "exported"), (self.preview_dir, "previewed")):
+            if not root.is_dir():
+                continue
+            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.match(p.name)):
+                preset = self._read_preset(directory)
+                if preset is None:
+                    continue
+                entry = found.setdefault(directory.name, {"exported": False, "previewed": False})
+                entry["preset"] = preset  # the preview, read second, wins: it is what the editor shows
+                entry[key] = True
+        return [{"preset": e["preset"], "exported": e["exported"], "previewed": e["previewed"]} for e in found.values()]
 
     async def build(self, preset: Preset) -> BuildResult:
         if self._lock.locked():
-            raise Busy("another build is running")
+            raise Busy("another build or export is running")
         async with self._lock:
             return await self._build(preset)
+
+    async def export(self, face_id: str) -> FaceManifest:
+        """Copy the preview of *face_id* to ``<assets>/<id>``, where the server serves it."""
+        if self._lock.locked():
+            raise Busy("another build or export is running")
+        async with self._lock:
+            if not _FACE_ID.match(face_id):
+                raise NoPreview(f"{face_id!r} is not a face id")
+            try:
+                manifest, _ = FaceStore(self.preview_dir).load(face_id)
+            except FaceError as exc:
+                raise NoPreview(f"there is no preview of {face_id!r} to export ({exc})") from exc
+            target = self.assets_dir / face_id
+            if target.exists() and not self.owned(face_id):
+                raise NotOwned(f"{face_id!r} is a face the editor did not make; build it under another id")
+            work = Path(tempfile.mkdtemp(prefix=".export-", dir=self.assets_dir))
+            try:
+                shutil.copytree(self.preview_dir / face_id, work, dirs_exist_ok=True)
+                self._install(work, target, self.assets_dir)
+            finally:
+                if work.exists():
+                    shutil.rmtree(work, ignore_errors=True)
+            log.info("face_exported", face=face_id)
+            return manifest
 
     async def _build(self, preset: Preset) -> BuildResult:
         if reason := self.check():
             raise BuildError(reason)
         assets = self.library.resolve(preset)
-        target = self.assets_dir / preset.id
-        if target.exists() and not self.owned(preset.id):
+        # Say so now, not at export: a preview under an id that can never be exported is wasted.
+        if (self.assets_dir / preset.id).exists() and not self.owned(preset.id):
             raise NotOwned(f"{preset.id!r} is a face the editor did not make; choose another id")
+        target = self.preview_dir / preset.id
 
-        self.assets_dir.mkdir(parents=True, exist_ok=True)
-        work = Path(tempfile.mkdtemp(prefix=".build-", dir=self.assets_dir))
+        self.preview_dir.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=".build-", dir=self.preview_dir))
         started = time.monotonic()
         try:
             preset_text = preset.model_dump_json(indent=2, exclude_none=True) + "\n"
@@ -181,7 +227,7 @@ class Builder:
                 model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
             )
             (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
-            self._install(work, target)
+            self._install(work, target, self.preview_dir)
         finally:
             if work.exists():
                 shutil.rmtree(work, ignore_errors=True)
@@ -223,12 +269,13 @@ class Builder:
             raise Refused(why)
         raise BuildError(f"Blender exited with status {proc.returncode}: {why}")
 
-    def _install(self, work: Path, target: Path) -> None:
-        """Put the finished build where the server reads faces, replacing the editor's earlier build of it."""
+    @staticmethod
+    def _install(work: Path, target: Path, root: Path) -> None:
+        """Rename a finished directory into place under *root*, replacing the editor's earlier one."""
         if not target.exists():
             work.rename(target)
             return
-        old = self.assets_dir / f".old-{uuid.uuid4().hex}"
+        old = root / f".old-{uuid.uuid4().hex}"
         target.rename(old)
         try:
             work.rename(target)

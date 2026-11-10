@@ -108,7 +108,9 @@ Both sockets refuse a browser whose `Origin` is neither the server's own host no
 
 ### Face editor
 
-`argus-mask editor` is a page for making heads: pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails, set sex, age, build and ancestry, face shape (square, round, heart …), chin and jaw, nose and lips with sliders, press **Build**, and the head appears in a preview about ten seconds later, ready to rest, open, smile or talk. It writes the face into the same assets root the server reads, so it is on `/faces` at once.
+`argus-mask editor` is a page for making heads. Pick a skin, hair, clothes, a hat, brows, lashes, eyes, teeth and tongue from thumbnails (hover for a large view). Set sex, age, build and ancestry, and shape the head, forehead, brow ridge, eyes, ears, cheeks, nose, lips, chin and neck with 117 sliders in collapsible panels (the filter box finds one by name). Press **Build** and a preview appears about ten seconds later; click it for a large view that can rest, open, smile, talk or turn.
+
+A build is a preview, kept in `assets/.preview/`, which the server never lists. **Export** copies the preview on show into `assets/<id>`, and it is on the server's `/faces` at once. **Download preset** saves the form as a `.json` preset, the same format as `scripts/stock_heads/`.
 
 It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
 
@@ -120,8 +122,8 @@ argus-mask editor --assets-dir assets \
 - **Only licensed assets.** The editor offers the assets that an installed pack lists with a licence, and writes each part's licence and author into the face's provenance (`kind: synthetic`). An asset from a CC-BY pack shows up in the licence line.
 - **Adults only.** Age starts at 25 (MakeHuman's 0.5); the recipe refuses less.
 - **It only replaces its own faces.** Each face it builds keeps its `preset.json` beside the model; a directory without one (a stock head, a face added by hand) is never overwritten.
-- **Builds go one at a time.** A failed build leaves nothing behind, and the face that was there stays.
-- **Keep it local.** A build starts Blender. The editor binds `127.0.0.1`, and `/build` is behind the same origin and read-only guards as the server's writes.
+- **Builds and exports go one at a time.** A failed one leaves nothing behind, and the face that was there stays.
+- **Keep it local.** A build starts Blender. The editor binds `127.0.0.1`, and `/build` and `/export` are behind the same origin and read-only guards as the server's writes.
 
 ## Configuration
 
