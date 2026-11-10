@@ -255,12 +255,12 @@ Repo conventions from day one: `main` for releases, `dev` for work, PRs into `de
 
 ## Done when (0.1)
 
-- `argus-mask push hello.wav` moves the stock head's mouth in a browser on another LAN device, and the lips stay with the sound for a two-minute clip.
-- The same page opened with the `hld` tier shows a portrait head on black at 1080×1920.
-- Two viewers of one face show the same motion.
-- `argus-mask drive` on the same WAV twice gives the same take file.
-- With the Audio2Face service stopped, `/health` says so and no source is accepted under `DRIVER=a2f`.
-- A face without provenance does not appear in `/faces`.
+- `argus-mask push hello.wav` moves the stock head's mouth in a browser on another LAN device, and the lips stay with the sound for a two-minute clip. **Measured, not yet watched:** a 20 s clip through the real Audio2Face server reached a viewer with the sound never more than 34 ms ahead of the mouth; nobody has yet watched a long clip on a real screen.
+- The same page opened with the `hld` tier shows a portrait head on black at 1080×1920. **Done** (headless browser).
+- Two viewers of one face show the same motion. **Done** (test).
+- `argus-mask drive` on the same WAV twice gives the same take file. **Done** (test, and with the real Audio2Face server).
+- With the Audio2Face service stopped, `/health` says so and no source is accepted under `DRIVER=a2f`. **Done** (test).
+- A face without provenance does not appear in `/faces`. **Done** (test).
 
 ## Scaffold
 

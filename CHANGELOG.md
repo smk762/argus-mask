@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Docker image. It downloads its model and builds a TensorRT engine for the host's card on first start, and holds
   about 0.5 GB of VRAM. `docker compose --profile a2f` runs it beside mask. The image is built locally, not published.
 
+- The viewer's audio buffer is tunable (`?buffer=<ms>`, default 250).
+- The stock head lock points at revision 2 of `stock-01`, with the mouth fixes.
+
 ### Fixed
 
 - **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the

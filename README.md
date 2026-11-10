@@ -89,8 +89,9 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
 | `hud` | `0` hides the status line |
+| `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
 
-Lip sync runs on the page's audio clock: audio plays 250 ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
+Lip sync runs on the page's audio clock: audio plays `buffer` ms behind arrival and each frame is shown when the clock reaches its timestamp. Network jitter costs latency, not sync.
 
 Browsers start audio only after a click or key press. A kiosk can waive that; for Chromium, start it with `--autoplay-policy=no-user-gesture-required`.
 
