@@ -172,11 +172,12 @@ function updateCli() {
   if (Number($('seed').value)) parts.push('--seed', String(Number($('seed').value)));
   if ($('stream').checked) parts.push('--stream');
   if (!$('tidy').checked) parts.push('--as-is');
+  if ($('context').checked) parts.push('--context');
   $('cli').value = parts.join(' ');
   const file = $('file').files[0];
   $('push-cli').value = ['argus-mask push', shell(file ? file.name : '<file.wav>'), '--face', shell(face || '<id>'),
     '--url', shell(state.server || 'http://127.0.0.1:8109'), ...(Number($('push-seed').value) ? ['--seed', String(Number($('push-seed').value))] : [])].join(' ');
-  store.set('form', { tts, pause: $('pause').value, seed: $('seed').value, stream: $('stream').checked, tidy: $('tidy').checked,
+  store.set('form', { tts, pause: $('pause').value, seed: $('seed').value, stream: $('stream').checked, tidy: $('tidy').checked, context: $('context').checked,
     temp: $('temp').value, tempDefault: $('temp-default').checked });
 }
 
@@ -253,7 +254,7 @@ $('say').addEventListener('submit', (e) => {
   start(() => json('/broadcast/say', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ face, text: $('text').value, tts_url: $('tts').value.trim(), voice, params: params(),
-      seed: Number($('seed').value) || 0, stream: $('stream').checked, tidy: $('tidy').checked, pause: Number($('pause').value) || 0,
+      seed: Number($('seed').value) || 0, stream: $('stream').checked, tidy: $('tidy').checked, context: $('context').checked, pause: Number($('pause').value) || 0,
       ...(recording() ? { record: recording() } : {}) }),
   }));
 });
@@ -283,7 +284,7 @@ $('copy-push-cli').onclick = copy('push-cli', 'copy-push-cli');
 $('add-param').onclick = () => paramRow();
 $('voice').addEventListener('change', () => { $('voice-other-wrap').hidden = $('voice').value !== '\u0001other'; updateCli(); });
 $('tts').addEventListener('change', loadVoices);
-for (const id of ['text', 'voice-other', 'pause', 'seed', 'stream', 'tidy', 'tts', 'file', 'push-seed']) $(id).addEventListener('input', updateCli);
+for (const id of ['text', 'voice-other', 'pause', 'seed', 'stream', 'tidy', 'context', 'tts', 'file', 'push-seed']) $(id).addEventListener('input', updateCli);
 for (const id of ['temp', 'temp-default']) $(id).addEventListener('input', () => { paintTemperature(); updateCli(); });
 $('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('send').disabled) $('say').requestSubmit(); });
 
@@ -301,6 +302,7 @@ if (saved.pause !== undefined) $('pause').value = saved.pause;
 if (saved.seed !== undefined) $('seed').value = saved.seed;
 $('stream').checked = Boolean(saved.stream);
 $('tidy').checked = saved.tidy ?? true;
+$('context').checked = Boolean(saved.context);
 if (saved.temp !== undefined) $('temp').value = saved.temp;
 if (saved.tempDefault !== undefined) $('temp-default').checked = saved.tempDefault;
 paintTemperature();

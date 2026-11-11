@@ -216,8 +216,11 @@ def fake_tts(
     break_after: int | None = None,
     stall_s: float = 0.0,
     voices: dict | None = None,
+    refuse_context: bool = False,
 ) -> Iterator[tuple[str, list[dict]]]:
     """A TTS service that streams *pcm* as chunked ``pcm_f32le`` with the format in headers.
+
+    ``refuse_context`` answers 422 to a request with a ``context`` field, as a strict service would.
 
     Yields its URL and the list of request bodies it received. ``break_after``
     drops the connection after that many bytes. ``stall_s`` sends the headers and
@@ -280,6 +283,9 @@ def fake_tts(
                                  "voice_clone_id": f"voice_clones/{fields.get('companion_id')}/prompt.pt"})  # fmt: skip
                 return
             seen.append(json.loads(raw or b"{}"))
+            if refuse_context and "context" in seen[-1]:
+                self._json(422, {"detail": "extra fields not permitted: context"})
+                return
             if status != 200:
                 body = b'{"error": "text is required"}'
                 self.send_response(status)

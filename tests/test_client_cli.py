@@ -101,15 +101,16 @@ async def test_a_source_paces_from_its_first_chunk_not_from_connecting(tmp_path,
 
         async def slow_start():
             await asyncio.sleep(0.5)  # the "model" thinking
-            for block in blocks(tone(1.0, 16000), 16000):
+            for block in blocks(tone(2.0, 16000), 16000):
                 sent_at.append(time.monotonic())
                 yield block.astype("<f4").tobytes()
 
         done = await client.send(url, "test-head", AudioFormat(sample_rate=16000), slow_start())
-    assert done["frames"] == 30
-    # 1.0 s of audio with a 0.2 s lead takes about 0.8 s to send once the first chunk is out. Before the
-    # fix, the 0.5 s wait counted as time already spent and everything went out at once.
-    assert sent_at[-1] - sent_at[0] > 0.6
+    assert done["frames"] == 60
+    # 2.0 s of audio with a 0.2 s lead takes about 1.8 s to send once the first chunk is out. Before the
+    # fix, the 0.5 s wait counted as time already spent and everything went out at once. The bound leaves
+    # 0.6 s for a slow runner's jitter, and is still far above a burst (#5).
+    assert sent_at[-1] - sent_at[0] > 1.2
 
 
 def test_say_streams_tts_audio_into_the_server(server) -> None:
@@ -324,3 +325,65 @@ def test_say_speaks_through_a_wyoming_server(server) -> None:
     assert failed.exit_code == 1 and "no such voice" in failed.output
     bad = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", "ftp://x"])
     assert bad.exit_code == 1 and "wyoming://" in bad.output
+
+
+def test_say_sends_the_previous_sentence_as_context(server) -> None:
+    import base64  # noqa: PLC0415
+
+    from argus_mask.models import AudioFormat  # noqa: PLC0415
+    from argus_mask.speech import tidy_audio  # noqa: PLC0415
+
+    F32_24K = AudioFormat(sample_rate=24000, format="f32le", channels=1)  # noqa: N806
+
+    pcm = tone(0.5, 24000)
+    text = "This is the first sentence here. And this is the second one. Then a third to finish."
+    for extra in (["--context"], ["--context", "--stream"]):
+        with fake_tts(pcm, 24000) as (tts_url, seen):
+            result = runner.invoke(
+                app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, *extra]
+            )
+        assert result.exit_code == 0, result.output
+        assert "context" not in seen[0]
+        for before, now in zip(seen, seen[1:], strict=False):
+            (ctx,) = now["context"]
+            assert ctx["text"] == before["text"]
+            # the audio the service sent, levelled (sent as it came, a briefing sank sentence by sentence)
+            assert base64.b64decode(ctx["audio"]) == tidy_audio(pcm.astype("<f4").tobytes(), F32_24K)
+    with fake_tts(pcm, 24000) as (tts_url, seen):
+        off = runner.invoke(app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert off.exit_code == 0 and all("context" not in s for s in seen)
+
+
+def test_a_service_that_refuses_context_is_asked_again_without_it(server) -> None:
+    text = "This is the first sentence here. And this is the second one. Then a third to finish."
+    with fake_tts(tone(0.5, 24000), 24000, refuse_context=True) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, "--context"]
+        )
+    assert result.exit_code == 0, result.output
+    # the second sentence is refused with context, asked again without; the third goes without
+    assert ["context" in s for s in seen] == [False, True, False, False]
+    assert [s["text"] for s in seen if "context" not in s] == [
+        "This is the first sentence here.",
+        "And this is the second one.",
+        "Then a third to finish.",
+    ]
+
+
+def test_a_wyoming_service_gets_no_context(server) -> None:
+    text = "This is the first sentence here. And this is the second one."
+    with fake_wyoming(tone(0.3, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, "--context"]
+        )
+    assert result.exit_code == 0, result.output
+    assert len(seen) == 2 and all("context" not in s for s in seen)
+
+
+def test_say_refuses_more_speech_than_it_will_buffer(server, monkeypatch) -> None:
+    monkeypatch.setattr(client, "MAX_BUFFERED_S", 1.5)
+    text = "This is the first sentence here. And this is the second one."
+    with fake_tts(tone(1.0, 24000), 24000) as (tts_url, _):
+        result = runner.invoke(app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    # 1.0 s fits, the second 1.0 s passes the 1.5 s cap: refused before anything plays (#3)
+    assert result.exit_code == 1 and "more than 0.025 minutes of speech" in result.output
