@@ -372,6 +372,12 @@ def editor(
         "--recordings-dir",
         help="Where the Broadcast page records clips; default: ARGUS_MASK_RECORDINGS_DIR or ./recordings",
     ),
+    voices_dir: Path | None = Option(
+        None,
+        "--voices-dir",
+        help="Where the Voices page keeps checked clips and each voice's record; default: ARGUS_MASK_VOICES_DIR "
+        "or ./voices",
+    ),
 ) -> None:
     """Run the face editor: build heads from presets with headless Blender and MPFB."""
     from dataclasses import replace
@@ -402,6 +408,8 @@ def editor(
             ed = replace(ed, viewer_url=viewer_url.rstrip("/"))
         if recordings_dir is not None:
             ed = replace(ed, recordings_dir=recordings_dir)
+        if voices_dir is not None:
+            ed = replace(ed, voices_dir=voices_dir)
     except ConfigError as exc:
         raise _fail(str(exc)) from exc
     uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)
