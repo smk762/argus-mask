@@ -350,6 +350,7 @@
       "description": "A viewer that has said what it is: one entry of ``Health.screens``.",
       "properties": {
         "audio_ready": {
+          "description": "Ready to speak in sync: with sound local, its sound is unlocked (it will be heard); with sound external, it is watching and moves on the session's timeline, no sound of its own needed",
           "title": "Audio Ready",
           "type": "boolean"
         },
@@ -361,6 +362,15 @@
           "default": false,
           "title": "Kiosk",
           "type": "boolean"
+        },
+        "sound": {
+          "default": "local",
+          "enum": [
+            "local",
+            "external"
+          ],
+          "title": "Sound",
+          "type": "string"
         }
       },
       "required": [
@@ -516,6 +526,16 @@
           "default": false,
           "title": "Kiosk",
           "type": "boolean"
+        },
+        "sound": {
+          "default": "local",
+          "description": "local: the screen plays the session's sound; external: it plays none (house speakers, Snapcast, play it) and only moves, on the session's timeline (viewer ?audio=external)",
+          "enum": [
+            "local",
+            "external"
+          ],
+          "title": "Sound",
+          "type": "string"
         },
         "type": {
           "const": "status",
