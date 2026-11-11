@@ -43,9 +43,14 @@ class Job:
     ended: float | None = None
     task: asyncio.Task | None = None
     files: list[str] = field(default_factory=list)  # recordings written, by name in the recordings directory
+    session: str | None = None  # the server's session id, once it is ready
 
     def note(self, kind: str, text: str) -> None:
         self.events.append({"at": round(time.monotonic() - self.started, 2), "kind": kind, "text": text})
+
+    def ready(self, reply: dict) -> None:
+        self.session = reply.get("session_id")
+        self.note("ready", f"session {self.session}")
 
     def public(self) -> dict:
         return {
@@ -95,9 +100,9 @@ class Busy(RuntimeError):
 
 
 class Broadcasts:
-    def __init__(self, server_url: str, recordings_dir: Path | None = None) -> None:
+    def __init__(self, server_url: str, recordings_dir: Path) -> None:
         self.server_url = server_url
-        self.recordings_dir = Path(recordings_dir or "recordings")
+        self.recordings_dir = Path(recordings_dir)
         self.jobs: dict[str, Job] = {}
 
     def running_for(self, face: str) -> Job | None:
@@ -112,15 +117,16 @@ class Broadcasts:
         async def with_recording(job: Job) -> dict:
             listening = asyncio.Event()
             name = f"{face}-{time.strftime('%Y%m%d-%H%M%S')}.mp4"
-            last = [-1]
+            last = -1
 
             def on_wait() -> None:
                 job.note("record", "recording: listening on the face")
                 listening.set()
 
             def on_progress(i: int, n: int) -> None:
-                if i == n or i * 4 // n > last[0]:  # every quarter, not every frame
-                    last[0] = i * 4 // n
+                nonlocal last
+                if i == n or i * 4 // n > last:  # every quarter, not every frame
+                    last = i * 4 // n
                     job.note("record", f"rendering {i}/{n} frames")
 
             rec = asyncio.create_task(
@@ -151,11 +157,19 @@ class Broadcasts:
                 result = await run(job)
             except BaseException:
                 rec.cancel()
+                if rec.done() and not rec.cancelled():
+                    rec.exception()  # retrieved: the broadcast's own failure is the one to report
                 raise
             try:
-                await rec
+                recording = await rec
             except recorder.RecordError as exc:  # the broadcast went out; only the file failed
                 job.note("error", f"recording failed: {exc}")
+                return result
+            if recording.header.session_id != job.session:  # another source spoke on the face first
+                stem = self.recordings_dir / name
+                for path in (stem, stem.with_suffix(".wav"), stem.with_suffix(".take.ndjson")):
+                    path.unlink(missing_ok=True)
+                job.note("error", "recording failed: it caught another source's session on the face, not this one")
                 return result
             job.files.append(name)
             job.note("file", name)
@@ -221,7 +235,7 @@ class Broadcasts:
                 seed=seed,
                 stream=stream,
                 pause_ms=pause_ms,
-                on_ready=lambda r: job.note("ready", f"session {r.get('session_id')}"),
+                on_ready=job.ready,
                 on_progress=lambda i, n: job.note("progress", f"sentence {i}/{n}"),
                 on_audio=lambda secs: job.note("audio", f"speech: {secs:.2f}s, playing"),
                 on_wait=lambda: job.note("wait", "waiting for the TTS service (a cold model takes a minute or two)"),
@@ -240,7 +254,7 @@ class Broadcasts:
                 mono,
                 rate,
                 seed=seed,
-                on_ready=lambda r: job.note("ready", f"session {r.get('session_id')}"),
+                on_ready=job.ready,
             )
 
         return self._start(face, "push", name, self._recorded(run, face, record) if record else run)
