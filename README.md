@@ -99,6 +99,20 @@ A kiosk for a persona, with the sound on the house speakers (see [House audio](#
 http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
 ```
 
+### Rest sets and idle life
+
+A face at rest shows a **rest set**: a named baseline expression it holds between broadcasts and speaks from. With every weight at zero, most heads look stern (the mouth's corners sit low), so the default is `warm`.
+
+- **Built in:** `neutral`, `calm`, `warm` (the default), `bright`, `attentive`. Each is a few ARKit weights and a `life`, how much the face moves at rest (0 still, 1 the default, up to 2).
+- **Choosing:** Saved faces → open a face → the `rest:` picker beside the poses. An exported face keeps the choice; screens pick it up when they next load the face. A screen can override it with `?rest=calm`, and `?life=0.5` calms the movement.
+- **Your own sets:** `expressions.json` in the assets directory, written by the editor (`PUT /expressions/sets/{name}`) or by hand: `{"sets": {"cheery": {"weights": {"mouthSmileLeft": 0.5, "mouthSmileRight": 0.5}, "life": 1.2}}, "faces": {"ginger-3": "cheery"}}`. A set of the file's own may replace a built-in one. Bad entries are ignored, and `GET /expressions` on the editor says why. The server only reads it, like `aliases.json`.
+- **While speaking:** the brows, eyes and cheeks of the set hold fully, its mouth weights at half, so a face speaks from its mood while the mouth stays the driver's.
+- **Idle life**, while nothing plays: blinks 2 to 5 s apart (some doubled), glances with the head following part of the way, now and then a longer look away, breathing, and small expression shifts that come and go (a lifted brow, a passing smile, a thoughtful press). It is the page's own: never in a take, never in a recording.
+
+### Lips
+
+Audio2Face's weights are tuned for its own character. On another head, the shapes that close the lips (`mouthClose`, `mouthShrugLower`, the rolls, pucker, press) can push the lower lip up through the upper one. The viewer measures, once per face as it loads, how far each mouth shape moves the gap between the lips (`window.__mask.lips`), and on every frame scales the closing shapes down so they never close the lips further than the opening ones (`jawOpen`, funnel, ...) leave room for, plus 1 mm for lips pressing together. `mouthShrugLower` and the rolls also go at 0.7. On ginger-3, over three takes it was not tuned on, lips overlapping by more than 1 mm fell from 24% of frames to 3%, by more than 3 mm from 12% to none; lips still meet for m, b and p. It needs no setting, works for any face with the ARKit mouth shapes, and applies to screens, `record` and the editor's previews alike (`viewer/motion.js`).
+
 ## Viewer
 
 `GET /` serves the viewer. URL parameters:
@@ -118,6 +132,8 @@ http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=75
 | `hair` | `blend` (default: an opaque core, then the fringe blended over it, so wisps fade), `a2c`, `hash`, or `cutout` |
 | `pores` | `0` drops the generated pore detail over a head's baked skin maps (for comparing) |
 | `tone`, `exposure` | tone mapping: `neutral` (default), `agx`, `aces` or `none`; exposure, default `1.0` |
+| `rest` | a rest set to show instead of the face's own (see [Rest sets](#rest-sets-and-idle-life)) |
+| `life` | how much the face moves at rest: `0` still, `1` (default), up to `2` |
 
 The look (`viewer/look.js`, shared with the face editor's previews) lights the head with a three-point rig (warm key, cool fill, cool rims that lift it off a dark background), image-based light from a neutral room, and PBR Neutral tone mapping. On the profiles:
 

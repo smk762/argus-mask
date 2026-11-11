@@ -4,6 +4,7 @@
 ``GET /faces``                        the faces that may be served
 ``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
+``GET /face/{id}/rest``               the rest set it shows (``?set=`` another); ``GET /expressions`` lists them
 ``GET /face/{id}/model``              its ``.glb``
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
@@ -44,12 +45,14 @@ from argus_mask import __version__, client
 from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
+from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
 from argus_mask.faces import Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
     DriverHealth,
     FaceManifest,
     Health,
+    RestSet,
     Screen,
     SourceHello,
     StreamHeader,
@@ -258,6 +261,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
     store = FaceStore(cfg.assets_dir)
     aliases = Aliases(store)
+    expressions = Expressions(cfg.assets_dir)
     stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
     app = FastAPI(
         title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
@@ -300,6 +304,24 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def alias_list() -> dict[str, str]:
         """Stable names for faces (alias -> face id), as the editor set them in the assets' aliases.json."""
         return aliases.all()
+
+    @app.get("/expressions")
+    def expression_list() -> dict:
+        """The rest sets (built in, and the assets' expressions.json), and which one each face chose."""
+        return {
+            "sets": {n: s.model_dump() for n, s in expressions.sets().items()},
+            "faces": expressions.choices(),
+            "default": DEFAULT_SET,
+        }
+
+    @app.get("/face/{face_id}/rest", response_model=RestSet)
+    def face_rest(face_id: str, set: str | None = Query(None, max_length=64)) -> RestSet:  # noqa: A002
+        """The rest set a face shows: its own choice, or ``?set=`` (a screen's ``?rest=``)."""
+        manifest, _ = face_or_404(face_id)
+        try:
+            return expressions.for_face(manifest.id, set)
+        except ExpressionError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/faces", response_model=list[FaceManifest])
     def faces() -> list[FaceManifest]:

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rest sets and idle life**: a face at rest shows a named baseline expression, `warm` by default (also `neutral`,
+  `calm`, `bright`, `attentive`, and your own in the assets' `expressions.json`), chosen per face on Saved faces and
+  served as `GET /face/{id}/rest`; a screen may override it (`?rest=`). While speaking, the set's brows, eyes and cheeks
+  hold and its mouth weights go at half. At rest the face blinks (some doubled), glances with the head following,
+  breathes, and shifts expression now and then (`?life=0` to `2`). Viewer-side only: takes are unchanged.
+- **Lip budget**: the viewer measures how each mouth shape moves the gap between the lips, from the face's own mesh,
+  and scales the lip-closing shapes so the lips never pass through each other (1 mm allowed for pressing), with
+  `mouthShrugLower` and the rolls at 0.7. On ginger-3, lips overlapping by more than 3 mm went from 12% of frames to
+  none, and the lower lip no longer rides up over the upper. Screens, `record` and the editor's previews alike.
+- **The editor's previews speak**: the `speak` pose (now the default) loops 12 s of real Audio2Face motion, with the
+  lip budget, rest set and idle life a screen shows, instead of a sine-wave mouth; a `rest:` picker previews each set.
+
 - **Named TTS speakers and delivery instructions**: a voice written `speaker:<name>` (`--voice`, `ARGUS_MASK_TTS_VOICE`,
   `/speak`'s `voice`) is sent as the service's own speaker, not as a clone, for services that name their speakers, such
   as Qwen3-TTS's CustomVoice (`speaker:Vivian`). `POST /speak` takes an optional `instruction`, how to say it, passed
