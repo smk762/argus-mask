@@ -721,6 +721,7 @@ def _parts(body: dict, pause_ms: int, tidy: bool) -> list[tuple[str, int]]:
     return join_short(parts) if tidy else parts
 
 
+MAX_BUFFERED_S = 600.0  # speech fetched whole before playing (not --stream): 10 minutes, then a clear refusal
 CONTEXT_MAX_S = 15.0  # the longest previous sentence sent as context; Miso takes up to 20 s
 
 
@@ -801,12 +802,14 @@ async def synthesise(
     pieces: list[bytes] = []
     spoken = 0
     fmt: AudioFormat | None = None
+    limit = 0  # bytes of speech allowed in all, once the format is known
     carry = _Carry(tts_url, body, context)
     for i, (text, pauses) in enumerate(parts):
         reply = await _open_part(tts_url, body, parts, i, fmt, on_progress, carry)
         fmt = reply.fmt
+        limit = limit or int(MAX_BUFFERED_S * fmt.sample_rate) * _frame_bytes(fmt)
         try:
-            whole = await _cancellable(asyncio.to_thread(reply.read), cut=reply.cut)
+            whole = await _cancellable(asyncio.to_thread(_read_capped, reply, limit - spoken), cut=reply.cut)
         except OSError as exc:
             raise ClientError(f"the TTS stream broke: {exc}") from exc
         finally:
@@ -820,6 +823,21 @@ async def synthesise(
             pieces.append(_silence(fmt, pause_ms * pauses))
     assert fmt is not None  # parts is never empty
     return b"".join(pieces), fmt, spoken / _frame_bytes(fmt) / fmt.sample_rate
+
+
+def _read_capped(reply: TtsReply | WyomingReply, allowed: int) -> bytes:
+    """All of *reply*, refusing once it passes *allowed* bytes: a service that never stops must not fill memory."""
+    chunks: list[bytes] = []
+    got = 0
+    while data := reply.read(1 << 20):
+        got += len(data)
+        if got > allowed:
+            raise ClientError(
+                f"the TTS service sent more than {MAX_BUFFERED_S / 60:g} minutes of speech: send less text at a time, "
+                "or use --stream"
+            )
+        chunks.append(data)
+    return b"".join(chunks)
 
 
 async def _cancellable(awaitable, *, cut: Callable[[], None] | None):  # noqa: ANN001, ANN202
