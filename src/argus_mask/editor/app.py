@@ -67,7 +67,7 @@ from argus_mask.editor.voices import (
     provenance,
     wav_bytes,
 )
-from argus_mask.faces import FaceError, FaceStore
+from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards
 from argus_mask.voice import analyse, assess
@@ -186,6 +186,11 @@ class VoiceTry(BaseModel):
     tts_url: str = Field("", max_length=500)
 
 
+class AliasTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    face: str = Field(..., pattern=FACE_ID_PATTERN)
+
+
 class Rename(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = Field(None, pattern=FACE_ID_PATTERN)
@@ -210,6 +215,7 @@ def create_editor_app(
         cache_size=ed.build_cache,
     )
     store = FaceStore(cfg.assets_dir)
+    aliases = Aliases(store)
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
@@ -368,12 +374,19 @@ def create_editor_app(
             raise HTTPException(409, str(exc)) from exc
         except (BuildError, OSError, ValueError) as exc:
             raise HTTPException(500, f"rename failed: {exc}") from exc
+        if new_id != face_id:
+            aliases.repoint(face_id, new_id)  # an alias follows its face to the new id
         return {"id": new_id}
 
     @app.delete("/saved/{face_id}")
     async def delete(face_id: str, where: str | None = Query(None, alias="from")) -> dict:
         if where not in (None, *PLACES):
             raise HTTPException(422, "from is preview or export")
+        if where in (None, "export") and (names := aliases.pointing_at(face_id)):
+            raise HTTPException(
+                409,
+                f"{', '.join(names)} {'points' if len(names) == 1 else 'point'} at {face_id}: point it elsewhere first",
+            )
         try:
             trash = await builder.delete(face_id, (where,) if where else PLACES)
         except NoPreview as exc:
@@ -383,6 +396,31 @@ def create_editor_app(
         except OSError as exc:
             raise HTTPException(500, f"delete failed: {exc}") from exc
         return {"trash": str(trash)}
+
+    # ---- aliases: stable names for faces (a persona's "holly"), kept in the assets' aliases.json -------
+
+    @app.get("/aliases")
+    def alias_list() -> dict:
+        return {"aliases": aliases.all(), "problems": aliases.problems()}
+
+    @app.put("/aliases/{name}")
+    def alias_set(name: str, target: AliasTarget) -> dict:
+        """Make an alias, or point it at another face. Screens watching it load the new face on its next stream."""
+        try:
+            aliases.set(name, target.face)
+        except AliasError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {aliases.path.name}: {exc}") from exc
+        log.info("alias_set", alias=name, face=target.face)
+        return {"alias": name, "face": target.face}
+
+    @app.delete("/aliases/{name}")
+    def alias_remove(name: str) -> dict:
+        if not _FACE_ID.match(name) or not aliases.remove(name):
+            raise HTTPException(404, f"no alias {name!r}")
+        log.info("alias_removed", alias=name)
+        return {"removed": name}
 
     # ---- from the editor to a screen ------------------------------------------------------------
 
@@ -410,11 +448,13 @@ def create_editor_app(
         if not _FACE_ID.match(face_id):
             raise HTTPException(404, f"{face_id!r} is not a face id")
         try:
-            store.load(face_id)
+            store.load(aliases.resolve(face_id))
             exported = True
         except FaceError:
             exported = False
         out = await on_server(face_id) | {"face": face_id, "exported": exported}
+        if aliases.resolve(face_id) != face_id:
+            out["alias_of"] = aliases.resolve(face_id)
         if not exported:
             out["hint"] = "Only an exported face can go on a screen: Export it first. A preview is never served."
         elif not out["server_ok"]:
@@ -484,6 +524,10 @@ def create_editor_app(
                     {"id": f["id"], "name": f.get("name") or f["id"], "kind": (f.get("provenance") or {}).get("kind")}
                     for f in (faces or [])
                     if isinstance(f, dict) and f.get("id")
+                ]
+                + [
+                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias"}
+                    for alias, face in (health.get("aliases") or {}).items()
                 ],
             }
         return out

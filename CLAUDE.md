@@ -21,7 +21,7 @@ Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus) (`
 - `speech.py`: what `say` does to text and audio by default (`--as-is` turns it off): numbers as words (`speakable`), short sentences joined (`join_short`), fades and levelling (`tidy_audio`, `Edges` for streams). Pure.
 - `voice.py`: checks a reference clip for a cloned voice (`analyse`) and a set of them (`assess`), each check with a verdict and advice. Pure numpy.
 - `take.py`: take files (`.ndjson`) and `line()`, the one place a message becomes JSON.
-- `faces.py`: reads a `.glb` with the standard library, checks it against the contract, and `FaceStore` decides which faces may be served.
+- `faces.py`: reads a `.glb` with the standard library, checks it against the contract, and `FaceStore` decides which faces may be served. `Aliases` keeps stable names for faces (`aliases.json` in the assets root, written by the editor, read by the server; sources and viewers meet on the name they use).
 - `config.py`: `Settings.from_env()` (`ARGUS_MASK_*`).
 - `client.py`: `push` and `say`, clients of the source socket.
 - `server/app.py`: `create_app()`. Routes, the two sockets, the `Stage` per face. `perform()` is the one source path: the source socket, `POST /push` (a WAV or raw PCM, paced at the speed of speech) and `POST /speak` (text through `ARGUS_MASK_TTS_URL`) all call it.

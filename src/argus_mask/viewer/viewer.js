@@ -158,6 +158,7 @@ async function loadFace() {
   resize();
   look.focus(gltf.scene);
   state.face = faceId;
+  state.faceShown = manifest.id;   // the face itself: faceId may be an alias for it
   state.ready = true;
   return faceId;
 }
@@ -233,6 +234,9 @@ let current = null;        // Float32Array of the weights on screen
 const head = { yaw: 0, pitch: 0, roll: 0 };
 
 function onHeader(header) {
+  // An alias (?face=holly) repointed to another face since this page loaded it: load the new one.
+  // The stream goes on meanwhile, and the reloaded page joins it where it has got to.
+  if (header.face_id && state.faceShown && header.face_id !== state.faceShown) { location.reload(); return; }
   names = header.blendshapes;
   sampleRate = header.audio.sample_rate;
   queue = [];

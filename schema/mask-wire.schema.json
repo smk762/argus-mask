@@ -229,6 +229,14 @@
     },
     "Health": {
       "properties": {
+        "aliases": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Stable names for faces: alias -> the face id it stands for now",
+          "title": "Aliases",
+          "type": "object"
+        },
         "driver": {
           "$ref": "#/$defs/DriverHealth"
         },
@@ -271,7 +279,7 @@
             },
             "type": "array"
           },
-          "description": "Per face, the viewers watching it that have reported their state",
+          "description": "Per face (or alias, by the name the viewers used), the viewers that have reported their state",
           "title": "Screens",
           "type": "object"
         },

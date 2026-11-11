@@ -83,6 +83,22 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
     --distance 0.9 --height -0.08
 ```
 
+### Face aliases
+
+An alias is a stable name for a face: `holly` for a persona's face, used by the agent that speaks and by the kiosk that shows it, while which face stands behind it is chosen in the editor. Mithrandir names `holly` once; changing her face is a click on **Saved faces**, not a config change.
+
+- **Where:** `aliases.json` in the assets directory, `{"aliases": {"holly": "ginger-3"}}`. The editor writes it (Saved faces → Aliases: add, repoint, remove, open on a screen); the server only reads it, so its assets mount may stay read-only, and it reads it again whenever it changes: no restart.
+- **Everywhere a face is named:** `/face/holly`, `/face/holly/model`, `/session/holly/view` and `/source`, `POST /push?face=holly`, `/speak`. `GET /aliases` and `/health`'s `aliases` list them; `/faces` lists faces only, as before.
+- **Sources and screens meet on the name they use.** A source on `holly` reaches screens watching `holly`, and `/health`'s `live` and `screens` list `holly`. A push to `ginger-3` directly reaches screens watching `ginger-3`, not `holly`.
+- **Repointing:** new connections get the new face at once. A screen already watching `holly` switches on the next thing said: each stream's header names the face itself, and a viewer that loaded another face reloads, with its URL, and joins the stream where it has got to.
+- **Rules:** an alias is a face id that isn't a face's directory (it never hides a face), it points at a face the server serves, and never at another alias. An entry that breaks a rule is ignored (the editor shows why). Renaming a face in the editor carries its aliases along; deleting one an alias points at is refused until the alias points elsewhere.
+
+A kiosk for a persona, with the sound on the house speakers (see [House audio](#house-audio-snapcast)):
+
+```
+http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
+```
+
 ## Viewer
 
 `GET /` serves the viewer. URL parameters:

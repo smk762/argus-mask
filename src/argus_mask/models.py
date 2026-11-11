@@ -169,7 +169,11 @@ class Health(BaseModel):
     faces: int
     live: list[str] = Field(default_factory=list, description="Faces with a source connected")
     screens: dict[str, list[Screen]] = Field(
-        default_factory=dict, description="Per face, the viewers watching it that have reported their state"
+        default_factory=dict,
+        description="Per face (or alias, by the name the viewers used), the viewers that have reported their state",
+    )
+    aliases: dict[str, str] = Field(
+        default_factory=dict, description="Stable names for faces: alias -> the face id it stands for now"
     )
 
 

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Face aliases** (#41): a stable name for a face, such as `holly` for a persona, that the agent speaking and the
+  kiosk showing it use for good while the face behind it is chosen in the editor (Saved faces → Aliases: add,
+  repoint, remove, open on a screen). Kept in the assets' `aliases.json`, written by the editor and read by the server
+  whenever it changes, so its read-only mount and no restart. Every route that names a face takes an alias; sources
+  and screens meet on the name they use; `GET /aliases` and `/health`'s `aliases` list them, `/faces` is unchanged. A
+  screen watching an alias that is repointed loads the new face on the next stream, whose header names the face
+  itself. An alias never hides a face, points only at a served face and never at another alias; renaming a face
+  carries its aliases, deleting one an alias points at is refused.
 - **Record a broadcast from the Broadcast page**: a Record to file switch (frame size, look) for Say and Push. The
   recorder listens on the face first, the broadcast goes, then the clip renders and muxes, as `argus-mask record` does,
   into `ARGUS_MASK_RECORDINGS_DIR`; the page plays it, offers it to download and lists recent clips. `record` now
