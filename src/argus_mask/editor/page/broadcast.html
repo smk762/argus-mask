@@ -47,6 +47,15 @@
   .temp input[type=range]:disabled { opacity: .35; }
   .temp output { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
   .temp label.check { font-size: 12px; color: var(--dim); }
+  .info { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; padding: 0;
+          border-radius: 50%; border: 1px solid var(--dim); background: none; color: var(--dim); font: 600 10px/1 system-ui, sans-serif;
+          cursor: help; vertical-align: 1px; }
+  .info:hover, .info:focus-visible { color: var(--text); border-color: var(--text); outline: none; }
+  .info .tip { display: none; position: absolute; z-index: 10; left: -8px; top: calc(100% + 8px); width: min(340px, 80vw);
+               padding: 10px 12px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line);
+               box-shadow: 0 8px 24px rgba(0, 0, 0, .45); color: var(--text); font: 12px/1.5 system-ui, sans-serif; text-align: left; cursor: default; }
+  .info:hover .tip, .info:focus .tip { display: grid; gap: 6px; }
+  .info .tip b { color: var(--accent); font-weight: 600; }
   .params .row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; margin-bottom: 6px; }
   .hint { font-size: 12px; color: var(--dim); }
   .warnline { font-size: 13px; color: var(--warn); }
@@ -102,8 +111,14 @@
         <label>Pause between sentences, ms <input type="number" id="pause" min="0" max="10000" step="50" value="300"></label>
         <label>Seed (idle layer) <input type="number" id="seed" min="0" value="0"></label>
       </div>
-      <div class="temp" title="Sampling temperature, sent as the request's temperature field. Lower is steadier, higher more varied. Miso takes 0.1 to 1.5; left at the default, the service uses its own (or the clone's pinned) value.">
-        <span>Temperature</span>
+      <div class="temp">
+        <span>Temperature<button type="button" class="info" aria-label="What temperature does" aria-describedby="temp-tip">i<span class="tip" id="temp-tip" role="tooltip">
+          <span>How freely the voice is sampled, sentence by sentence. It changes the delivery, not the words you send.</span>
+          <span><b>Lower, 0.5 to 0.7:</b> steadier and more even from one sentence to the next, with fewer skipped or invented words. Too low (under about 0.4) can sound flat, or loop and stall.</span>
+          <span><b>About 0.9:</b> Miso's default. Natural variation.</span>
+          <span><b>Higher, 1.0 to 1.5:</b> more expressive but less predictable. Tone and pitch jump between sentences, and words are more often slurred or made up.</span>
+          <span><b>Service default:</b> sends no temperature, so the service (or the clone's pinned value) decides. Miso takes 0.1 to 1.5.</span>
+        </span></button></span>
         <input type="range" id="temp" min="0.1" max="1.5" step="0.05" value="0.9">
         <output id="temp-out">0.90</output>
         <label class="check"><input type="checkbox" id="temp-default" checked> service default</label>
@@ -130,7 +145,7 @@
     </form>
     <div class="rec">
       <label class="check" title="Record this broadcast to an MP4, as argus-mask record does: it listens first, then renders every frame with the audio once the broadcast ends"><input type="checkbox" id="record"> Record to file</label>
-      <select id="rec-size" title="Frame size"><option value="1280x720">1280×720</option><option value="1920x1080">1920×1080</option><option value="1080x1920">1080×1920 (HLD portrait)</option></select>
+      <select id="rec-size" title="Frame size"><option value="1920x1080">1080p (1920×1080)</option><option value="1280x720" selected>720p (1280×720)</option><option value="854x480">480p (854×480)</option><option value="1080x1920">HLD portrait (1080×1920)</option></select>
       <select id="rec-quality" title="The viewer's look while rendering"><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select>
       <span class="hint" id="rec-hint"></span>
     </div>

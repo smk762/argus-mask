@@ -1165,6 +1165,30 @@ def test_a_broadcast_can_be_recorded_to_a_file(recording_rig, tmp_path) -> None:
         assert c.get(f"/recordings/{name}").content.startswith(b"\x00\x00\x00\x18ftyp")
 
 
+@pytest.mark.parametrize(
+    ("size", "frame", "display"),
+    [
+        ("1920x1080", (1920, 1080), "flat"),
+        ("1280x720", (1280, 720), "flat"),
+        ("854x480", (854, 480), "flat"),
+        ("1080x1920", (1080, 1920), "hld"),
+    ],
+)
+def test_recording_presets_give_their_frame_size(size, frame, display) -> None:
+    from argus_mask.editor.app import Record  # noqa: PLC0415
+
+    options = Record(size=size).options()
+    assert (options.width, options.height) == frame and options.display == display
+    assert all(n % 2 == 0 for n in frame)  # yuv420p needs even sides
+
+
+def test_an_unknown_recording_size_is_refused() -> None:
+    from argus_mask.editor.app import Record  # noqa: PLC0415
+
+    with pytest.raises(ValueError):
+        Record(size="853x480")
+
+
 def test_recording_is_refused_when_the_editor_cannot_record(recording_rig, monkeypatch) -> None:
     import argus_mask.editor.app as editor_app  # noqa: PLC0415
 

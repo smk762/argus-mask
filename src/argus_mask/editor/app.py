@@ -102,7 +102,8 @@ def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
             raise AudioError(str(exc).replace(handle.name, name)) from exc
 
 
-SIZES = {"1280x720": (1280, 720), "1920x1080": (1920, 1080), "1080x1920": (1080, 1920)}  # 1080x1920: the HLD panel
+RecordSize = Literal["1920x1080", "1280x720", "854x480", "1080x1920"]  # 1080p, 720p, 480p; 1080x1920: the HLD panel
+RecordQuality = Literal["low", "medium", "high"]
 _RECORDING = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(mp4|webm|wav|ndjson)$")
 
 
@@ -110,11 +111,11 @@ class Record(BaseModel):
     """Record the broadcast to an MP4, as `argus-mask record` does."""
 
     model_config = ConfigDict(extra="forbid")
-    size: Literal["1280x720", "1920x1080", "1080x1920"] = "1280x720"
-    quality: Literal["low", "medium", "high"] = "high"
+    size: RecordSize = "1280x720"
+    quality: RecordQuality = "high"
 
     def options(self) -> RecordOptions:
-        width, height = SIZES[self.size]
+        width, height = (int(n) for n in self.size.split("x"))
         return RecordOptions(width=width, height=height, quality=self.quality)
 
 
@@ -488,8 +489,8 @@ def create_editor_app(
         seed: int = Query(0, ge=0, le=2**31 - 1),
         name: str = Query("audio.wav", max_length=200),
         record: bool = Query(False, description="also record the broadcast to a file"),
-        record_size: Literal["1280x720", "1920x1080", "1080x1920"] = Query("1280x720"),
-        record_quality: Literal["low", "medium", "high"] = Query("high"),
+        record_size: RecordSize = Query("1280x720"),
+        record_quality: RecordQuality = Query("high"),
     ) -> dict:
         """An audio file (WAV) for a face, as `argus-mask push` plays one: the request's body is the file."""
         if record and (why_not := recording_ready()) is not None:
@@ -530,11 +531,14 @@ def create_editor_app(
         root = ed.recordings_dir
         if not root.is_dir():
             return []
-        clips = [
-            p for p in root.iterdir() if p.is_file() and p.suffix in (".mp4", ".webm") and _RECORDING.match(p.name)
-        ]
-        clips.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        return [{"name": p.name, "bytes": p.stat().st_size, "modified": p.stat().st_mtime} for p in clips]
+        clips = []
+        for p in root.iterdir():
+            if p.suffix in (".mp4", ".webm") and _RECORDING.match(p.name):
+                with contextlib.suppress(OSError):  # gone, or not a file, between the listing and the look
+                    if p.is_file():
+                        clips.append((p.name, p.stat()))
+        clips.sort(key=lambda c: c[1].st_mtime, reverse=True)
+        return [{"name": name, "bytes": st.st_size, "modified": st.st_mtime} for name, st in clips]
 
     @app.get("/recordings/{name}")
     def recording(name: str) -> FileResponse:
