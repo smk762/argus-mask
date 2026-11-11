@@ -39,6 +39,7 @@ import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import structlog
@@ -50,7 +51,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, read_wav
 from argus_mask.config import EditorSettings, Settings
-from argus_mask.editor.broadcast import Broadcasts
+from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
@@ -101,6 +102,22 @@ def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
             raise AudioError(str(exc).replace(handle.name, name)) from exc
 
 
+SIZES = {"1280x720": (1280, 720), "1920x1080": (1920, 1080), "1080x1920": (1080, 1920)}  # 1080x1920: the HLD panel
+_RECORDING = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(mp4|webm|wav|ndjson)$")
+
+
+class Record(BaseModel):
+    """Record the broadcast to an MP4, as `argus-mask record` does."""
+
+    model_config = ConfigDict(extra="forbid")
+    size: Literal["1280x720", "1920x1080", "1080x1920"] = "1280x720"
+    quality: Literal["low", "medium", "high"] = "high"
+
+    def options(self) -> RecordOptions:
+        width, height = SIZES[self.size]
+        return RecordOptions(width=width, height=height, quality=self.quality)
+
+
 class Say(BaseModel):
     """Everything `argus-mask say` takes, as the Broadcast page sends it."""
 
@@ -113,6 +130,7 @@ class Say(BaseModel):
     seed: int = Field(0, ge=0, le=2**31 - 1)
     stream: bool = False
     pause: int = Field(300, ge=0, le=10_000, description="ms between sentences; 0 sends the text whole")
+    record: Record | None = Field(None, description="also record the broadcast to a file")
 
 
 class Rename(BaseModel):
@@ -140,7 +158,7 @@ def create_editor_app(
     )
     store = FaceStore(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
-    broadcasts = Broadcasts(ed.server_url)
+    broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -396,6 +414,7 @@ def create_editor_app(
             "tts_voice": cfg.tts_voice,
             "faces": [],
             "jobs": [j.public() for j in broadcasts.jobs.values() if j.state == "running"],
+            "record": {"ok": (why_not := recording_ready()) is None, "reason": why_not, "dir": str(ed.recordings_dir)},
         }
         if status == 200 and isinstance(health, dict):
             _, faces, _ = await asyncio.to_thread(server_get, ed.server_url, "/faces")
@@ -443,8 +462,18 @@ def create_editor_app(
             raise HTTPException(422, "a TTS service is needed: an http(s):// or wyoming:// URL (or ARGUS_MASK_TTS_URL)")
         await served(req.face)
         body = client.voiced({**req.params, "text": req.text}, req.voice or cfg.tts_voice, tts_url)
+        if req.record is not None and (why_not := recording_ready()) is not None:
+            raise HTTPException(422, why_not)
         try:
-            job = broadcasts.say(req.face, tts_url, body, seed=req.seed, stream=req.stream, pause_ms=req.pause)
+            job = broadcasts.say(
+                req.face,
+                tts_url,
+                body,
+                seed=req.seed,
+                stream=req.stream,
+                pause_ms=req.pause,
+                record=req.record.options() if req.record else None,
+            )
         except Broadcasting as exc:
             raise HTTPException(409, str(exc)) from exc
         log.info("broadcast", face=req.face, kind="say", chars=len(req.text))  # never the text itself
@@ -456,8 +485,13 @@ def create_editor_app(
         face: str = Query(..., pattern=FACE_ID_PATTERN),
         seed: int = Query(0, ge=0, le=2**31 - 1),
         name: str = Query("audio.wav", max_length=200),
+        record: bool = Query(False, description="also record the broadcast to a file"),
+        record_size: Literal["1280x720", "1920x1080", "1080x1920"] = Query("1280x720"),
+        record_quality: Literal["low", "medium", "high"] = Query("high"),
     ) -> dict:
         """An audio file (WAV) for a face, as `argus-mask push` plays one: the request's body is the file."""
+        if record and (why_not := recording_ready()) is not None:
+            raise HTTPException(422, why_not)
         too_big = HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
         declared = request.headers.get("content-length") or "0"
         if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
@@ -475,11 +509,38 @@ def create_editor_app(
         except AudioError as exc:
             raise HTTPException(422, str(exc)) from exc
         try:
-            job = broadcasts.push(face, mono, rate, seed=seed, name=name)
+            job = broadcasts.push(
+                face,
+                mono,
+                rate,
+                seed=seed,
+                name=name,
+                record=Record(size=record_size, quality=record_quality).options() if record else None,
+            )
         except Broadcasting as exc:
             raise HTTPException(409, str(exc)) from exc
         log.info("broadcast", face=face, kind="push", seconds=round(len(mono) / rate, 2))
         return job.public()
+
+    @app.get("/recordings")
+    def recordings() -> list[dict]:
+        """The clips recorded here, newest first."""
+        root = ed.recordings_dir
+        if not root.is_dir():
+            return []
+        clips = [
+            p for p in root.iterdir() if p.is_file() and p.suffix in (".mp4", ".webm") and _RECORDING.match(p.name)
+        ]
+        clips.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return [{"name": p.name, "bytes": p.stat().st_size, "modified": p.stat().st_mtime} for p in clips]
+
+    @app.get("/recordings/{name}")
+    def recording(name: str) -> FileResponse:
+        """One recorded file: a plain name in the recordings directory, nothing else."""
+        path = ed.recordings_dir / name
+        if not _RECORDING.match(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
+            raise HTTPException(404, "no such recording")
+        return FileResponse(path, filename=name)
 
     @app.get("/broadcast/{job_id}")
     def broadcast_job(job_id: str) -> dict:

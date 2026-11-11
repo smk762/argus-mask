@@ -358,6 +358,11 @@ def editor(
     viewer_url: str | None = Option(
         None, "--viewer-url", help="The origin screens open the viewer at (a TLS proxy on a LAN); default: the server's"
     ),
+    recordings_dir: Path | None = Option(
+        None,
+        "--recordings-dir",
+        help="Where the Broadcast page records clips; default: ARGUS_MASK_RECORDINGS_DIR or ./recordings",
+    ),
 ) -> None:
     """Run the face editor: build heads from presets with headless Blender and MPFB."""
     from dataclasses import replace
@@ -386,6 +391,8 @@ def editor(
             ed = replace(ed, server_url=server_url.rstrip("/"))
         if viewer_url is not None:
             ed = replace(ed, viewer_url=viewer_url.rstrip("/"))
+        if recordings_dir is not None:
+            ed = replace(ed, recordings_dir=recordings_dir)
     except ConfigError as exc:
         raise _fail(str(exc)) from exc
     uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)

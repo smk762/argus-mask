@@ -13,6 +13,7 @@ playwright: ``playwright install chromium-headless-shell`` once.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import struct
@@ -79,11 +80,13 @@ async def capture(base: str, face_id: str, *, on_wait: Callable[[], None] | None
         import websockets  # noqa: PLC0415
     except ImportError as exc:
         raise RecordError("record needs websockets: install argus-mask[cli]") from exc
-    if on_wait:
-        on_wait()
     recording: Recording | None = None
     try:
         async with websockets.connect(view_url(base, face_id), max_size=2**22, proxy=None) as ws:
+            # Only now: a session that starts before the socket is open is skipped, so whoever starts one
+            # on this signal (the editor's Broadcast page does) must not be told any earlier.
+            if on_wait:
+                on_wait()
             async for raw in ws:
                 if isinstance(raw, bytes):
                     if recording is not None:
@@ -263,8 +266,9 @@ async def record(
     out.parent.mkdir(parents=True, exist_ok=True)
     stem = out.with_suffix("")
     wav, take = Path(f"{stem}.wav"), Path(f"{stem}.take.ndjson")
-    write_wav(wav, recording)
-    write_take(take, recording)
+    # Off the event loop: the editor records inside its own server, and must keep answering meanwhile.
+    await asyncio.to_thread(write_wav, wav, recording)
+    await asyncio.to_thread(write_take, take, recording)
     frames_dir = Path(f"{stem}.frames")
     shutil.rmtree(frames_dir, ignore_errors=True)  # frames kept from an earlier, longer clip would join this one
     # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
@@ -279,7 +283,7 @@ async def record(
         on_progress=on_progress,
         on_renderer=on_renderer,
     )
-    mux(frames_dir, wav, out, recording.header.fps)
+    await asyncio.to_thread(mux, frames_dir, wav, out, recording.header.fps)
     if not keep:
         shutil.rmtree(frames_dir, ignore_errors=True)
     return recording

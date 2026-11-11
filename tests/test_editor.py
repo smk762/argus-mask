@@ -1087,3 +1087,95 @@ def test_the_voices_come_from_a_miso_style_http_service(broadcasting) -> None:
         assert voiced({}, "clone:inara-nobility", tts) == {"voice_clone_id": "inara-nobility"}
     with fake_tts(tone(0.1)) as (tts, _), broadcasting(tts) as (c, _):  # answers neither list
         assert c.get("/voices").json()["listed"] is False
+
+
+# ---- recording a broadcast ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def recording_rig(rig, tmp_path, monkeypatch):
+    """A server and an editor that records into tmp_path/clips, with rendering and muxing stood in for:
+    the recorder really listens on the face's socket and captures the session; no browser is needed."""
+    from contextlib import contextmanager  # noqa: PLC0415
+    from dataclasses import replace  # noqa: PLC0415
+
+    import argus_mask.editor.app as editor_app  # noqa: PLC0415
+    from argus_mask import record as recorder  # noqa: PLC0415
+    from tests.helpers import live_server  # noqa: PLC0415
+
+    rendered = []
+
+    async def render_frames(page_url, recording, frames_dir, **kw):  # noqa: ANN001, ANN003
+        rendered.append((page_url, len(recording.frames), kw.get("width"), kw.get("height")))
+        frames_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(recorder, "render_frames", render_frames)
+    monkeypatch.setattr(
+        recorder, "mux", lambda frames, wav, out, fps: out.write_bytes(b"\x00\x00\x00\x18ftypmp42 a clip")
+    )
+    monkeypatch.setattr(editor_app, "recording_ready", lambda: None)
+    make_face(rig["assets"], "stock-01")
+    clips = tmp_path / "clips"
+
+    @contextmanager
+    def run():
+        with live_server(create_app(Settings(assets_dir=rig["assets"]))) as url:
+            ed = replace(rig["editor"], server_url=url, recordings_dir=clips)
+            with TestClient(editor_app.create_editor_app(Settings(assets_dir=rig["assets"]), ed)) as c:
+                yield c
+
+    return run, clips, rendered
+
+
+def test_a_broadcast_can_be_recorded_to_a_file(recording_rig, tmp_path) -> None:
+    from tests.helpers import write_wav  # noqa: PLC0415
+
+    run, clips, rendered = recording_rig
+    wav = write_wav(tmp_path / "hello.wav", tone(0.5)).read_bytes()
+    with run() as c:
+        assert c.get("/broadcast/state").json()["record"]["ok"] is True
+        params = {
+            "face": "stock-01",
+            "name": "hello.wav",
+            "record": "1",
+            "record_size": "1080x1920",
+            "record_quality": "medium",
+        }
+        job = finished(c, c.post("/broadcast/push", params=params, content=wav).json())
+        assert job["state"] == "done", job["events"]
+        [name] = job["files"]
+        kinds = [e["kind"] for e in job["events"]]
+        # The recorder listens before the broadcast starts, so the whole session is in the clip.
+        assert kinds.index("record") < kinds.index("ready") and kinds[-1] == "done" and "file" in kinds
+        assert name.startswith("stock-01-") and name.endswith(".mp4")
+        assert (clips / name).is_file() and (clips / name.replace(".mp4", ".wav")).is_file()
+        assert (clips / name.replace(".mp4", ".take.ndjson")).is_file()
+        [(page_url, frames, width, height)] = rendered
+        assert frames > 0 and (width, height) == (1080, 1920)
+        assert "display=hld" in page_url and "quality=medium" in page_url and "face=stock-01" in page_url
+        assert [r["name"] for r in c.get("/recordings").json()] == [name]
+        assert c.get(f"/recordings/{name}").content.startswith(b"\x00\x00\x00\x18ftyp")
+
+
+def test_recording_is_refused_when_the_editor_cannot_record(recording_rig, monkeypatch) -> None:
+    import argus_mask.editor.app as editor_app  # noqa: PLC0415
+
+    run, _, _ = recording_rig
+    monkeypatch.setattr(editor_app, "recording_ready", lambda: "recording needs argus-mask[record]")
+    with run() as c:
+        state = c.get("/broadcast/state").json()["record"]
+        assert state == {"ok": False, "reason": "recording needs argus-mask[record]", "dir": state["dir"]}
+        body = {"face": "stock-01", "text": "hi", "tts_url": "wyoming://127.0.0.1:1", "record": {"size": "1280x720"}}
+        reply = c.post("/broadcast/say", json=body)
+        assert reply.status_code == 422 and "argus-mask[record]" in reply.json()["detail"]
+
+
+def test_only_recordings_are_served_from_the_recordings_directory(recording_rig, tmp_path) -> None:
+    run, clips, _ = recording_rig
+    clips.mkdir(parents=True, exist_ok=True)
+    (clips / "kept.mp4").write_bytes(b"clip")
+    (tmp_path / "secret.mp4").write_bytes(b"not yours")
+    with run() as c:
+        assert c.get("/recordings/kept.mp4").content == b"clip"
+        for bad in ["../secret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "nothere.mp4"]:
+            assert c.get(f"/recordings/{bad}").status_code == 404, bad
