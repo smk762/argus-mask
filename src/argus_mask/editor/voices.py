@@ -33,6 +33,7 @@ import numpy as np
 import structlog
 
 from argus_mask import client
+from argus_mask.audio import PcmDecoder
 from argus_mask.voice import analyse
 
 log = structlog.get_logger(__name__)
@@ -57,13 +58,8 @@ def wav_bytes(samples: np.ndarray, rate: int) -> bytes:
 
 
 def pcm_to_float(data: bytes, fmt) -> np.ndarray:  # noqa: ANN001 - an AudioFormat
-    frame = (4 if fmt.format == "f32le" else 2) * fmt.channels
-    data = data[: len(data) - len(data) % frame]
-    if fmt.format == "f32le":
-        samples = np.frombuffer(data, dtype="<f4").astype(np.float32)
-    else:
-        samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
-    return samples.reshape(-1, fmt.channels).mean(axis=1)
+    """Whole PCM in the service's format as mono float32, as the server decodes a source's audio."""
+    return PcmDecoder(fmt).feed(data)
 
 
 class VoiceError(ValueError):
@@ -209,12 +205,12 @@ class Generations:
                 samples = pcm_to_float(data, reply.fmt)
                 if not len(samples):
                     raise client.ClientError("the TTS service sent no audio")
-                pad = np.zeros(int(PAD_S * reply.fmt.sample_rate), np.float32)
-                wav = wav_bytes(np.concatenate([pad, samples, pad]), reply.fmt.sample_rate)
-                sha = self.store.stage(wav)
-                report = analyse(
-                    np.concatenate([pad, samples, pad]), reply.fmt.sample_rate, body["text"], generated=True
-                )
+                rate = reply.fmt.sample_rate
+                pad = np.zeros(int(PAD_S * rate), np.float32)
+                padded = np.concatenate([pad, samples, pad])
+                # off the event loop: the editor keeps answering while the clip is written and measured
+                sha = await asyncio.to_thread(self.store.stage, wav_bytes(padded, rate))
+                report = await asyncio.to_thread(analyse, padded, rate, body["text"], generated=True)
                 job.result = {"sha": sha, "transcript": body["text"], "report": report.public()}
                 job.state = "done"
             except client.ClientError as exc:

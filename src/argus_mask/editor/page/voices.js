@@ -87,7 +87,8 @@ function wavFrom(buffer) {
 async function check(clip, blob) {
   clip.checking = true; clip.error = null; paintClips();
   try {
-    const body = blob ?? await (await fetch(`/voice/clip/${clip.sha}`)).blob();
+    if (!blob && !clip.url && !clip.sha) throw new Error('This clip could not be read: remove it and add the file again.');
+    const body = blob ?? await (await fetch(clip.url || `/voice/clip/${clip.sha}`)).blob();
     const q = new URLSearchParams({ name: clip.name, transcript: clip.transcript });
     const done = await json(`/voice/check?${q}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body });
     clip.sha = done.sha; clip.report = done.report;

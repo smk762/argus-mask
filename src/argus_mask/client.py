@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import http.client
 import json
 import re
+import secrets
 import socket
 import time
 import urllib.error
@@ -59,6 +59,14 @@ _FORMATS = {"pcm_f32le": "f32le", "f32le": "f32le", "pcm_s16le": "s16le", "s16le
 
 class ClientError(RuntimeError):
     """The server or the TTS service refused, or went away."""
+
+
+class ServiceRefused(ClientError):
+    """An HTTP TTS service answered with an error *status*."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def _session_url(base: str, face_id: str, end: str) -> str:
@@ -356,7 +364,7 @@ def _http_call(method: str, url: str, body: bytes | None, headers: dict, timeout
             detail = str(parsed.get("error") or parsed.get("detail") or detail) if isinstance(parsed, dict) else detail
         except ValueError:
             pass
-        raise ClientError(f"the TTS service answered {exc.code}: {detail}") from exc
+        raise ServiceRefused(f"the TTS service answered {exc.code}: {detail}", exc.code) from exc
     except OSError as exc:
         raise ClientError(f"the TTS service at {url} does not answer: {exc}") from exc
     try:
@@ -375,7 +383,8 @@ def clone_voice(tts_url: str, voice_id: str, name: str, clips: list[tuple[str, b
     base = http_base(tts_url)
     if base is None:
         raise ClientError("making a voice needs an HTTP TTS service with the /synthesise contract (Miso)")
-    boundary = "argus-mask-" + hashlib.sha256(b"".join(data for _, data in clips)).hexdigest()[:24]
+    # Random, so no field (a transcript, a name) can know it and close its part early to forge another.
+    boundary = "argus-mask-" + secrets.token_hex(12)
     parts: list[bytes] = []
 
     def field(name_: str, value: str) -> None:
@@ -633,8 +642,7 @@ async def say(
         )
         if on_audio:
             on_audio(seconds)
-        frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
-        block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+        block = fmt.sample_rate // 10 * _frame_bytes(fmt)  # ~100 ms
         lead, tail = _silence(fmt, SAY_LEAD_MS), _silence(fmt, SAY_TAIL_MS)
 
         async def buffered() -> AsyncIterator[bytes]:
@@ -650,8 +658,7 @@ async def say(
         on_wait()
     reply = await _open_part(tts_url, body, parts, 0, None, on_progress)
     fmt = reply.fmt
-    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
-    block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+    block = fmt.sample_rate // 10 * _frame_bytes(fmt)  # ~100 ms
 
     async def streamed() -> AsyncIterator[bytes]:
         nonlocal reply
@@ -682,7 +689,7 @@ async def say(
 
 
 def _silence(fmt: AudioFormat, ms: int) -> bytes:
-    return bytes(fmt.sample_rate * ms // 1000 * (4 if fmt.format == "f32le" else 2) * fmt.channels)
+    return bytes(fmt.sample_rate * ms // 1000 * _frame_bytes(fmt))
 
 
 def _parts(body: dict, pause_ms: int, tidy: bool) -> list[tuple[str, int]]:
@@ -748,8 +755,7 @@ async def synthesise(
         if pauses:
             pieces.append(_silence(fmt, pause_ms * pauses))
     assert fmt is not None  # parts is never empty
-    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
-    return b"".join(pieces), fmt, spoken / frame_bytes / fmt.sample_rate
+    return b"".join(pieces), fmt, spoken / _frame_bytes(fmt) / fmt.sample_rate
 
 
 async def _cancellable(awaitable, *, cut: Callable[[], None] | None):  # noqa: ANN001, ANN202

@@ -214,6 +214,7 @@ def create_editor_app(
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
     generations = Generations(voice_store)
+    making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -522,12 +523,16 @@ def create_editor_app(
         transcript: str = Query("", max_length=3000),
     ) -> dict:
         """A clip (the body, a WAV file) checked as a reference for a voice, and kept by its hash for making one."""
+        too_big = HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
         declared = request.headers.get("content-length") or "0"
         if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
-            raise HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
-        data = await request.body()
-        if len(data) > MAX_AUDIO_BYTES:
-            raise HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+            raise too_big
+        buffer = bytearray()  # read up to the cap, never the whole of whatever is sent
+        async for chunk in request.stream():
+            buffer += chunk
+            if len(buffer) > MAX_AUDIO_BYTES:
+                raise too_big
+        data = bytes(buffer)
         try:
             samples, rate = await asyncio.to_thread(wav_from_bytes, data, name)
         except AudioError as exc:
@@ -548,7 +553,7 @@ def create_editor_app(
         """The set of checked clips (their reports, as /voice/check gave them): enough speech, and one voice."""
         try:
             return assess(clips[:5]).public()
-        except (KeyError, TypeError, AttributeError) as exc:
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
             raise HTTPException(422, "send the reports /voice/check gave") from exc
 
     @app.post("/voice/generate")
@@ -582,6 +587,10 @@ def create_editor_app(
     @app.post("/voice/create")
     async def voice_create(req: VoiceCreate, request: Request) -> dict:
         """Make a voice on the TTS service from checked clips, and keep its record: where it came from, and the clips."""
+        async with making:
+            return await make_voice(req, request)
+
+    async def make_voice(req: VoiceCreate, request: Request) -> dict:
         tts = chosen_tts(request, req.tts_url)
         if client.http_base(tts) is None:
             raise HTTPException(422, "making a voice needs an HTTP TTS service with the /synthesise contract (Miso)")
@@ -609,7 +618,7 @@ def create_editor_app(
         if overall["verdict"] == "not suitable":
             raise HTTPException(422, "; ".join(c["advice"] for c in overall["checks"] if c["verdict"] == "bad"))
         transcript = " ".join(c.transcript.strip() for c in req.clips)
-        clips = [(c.name, path.read_bytes()) for c, path in zip(req.clips, paths, strict=True)]
+        clips = [(c.name, await asyncio.to_thread(path.read_bytes)) for c, path in zip(req.clips, paths, strict=True)]
         try:
             made = await asyncio.to_thread(client.clone_voice, tts, req.id, req.name, clips, transcript)
         except client.ClientError as exc:
@@ -666,15 +675,22 @@ def create_editor_app(
         record = voice_store.record(voice_id)
         if record is None:
             raise HTTPException(404, "only a voice made on this page (one with a record here) can be deleted here")
-        tts = chosen_tts(request, tts_url)
+        # The service the voice was made on, unless the caller names one.
+        made_on = record.get("tts")
+        if tts_url.strip() or not isinstance(made_on, str) or not made_on:
+            tts = chosen_tts(request, tts_url)
+        else:
+            tts = f"{made_on}/synthesise"
         removed = False
         if client.http_base(tts) is not None:
             try:
                 await asyncio.to_thread(client.delete_voice, tts, voice_id)
                 removed = True
-            except client.ClientError as exc:
-                if "404" not in str(exc):
+            except client.ServiceRefused as exc:
+                if exc.status != 404:  # gone already: the record still goes
                     raise HTTPException(502, str(exc)) from exc
+            except client.ClientError as exc:
+                raise HTTPException(502, str(exc)) from exc
         voice_store.trash(voice_id)
         return {"id": voice_id, "removed_from_tts": removed}
 
