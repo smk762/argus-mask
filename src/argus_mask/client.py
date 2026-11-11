@@ -62,14 +62,6 @@ class ClientError(RuntimeError):
     """The server or the TTS service refused, or went away."""
 
 
-class TtsRefused(ClientError):
-    """The TTS service answered a request with an HTTP error status."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
-
-
 class ServiceRefused(ClientError):
     """An HTTP TTS service answered with an error *status*."""
 
@@ -589,7 +581,7 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
     if response.status != 200:
         detail = response.read(300).decode(errors="replace")
         connection.close()
-        raise TtsRefused(response.status, f"the TTS service answered {response.status}: {detail}")
+        raise ServiceRefused(f"the TTS service answered {response.status}: {detail}", response.status)
     declared = (response.getheader("X-Audio-Format") or "").lower()
     try:
         fmt = AudioFormat(
@@ -684,11 +676,12 @@ async def say(
             if i:
                 reply = await _open_part(tts_url, body, parts, i, fmt, on_progress, carry)
             edges = Edges(fmt) if tidy else None
-            heard: list[bytes] = []
+            room = carry.room(fmt)  # past this the sentence is too long to send as context: stop collecting it
+            heard = bytearray()
             try:
                 while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
-                    if carry.on:
-                        heard.append(data)
+                    if room and len(heard) <= room:
+                        heard += data
                     if edges is None:
                         yield data
                     elif out := edges.feed(data):
@@ -699,7 +692,8 @@ async def say(
                 reply.close()
             if edges is not None and (out := edges.end()):
                 yield out
-            carry.keep(text, b"".join(heard), fmt)
+            if i + 1 < len(parts):
+                carry.keep(text, bytes(heard), fmt)
             if pauses:
                 yield _silence(fmt, pause_ms * pauses)
         yield _silence(fmt, SAY_TAIL_MS)
@@ -742,17 +736,25 @@ class _Carry:
         self.on = enabled and tts_url.startswith(("http://", "https://")) and "context" not in body
         self.previous: tuple[str, bytes] | None = None
 
-    def body(self, body: dict, text: str, fmt: AudioFormat | None) -> dict:
+    def room(self, fmt: AudioFormat) -> int:
+        """The most bytes of *fmt* audio sent as context: 0 when none is (off, or not mono f32)."""
+        if not self.on or fmt.format != "f32le" or fmt.channels != 1:
+            return 0
+        return int(CONTEXT_MAX_S * fmt.sample_rate) * _frame_bytes(fmt)
+
+    def body(self, body: dict, text: str) -> dict:
         out = {**body, "text": text}
-        if self.on and self.previous is not None and fmt is not None and fmt.format == "f32le" and fmt.channels == 1:
+        if self.on and self.previous is not None:
             said, audio = self.previous
-            if 0 < len(audio) / 4 / fmt.sample_rate <= CONTEXT_MAX_S:
-                out["context"] = [{"text": said, "audio": base64.b64encode(audio).decode("ascii")}]
+            out["context"] = [{"text": said, "audio": base64.b64encode(audio).decode("ascii")}]
         return out
 
-    def keep(self, text: str, audio: bytes, fmt: AudioFormat) -> None:
-        if self.on and audio:
-            self.previous = (text, tidy_audio(audio, fmt))
+    def keep(self, text: str, audio: bytes, fmt: AudioFormat, *, levelled: bool = False) -> None:
+        """*text*'s audio as the next sentence's context, if it can go as one; *levelled* if `tidy_audio` already ran."""
+        if 0 < len(audio) <= self.room(fmt):
+            self.previous = (text, audio if levelled else tidy_audio(audio, fmt))
+        else:
+            self.previous = None
 
 
 async def _open_part(
@@ -762,18 +764,18 @@ async def _open_part(
     i: int,
     fmt: AudioFormat | None,
     on_progress: Callable[[int, int], None] | None,
-    carry: _Carry | None = None,
+    carry: _Carry,
 ) -> TtsReply | WyomingReply:
     if on_progress and len(parts) > 1:
         on_progress(i + 1, len(parts))
-    request = carry.body(body, parts[i][0], fmt) if carry is not None else {**body, "text": parts[i][0]}
+    request = carry.body(body, parts[i][0])
     try:
         reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, request), cut=None)
-    except TtsRefused as exc:
-        if "context" not in request or carry is None or exc.status not in (400, 422):
+    except ServiceRefused as exc:
+        if "context" not in request or exc.status not in (400, 422):
             raise
         carry.on = False  # this service does not take context: ask again without it, and stop sending it
-        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
+        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, carry.body(body, parts[i][0])), cut=None)
     if fmt is not None and reply.fmt != fmt:
         reply.close()
         raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
@@ -817,8 +819,10 @@ async def synthesise(
         if not whole:
             raise ClientError("the TTS service sent no audio" + (f" for sentence {i + 1}" if len(parts) > 1 else ""))
         spoken += len(whole)
-        carry.keep(text, whole, fmt)
-        pieces.append(tidy_audio(whole, fmt) if tidy else whole)
+        said = tidy_audio(whole, fmt) if tidy else whole
+        if i + 1 < len(parts):
+            carry.keep(text, said, fmt, levelled=tidy)
+        pieces.append(said)
         if pauses:
             pieces.append(_silence(fmt, pause_ms * pauses))
     assert fmt is not None  # parts is never empty
@@ -834,7 +838,7 @@ def _read_capped(reply: TtsReply | WyomingReply, allowed: int) -> bytes:
         if got > allowed:
             raise ClientError(
                 f"the TTS service sent more than {MAX_BUFFERED_S / 60:g} minutes of speech: send less text at a time, "
-                "or use --stream"
+                "or stream it (say --stream)"
             )
         chunks.append(data)
     return b"".join(chunks)
