@@ -177,8 +177,20 @@ class Health(BaseModel):
     )
 
 
+class RestSet(BaseModel):
+    """A named baseline expression: what a face holds at rest and speaks from (``GET /face/{id}/rest``).
+
+    The viewer adds ``weights`` to every frame (the mouth's at half while speaking, so the mouth stays the
+    driver's) and, at rest, moves the face by ``life``: 0 still, 1 the default, up to 2.
+    """
+
+    name: str = Field(..., pattern=FACE_ID_PATTERN)
+    weights: dict[str, float] = Field(default_factory=dict, description="ARKit blendshape name -> weight, 0 to 1")
+    life: float = Field(1.0, ge=0.0, le=2.0)
+
+
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
     return render_schema(
-        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus], title=WIRE_TITLE
+        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus, RestSet], title=WIRE_TITLE
     )

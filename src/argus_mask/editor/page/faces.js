@@ -2,7 +2,7 @@
 // Rename and delete touch only faces the editor made; the server says so if not.
 // Everything the server sends is put on the page as text, never as HTML.
 
-import { Stage } from './stage.js';
+import { Stage, restSets } from './stage.js';
 import { openScreen, screensText } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
@@ -191,7 +191,15 @@ async function openReview(row, place = main(row)) {
   $('modal').hidden = false;
   stage.attach($('stage'));
   await stage.load(`/face/${enc(row.id)}/model?from=${place}&v=${manifest.model.sha256}`, manifest.framing || {});
-  stage.poseButtons($('m-poses'));
+  // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
+  const keep = place === 'export' ? async (name) => {
+    try {
+      await json(`/expressions/faces/${enc(row.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: name }) });
+      restSets(true);
+      status(`${row.id} rests ${name} on screens from their next load.`);
+    } catch (err) { status(err.message, true); }
+  } : null;
+  stage.poseButtons($('m-poses'), [], { faceId: row.id, onRest: keep });
   $('m-name').textContent = `${manifest.name} (${manifest.id})`;
   const which = $('m-which');
   which.replaceChildren();

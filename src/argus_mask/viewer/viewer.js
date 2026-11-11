@@ -17,12 +17,15 @@
 //   ?ao= ?shadows= ?skin= ?cornea= ?ibl= ?smaa= ?dof= ?grain= ?bloom=   1 or 0, over the profile
 //   ?hair=a2c        a2c (alpha to coverage) | hash | cutout: how hair cards meet the background
 //   ?tone=agx        agx | aces | neutral | none, with ?exposure=1.0
+//   ?rest=<name>     the rest set to show instead of the face's own (warm, calm, neutral, ...: GET /expressions)
+//   ?life=1          how much the face moves at rest: 0 still, up to 2 (default: the rest set's own)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
+import { ARKIT, Motion, lipBudget } from './motion.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -125,6 +128,9 @@ window.addEventListener('resize', resize);
 // ---- the face ------------------------------------------------------------------------------
 
 let targets = new Map();   // blendshape name -> [{ influences, index }]
+let motion = new Motion();  // the lip budget, the rest set and idle life (motion.js)
+// ?life= over the rest set's own life; absent or not a number, the set's.
+const LIFE = (() => { const v = Number.parseFloat(params.get('life')); return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : null; })();
 let headBone = null;
 let headRest = null;
 
@@ -151,6 +157,11 @@ async function loadFace() {
     if (node.isBone && !headBone && /^head$/i.test(node.name)) headBone = node;
   });
   if (headBone) headRest = headBone.quaternion.clone();
+  let seed = 7;
+  for (const ch of manifest.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;   // each face idles its own way
+  motion = new Motion({ budget: lipBudget(gltf.scene), seed, life: LIFE ?? 1 });
+  state.lips = motion.budget;
+  await loadRest(faceId);
   const framing = manifest.framing || {};
   camera.fov = framing.fov || 30;
   camera.position.set(0, framing.height || 0, framing.distance || 0.6);
@@ -161,6 +172,19 @@ async function loadFace() {
   state.faceShown = manifest.id;   // the face itself: faceId may be an alias for it
   state.ready = true;
   return faceId;
+}
+
+// The face's rest set: its own, or the page's ?rest=. A server without the route leaves the face neutral.
+async function loadRest(faceId) {
+  const q = params.get('rest') ? `?set=${encodeURIComponent(params.get('rest'))}` : '';
+  try {
+    const reply = await fetch(`/face/${encodeURIComponent(faceId)}/rest${q}`);
+    if (!reply.ok) return;
+    const rest = await reply.json();
+    motion.setRest(rest.weights);
+    if (LIFE === null && Number.isFinite(rest.life)) motion.idle.life = rest.life;   // the set's own, unless ?life=
+    state.rest = rest.name;
+  } catch { /* neutral */ }
 }
 
 // ---- audio clock ---------------------------------------------------------------------------
@@ -326,9 +350,9 @@ function start() {
 
 // ---- drawing -------------------------------------------------------------------------------
 
-function applyWeights(weights) {
-  for (let i = 0; i < names.length; i += 1) {
-    const slots = targets.get(names[i]);
+function applyWeights(weights, order) {
+  for (let i = 0; i < order.length; i += 1) {
+    const slots = targets.get(order[i]);
     if (!slots) continue;   // a shape this face does not have
     for (const slot of slots) slot.influences[slot.index] = weights[i];
   }
@@ -342,18 +366,6 @@ function applyHead() {
   euler.set(head.pitch * rad, head.yaw * rad, head.roll * rad, 'YXZ');
   if (headBone) headBone.quaternion.copy(headRest).multiply(turn.setFromEuler(euler));
   else pivot.rotation.copy(euler);
-}
-
-// With no stream, a little life of the page's own. It is cosmetic and never recorded.
-function localIdle(seconds) {
-  const phase = seconds % 4.3;
-  const blink = phase < 0.08 ? phase / 0.08 : phase < 0.2 ? 1 - (phase - 0.08) / 0.12 : 0;
-  for (const name of ['eyeBlinkLeft', 'eyeBlinkRight']) {
-    for (const slot of targets.get(name) || []) slot.influences[slot.index] = Math.max(slot.influences[slot.index], blink);
-  }
-  head.yaw = 1.5 * Math.sin(seconds / 7.3 * 2 * Math.PI);
-  head.pitch = 0.9 * Math.sin(seconds / 5.9 * 2 * Math.PI);
-  head.roll = 0.5 * Math.sin(seconds / 9.7 * 2 * Math.PI);
 }
 
 let lastDraw = performance.now();
@@ -387,14 +399,19 @@ function draw() {
       if (!b && ended && t > a.t_ms + 100) { queue = []; anchor = null; }   // the last frame has been shown
     }
   }
-  if (current) {
-    if (!live) {
-      const keep = Math.exp(-RELAX_PER_S * dt);
-      for (let i = 0; i < current.length; i += 1) current[i] *= keep;
-    }
-    applyWeights(current);
+  const order = names.length ? names : ARKIT;   // before any stream, the ARKit order
+  if (!current || current.length !== order.length) current = new Float32Array(order.length);
+  if (!live) {
+    const keep = Math.exp(-RELAX_PER_S * dt);
+    for (let i = 0; i < current.length; i += 1) current[i] *= keep;   // settle into the rest set
   }
-  if (!live) localIdle(wall / 1000);
+  // The rest set, idle life when nothing plays, and the lip budget, over the frame's own weights.
+  const shown = motion.present(current, order, { live, t: wall / 1000, dt });
+  applyWeights(shown.weights, order);
+  if (!live) {
+    const k = 1 - Math.exp(-RELAX_PER_S * dt);   // ease from the stream's last head to the idle's
+    for (const axis of ['yaw', 'pitch', 'roll']) head[axis] += (shown.head[axis] - head[axis]) * k;
+  }
   applyHead();
   look.render();
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }

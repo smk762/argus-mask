@@ -66,6 +66,8 @@ from argus_mask.editor.voices import (
     provenance,
     wav_bytes,
 )
+from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
+from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
 from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
@@ -179,6 +181,17 @@ class VoiceTry(BaseModel):
     tts_url: str = Field("", max_length=500)
 
 
+class RestChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    set: str | None = Field(None, max_length=64, description="a rest set's name; null: the default")
+
+
+class RestDefine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    weights: dict[str, float] = Field(default_factory=dict, max_length=52)
+    life: float = 1.0
+
+
 class AliasTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
     face: str = Field(..., pattern=FACE_ID_PATTERN)
@@ -209,6 +222,7 @@ def create_editor_app(
     )
     store = FaceStore(cfg.assets_dir)
     aliases = Aliases(store)
+    expressions = Expressions(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
@@ -378,6 +392,12 @@ def create_editor_app(
                 raise HTTPException(
                     500, f"renamed to {new_id!r}, but {aliases.path.name} was not updated: {exc}"
                 ) from exc
+            try:
+                expressions.repoint(face_id, new_id)  # and so does its rest set
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"renamed to {new_id!r}, but {expressions.path.name} was not updated: {exc}"
+                ) from exc
         return {"id": new_id}
 
     @app.delete("/saved/{face_id}")
@@ -397,7 +417,55 @@ def create_editor_app(
             raise HTTPException(409, str(exc)) from exc
         except OSError as exc:
             raise HTTPException(500, f"delete failed: {exc}") from exc
+        if where in (None, "export"):
+            with contextlib.suppress(OSError):  # the face is gone; a stale choice is ignored anyway
+                expressions.repoint(face_id, None)
         return {"trash": str(trash)}
+
+    # ---- rest sets: the baseline expression each face holds at rest, kept in the assets' expressions.json --
+
+    @app.get("/expressions")
+    def expression_list() -> dict:
+        return {
+            "sets": {n: s.model_dump() for n, s in expressions.sets().items()},
+            "builtin": sorted(EXPRESSION_BUILTIN),
+            "faces": expressions.choices(),
+            "default": DEFAULT_SET,
+            "problems": expressions.problems(),
+        }
+
+    @app.put("/expressions/faces/{face_id}")
+    def expression_choose(face_id: str, choice: RestChoice) -> dict:
+        """Which rest set a face shows. Screens pick it up when they next load the face."""
+        if not _FACE_ID.match(face_id):
+            raise HTTPException(404, f"no face {face_id!r}")
+        try:
+            expressions.choose(face_id, choice.set)
+        except ExpressionError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {expressions.path.name}: {exc}") from exc
+        log.info("rest_chosen", face=face_id, set=choice.set)
+        return {"face": face_id, "set": choice.set or DEFAULT_SET}
+
+    @app.put("/expressions/sets/{name}")
+    def expression_define(name: str, body: RestDefine) -> dict:
+        try:
+            rest = check_set(name, body.weights, body.life)
+            expressions.define(rest)
+        except ExpressionError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {expressions.path.name}: {exc}") from exc
+        log.info("rest_set_defined", set=name)
+        return rest.model_dump()
+
+    @app.delete("/expressions/sets/{name}")
+    def expression_remove(name: str) -> dict:
+        if not expressions.remove(name):
+            raise HTTPException(404, f"no rest set {name!r} of your own (built-in sets cannot be removed)")
+        log.info("rest_set_removed", set=name)
+        return {"removed": name}
 
     # ---- aliases: stable names for faces (a persona's "holly"), kept in the assets' aliases.json -------
 
@@ -844,6 +912,11 @@ def create_editor_app(
         if not broadcasts.stop(job_id):
             raise HTTPException(404, "no such broadcast running")
         return {"stopping": job_id}
+
+    @app.get("/motion.js")
+    def motion() -> FileResponse:
+        # The lip budget, rest sets and idle life, shared with the viewer.
+        return FileResponse(VIEWER_DIR / "motion.js", media_type="text/javascript")
 
     @app.get("/look.js")
     def look() -> FileResponse:

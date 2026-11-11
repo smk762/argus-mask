@@ -354,6 +354,36 @@
       "title": "Provenance",
       "type": "object"
     },
+    "RestSet": {
+      "description": "A named baseline expression: what a face holds at rest and speaks from (``GET /face/{id}/rest``).\n\nThe viewer adds ``weights`` to every frame (the mouth's at half while speaking, so the mouth stays the\ndriver's) and, at rest, moves the face by ``life``: 0 still, 1 the default, up to 2.",
+      "properties": {
+        "life": {
+          "default": 1.0,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Life",
+          "type": "number"
+        },
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "weights": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "ARKit blendshape name -> weight, 0 to 1",
+          "title": "Weights",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RestSet",
+      "type": "object"
+    },
     "Screen": {
       "description": "A viewer that has said what it is: one entry of ``Health.screens``.",
       "properties": {
