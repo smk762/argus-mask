@@ -176,8 +176,8 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_ASSETS_DIR` | `assets` | Root of the faces |
 | `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
 | `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
-| `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say` only |
-| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` asks for: a stored clone's name, or a speaker number |
+| `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say`, the editor and the server's `POST /speak` |
+| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` and `/speak` ask for: a stored clone's name, or a speaker number |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
 | `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect. The editor refuses builds. |
@@ -247,6 +247,36 @@ argus-mask say "Hello from the bridge." --face stock-01
 A take file is the same header, frames and end, one JSON object per line.
 
 A source socket takes one JSON hello (`sample_rate`, `channels`, `format`, optional `seed`), then binary PCM, then `{"type": "end"}`. Sources should send no faster than real time plus about a second; a viewer that falls 2048 messages behind is dropped.
+
+## Agent clients: HTTP push and speak
+
+An agent that would rather not speak the socket protocol can drive a face over plain HTTP. Both routes are sources like any other: one source per face (`409` if the face is taken), refused by a read-only server (`403`) and by another site's page (the same origin guard as every write), refused with the reason when the driver is down (`503`; never a fall-back to `energy`). Each request lasts as long as the speech, played at its pace (real time, about a second ahead, as the CLI sends), and answers with the stream's closing numbers once the face is free again:
+
+```json
+{"session_id": "54a3d9b0…", "frames": 90, "duration_ms": 3000}
+```
+
+**`POST /push?face=<id>`** takes audio the agent already has. The server never sees any text. The body is a WAV file, or raw PCM described by the same headers a TTS stream carries (`X-Sample-Rate`, `X-Audio-Format`: `pcm_f32le` or `pcm_s16le`, `X-Channels`); at most 25 MB. Query: `seed` (the idle layer's, default 0), `require_screen` (`true`: `409` unless a screen watching the face can be heard, see `/health` `screens`).
+
+```bash
+curl -X POST "http://127.0.0.1:8109/push?face=stock-01&require_screen=true" \
+     -H "Content-Type: audio/wav" --data-binary @briefing.wav
+
+# raw PCM, as a TTS service streamed it (24 kHz mono float32 here)
+curl -X POST "http://127.0.0.1:8109/push?face=stock-01" \
+     -H "X-Sample-Rate: 24000" -H "X-Audio-Format: pcm_f32le" -H "X-Channels: 1" --data-binary @speech.f32
+```
+
+To play the same speech in the house (Snapcast) and on the face, synthesise once and send the same audio to both.
+
+**`POST /speak`** takes text, as `argus-mask say` does, through the server's own TTS service (`ARGUS_MASK_TTS_URL`; `422` if none is set). The text goes to that service and is never logged. JSON body: `face`, `text`, and optionally `voice` (default `ARGUS_MASK_TTS_VOICE`), `temperature`, `seed`, `pause` (ms between sentences, default 300), `tidy` (default `true`: numbers as words, short sentences joined, even loudness, soft edges), `require_screen`. The speech is fetched whole before the face is claimed, so a slow TTS delays the start, never the mouth.
+
+```bash
+curl -X POST http://127.0.0.1:8109/speak -H "Content-Type: application/json" \
+     -d '{"face": "stock-01", "text": "Good morning. Three things to look at today.", "temperature": 0.7}'
+```
+
+From Python, `argus_mask.client.push` and `say` drive the socket directly and report each step as it happens.
 
 ## Develop
 

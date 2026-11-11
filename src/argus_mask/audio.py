@@ -77,7 +77,11 @@ def read_wav(path: str | Path) -> tuple[np.ndarray, int]:
     Reads integer PCM (8, 16, 24, 32 bit) and IEEE float (32, 64 bit), which the
     standard library's ``wave`` does not.
     """
-    data = Path(path).read_bytes()
+    return decode_wav(Path(path).read_bytes(), str(path))
+
+
+def decode_wav(data: bytes, path: str = "the audio") -> tuple[np.ndarray, int]:
+    """A WAV file's bytes as ``(mono float32, sample_rate)``; *path* names it in errors. See `read_wav`."""
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise AudioError(f"{path}: not a RIFF/WAVE file")
     fmt: tuple[int, int, int, int] | None = None  # (encoding, channels, rate, bits)
