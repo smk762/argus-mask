@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
 ### Added
 
 - **Face aliases** (#41): a stable name for a face, such as `holly` for a persona, that the agent speaking and the
@@ -154,3 +156,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audio no longer runs ahead of the mouth with a slow driver.** Audio2Face answers about 0.3 s behind the audio it
   is given. The server now holds each audio chunk until frames reach its end, and ends a stream whose driver falls
   more than 10 s behind.
+
+[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/smk762/argus-mask/releases/tag/v0.1.0
