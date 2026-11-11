@@ -24,6 +24,8 @@ services:
       ARGUS_MASK_FPS: ${FPS:-30}
       ARGUS_MASK_CORS_ORIGINS: ${CORS_ORIGINS:-}
       ARGUS_MASK_READ_ONLY: ${READ_ONLY:-0}
+      ARGUS_MASK_TTS_URL: ${TTS_URL:-}
+      ARGUS_MASK_TTS_VOICE: ${TTS_VOICE:-}
     volumes:
       - ${ASSETS_DIR:-./assets}:/assets:ro
     extra_hosts:

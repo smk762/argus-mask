@@ -139,6 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`POST /speak` in Docker**: `compose.yaml` passes `TTS_URL` and `TTS_VOICE` from `.env` to the server as
+  `ARGUS_MASK_TTS_URL` and `ARGUS_MASK_TTS_VOICE`; without them `/speak` always answered `422`.
 - A Broadcast recording that caught another source's session on the face is discarded, not kept as this broadcast's,
   and a failed or stopped render no longer leaves its frames behind (#35).
 - `say` (without `--stream`), `/speak` and the Voices page's Try buffered a TTS reply without limit: they now refuse
