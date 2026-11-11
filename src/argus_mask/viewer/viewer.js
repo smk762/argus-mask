@@ -9,6 +9,10 @@
 //   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
 //   ?kiosk=1         a dedicated screen: no HUD, no cursor, full screen on the first tap or key press
 //                    (start Chromium with --kiosk --autoplay-policy=no-user-gesture-required for no tap at all)
+//   ?audio=external  the sound plays elsewhere (house speakers, Snapcast): this page plays none, needs no tap
+//                    for sound, and moves the face on the session's own timeline. ?mute=1 is the same.
+//   ?delay=0         external sound only: show each frame this many ms later (0-5000), to meet speakers
+//                    that play behind (Snapcast's buffer is 1000 ms by default)
 //   ?quality=medium  low | medium (default) | high: the look's profile (see look.js); record uses high
 //   ?ao= ?shadows= ?skin= ?cornea= ?ibl= ?smaa= ?dof= ?grain= ?bloom=   1 or 0, over the profile
 //   ?hair=a2c        a2c (alpha to coverage) | hash | cutout: how hair cards meet the background
@@ -26,6 +30,11 @@ const RECORD = params.get('record') === '1';
 const KIOSK = params.get('kiosk') === '1';
 const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
 const BUFFER_S = Math.min(2, Math.max(0.05, (Number.isFinite(BUFFER_MS) ? BUFFER_MS : 250) / 1000));  // audio plays this far behind arrival; absorbs jitter
+// Sound elsewhere: no AudioContext at all, so no gesture is needed and nothing reaches this page's speakers.
+// The clock is then the page's own (performance.now()), anchored to the stream as the audio clock would be.
+const EXTERNAL = params.get('audio') === 'external' || params.get('mute') === '1';
+const DELAY_MS = Number(params.get('delay') || 0);
+const DELAY_S = EXTERNAL ? Math.min(5, Math.max(0, (Number.isFinite(DELAY_MS) ? DELAY_MS : 0) / 1000)) : 0;
 const RESYNC_S = 0.05;        // after an underrun, how soon the late audio starts
 const RELAX_PER_S = 6;        // how fast the face settles when a stream ends
 const HLD = { width: 1080, height: 1920 };
@@ -45,8 +54,10 @@ const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
   look: null,   // the profile and effects in use: see look.js
-  screenReady: false, kiosk: KIOSK,   // connected and heard; a dedicated screen
+  screenReady: false, kiosk: KIOSK,   // connected and heard (or, sound external, connected); a dedicated screen
+  sound: EXTERNAL ? 'external' : 'local', delayMs: DELAY_S * 1000,
 };
+if (EXTERNAL) state.audio = 'external';
 
 function notice(text, button, onClick) {
   noticeText.textContent = text;
@@ -163,6 +174,7 @@ function clockNow() {
 }
 
 function unlockAudio() {
+  if (EXTERNAL) return;   // the sound plays elsewhere: nothing to unlock
   try {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
   } catch { state.audio = 'unavailable'; return; }
@@ -184,7 +196,7 @@ function unlockAudio() {
 function playChunk(startMs, samples) {
   state.audioChunks += 1;
   const now = clockNow();
-  if (!anchor) { anchor = { clock: now + BUFFER_S, t: startMs }; nextPlay = anchor.clock; }
+  if (!anchor) { anchor = { clock: now + BUFFER_S + DELAY_S, t: startMs }; nextPlay = anchor.clock; }
   let when = anchor.clock + (startMs - anchor.t) / 1000;
   if (when < now) {
     // The audio arrived too late to play on time: slide the whole timeline, mouth included.
@@ -240,7 +252,7 @@ function onMessage(event) {
   const message = JSON.parse(event.data);
   if (message.type === 'header') onHeader(message);
   else if (message.type === 'frame') {
-    if (!anchor) anchor = { clock: clockNow() + BUFFER_S, t: message.t_ms };   // frames before any audio
+    if (!anchor) anchor = { clock: clockNow() + BUFFER_S + DELAY_S, t: message.t_ms };   // frames before any audio
     queue.push(message);
     state.frames += 1;
     state.lastSeq = message.seq;
@@ -268,14 +280,14 @@ function connect(faceId) {
 // "1 screen ready". State, not media (models.ViewerStatus).
 function report() {
   if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'status', audio: state.audio === 'running', display: DISPLAY, kiosk: KIOSK }));
+    socket.send(JSON.stringify({ type: 'status', audio: state.audio === 'running', display: DISPLAY, kiosk: KIOSK, sound: state.sound }));
   }
 }
 
 // Connected and heard: say so for a moment, then get out of the way.
 let readyTimer = null;
 function announce() {
-  state.screenReady = state.connected && state.audio === 'running';
+  state.screenReady = state.connected && (EXTERNAL || state.audio === 'running');
   if (!state.screenReady) return;
   readyEl.classList.add('show');
   clearTimeout(readyTimer);
@@ -285,8 +297,10 @@ function announce() {
 // The one gesture a browser needs: sound on, and full screen (a page cannot ask for either unprompted).
 // Outside a kiosk, only the gesture that turns sound on goes full screen: a later tap must not pull
 // back into full screen someone who left it.
+let gestured = false;
 function start() {
-  const first = state.audio !== 'running';
+  const first = EXTERNAL ? !gestured : state.audio !== 'running';
+  gestured = true;
   unlockAudio();
   const root = document.documentElement;
   if ((first || KIOSK) && !document.fullscreenElement && root.requestFullscreen) root.requestFullscreen().catch(() => {});
@@ -334,6 +348,7 @@ function draw() {
   const dt = Math.min(0.1, (wall - lastDraw) / 1000);
   lastDraw = wall;
   const t = timelineNow();
+  state.timeline = t;   // the session time (ms) on screen now, or null: for checking sync from outside
   let live = false;
   if (posed) {
     live = true;
@@ -390,7 +405,7 @@ async function main() {
   unlockAudio();
   setTimeout(() => {
     // Silent until asked: say so, plainly, rather than leave a face that will never be heard.
-    if (state.audio !== 'running' && state.audio !== 'unavailable') startEl.classList.add('show');
+    if (!EXTERNAL && state.audio !== 'running' && state.audio !== 'unavailable') startEl.classList.add('show');
   }, 400);
   window.addEventListener('pointerdown', start);
   window.addEventListener('keydown', start);

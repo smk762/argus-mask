@@ -140,14 +140,24 @@ class ViewerStatus(BaseModel):
     audio: bool = Field(False, description="Sound is unlocked: the screen will be heard")
     display: Literal["flat", "hld", "go"] = "flat"
     kiosk: bool = False
+    sound: Literal["local", "external"] = Field(
+        "local",
+        description="local: the screen plays the session's sound; external: it plays none (house speakers, "
+        "Snapcast, play it) and only moves, on the session's timeline (viewer ?audio=external)",
+    )
 
 
 class Screen(BaseModel):
     """A viewer that has said what it is: one entry of ``Health.screens``."""
 
     display: str
-    audio_ready: bool
+    audio_ready: bool = Field(
+        ...,
+        description="Ready to speak in sync: with sound local, its sound is unlocked (it will be heard); with sound "
+        "external, it is watching and moves on the session's timeline, no sound of its own needed",
+    )
     kiosk: bool = False
+    sound: Literal["local", "external"] = "local"
 
 
 class Health(BaseModel):

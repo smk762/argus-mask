@@ -868,8 +868,8 @@ def test_a_screen_that_reports_is_seen_from_the_editor(on_screen) -> None:
                             return screens, state, test, heard
 
         screens, state, test, heard = asyncio.run(watch_and_ask())
-    assert screens == {"stock-01": [{"display": "hld", "audio_ready": True, "kiosk": True}]}
-    assert state["screens"] == [{"display": "hld", "audio_ready": True, "kiosk": True}]
+    assert screens == {"stock-01": [{"display": "hld", "audio_ready": True, "kiosk": True, "sound": "local"}]}
+    assert state["screens"] == [{"display": "hld", "audio_ready": True, "kiosk": True, "sound": "local"}]
     assert test.status_code == 200 and test.json()["ok"]
     assert heard[0] == "header" and "frame" in heard and heard[-1] == "end"
 

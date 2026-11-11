@@ -383,7 +383,12 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     status = ViewerStatus.model_validate_json(text)
                 except ValidationError:
                     continue
-                stage.screens[queue] = Screen(display=status.display, audio_ready=status.audio, kiosk=status.kiosk)
+                stage.screens[queue] = Screen(
+                    display=status.display,
+                    audio_ready=status.audio or status.sound == "external",
+                    kiosk=status.kiosk,
+                    sound=status.sound,
+                )
 
         async def first(job: Callable[[], Awaitable[None]], scope: anyio.CancelScope) -> None:
             try:

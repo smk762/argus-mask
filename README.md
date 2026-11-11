@@ -95,6 +95,8 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
 | `hud` | `0` hides the status line |
 | `kiosk` | `1` for a dedicated screen: no status line, no cursor, full screen on the first tap |
 | `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
+| `audio` | `external`: the sound plays elsewhere (house speakers, Snapcast). The page plays none, needs no tap for sound, and moves the face on the session's timeline. `mute=1` is the same. |
+| `delay` | with `audio=external`, show each frame this many ms later (0 to 5000, default 0), to meet speakers that play behind |
 | `quality` | the look: `low`, `medium` (default) or `high`. See below. |
 | `ibl`, `shadows`, `skin`, `cornea`, `ao`, `smaa`, `dof`, `grain`, `bloom` | `1` or `0`: one effect on or off over the profile |
 | `hair` | `blend` (default: an opaque core, then the fringe blended over it, so wisps fade), `a2c`, `hash`, or `cutout` |
@@ -115,7 +117,20 @@ Lip sync runs on the page's audio clock: audio plays `buffer` ms behind arrival 
 
 Browsers start audio only after a click or key press. A kiosk can waive that; for Chromium, start it with `--autoplay-policy=no-user-gesture-required`.
 
-Until then the viewer says so: a full-screen **Tap to start**. One tap or key press turns the sound on and fills the screen, and a **● Ready** pill shows briefly once the screen is connected and can be heard. `kiosk=1` is for dedicated screens: no status line, no cursor, full screen on that first tap; started with the flag above, it needs no tap at all. The viewer tells the server its state on its socket (`audio`, `display`, `kiosk`; never media), and `/health` lists it under `screens`, per face.
+Until then the viewer says so: a full-screen **Tap to start**. One tap or key press turns the sound on and fills the screen, and a **● Ready** pill shows briefly once the screen is connected and can be heard. `kiosk=1` is for dedicated screens: no status line, no cursor, full screen on that first tap; started with the flag above, it needs no tap at all. The viewer tells the server its state on its socket (`audio`, `display`, `kiosk`, `sound`; never media), and `/health` lists it under `screens`, per face.
+
+### House audio (Snapcast)
+
+For Mithrandir's `face+house` mode the house speakers play the speech and the panel only moves. Synthesise once, send the same audio to Snapcast and to mask (`push`), and open the panel's viewer with `audio=external`:
+
+```
+http://<mask>:8109/?face=<id>&display=hld&kiosk=1&audio=external&delay=750
+```
+
+- **No double voice:** the page makes no AudioContext at all, so nothing reaches its own speakers, and it needs no tap to be ready (`kiosk=1` still goes full screen on a tap, if wanted).
+- **The clock:** with no audio clock, the viewer keeps time with the page's own clock, anchored to the session's timeline exactly as the audio clock would be. Frames are shown at their timestamps, `buffer` + `delay` ms after arrival.
+- **Choosing the delay:** Snapcast plays its buffer (1000 ms by default) behind what it is sent, and the viewer already plays `buffer` (250 ms) behind arrival, so start at the Snapcast buffer less 250 ms, then adjust by eye: raise it if the lips lead the sound, lower it if they trail. A driver's lag (Audio2Face holds the audio until its frames cover it) shifts both alike only if mask and Snapcast are fed at the same moment; if the lips trail by a constant amount, take it off the delay.
+- **Ready:** the screen reports `sound: "external"`, and `/health` counts it in `screens` with `audio_ready: true` once it is connected: ready to speak in sync, not "can be heard". The editor shows it as "1 screen ready (house audio)".
 
 ## Serving the LAN
 

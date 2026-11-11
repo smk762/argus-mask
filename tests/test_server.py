@@ -321,10 +321,21 @@ def test_a_viewer_that_reports_is_a_screen(client) -> None:
     with client.websocket_connect("/session/test-head/view") as viewer:
         assert _screens(client, want=[]) == []  # connected, not yet said what it is: not a screen
         viewer.send_text(json.dumps({"type": "status", "audio": False, "display": "hld", "kiosk": True}))
-        assert _screens(client, want=[{"display": "hld", "audio_ready": False, "kiosk": True}])
+        assert _screens(client, want=[{"display": "hld", "audio_ready": False, "kiosk": True, "sound": "local"}])
         viewer.send_text(json.dumps({"type": "status", "audio": True, "display": "hld", "kiosk": True}))
-        assert _screens(client, want=[{"display": "hld", "audio_ready": True, "kiosk": True}])
+        assert _screens(client, want=[{"display": "hld", "audio_ready": True, "kiosk": True, "sound": "local"}])
     assert _screens(client, want=[]) == []  # gone with its socket
+
+
+def test_a_screen_with_external_sound_is_ready_without_sound_of_its_own(client) -> None:
+    """viewer ?audio=external: the house speakers play the sound; the screen only moves, and is ready to."""
+    with client.websocket_connect("/session/test-head/view") as viewer:
+        viewer.send_text(
+            json.dumps({"type": "status", "audio": False, "display": "flat", "kiosk": True, "sound": "external"})
+        )
+        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": True, "sound": "external"}])
+        viewer.send_text(json.dumps({"type": "status", "sound": "elsewhere"}))  # not a sound mode: ignored
+        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": True, "sound": "external"}])
 
 
 @pytest.mark.parametrize(
@@ -335,4 +346,4 @@ def test_a_viewer_saying_anything_else_is_ignored(client, message) -> None:
     with client.websocket_connect("/session/test-head/view") as viewer:
         viewer.send_text(message)
         viewer.send_text(json.dumps({"type": "status", "audio": True}))  # still heard after the bad one
-        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False}])
+        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False, "sound": "local"}])

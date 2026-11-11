@@ -21,12 +21,18 @@ async function json(url, options) {
 }
 
 // What screens a face has, in a few words: for the dialog and for the cards.
+// A screen with external sound (viewer ?audio=external) plays none itself: the house speakers do. It is ready
+// when it is watching, and is counted as "house audio" so nobody waits for it to be heard.
 export function screensText(screens) {
   if (!screens || !screens.length) return { text: 'No screen watching', ready: false };
   const heard = screens.filter((s) => s.audio_ready).length;
+  const house = screens.filter((s) => s.sound === 'external').length;
   const n = screens.length;
   const noun = n === 1 ? 'screen' : 'screens';
-  if (heard === n) return { text: `${n} ${noun} ready`, ready: true };
+  if (heard === n) {
+    const how = house === n ? ' (house audio)' : house ? ` (${house} on house audio)` : '';
+    return { text: `${n} ${noun} ready${how}`, ready: true };
+  }
   if (heard === 0) return { text: `${n} ${noun}, no sound yet: tap ${n === 1 ? 'it' : 'them'}`, ready: false };
   return { text: `${n} ${noun}, ${heard} with sound: tap the others`, ready: false };
 }
@@ -54,7 +60,7 @@ const CSS = `
   dialog.screen button.primary { background: var(--accent, #6ea8fe); border-color: var(--accent, #6ea8fe); color: #0b1220; font-weight: 600; }
 `;
 
-const DEFAULTS = { display: 'flat', quality: 'medium', kiosk: true, hud: false, bg: '' };
+const DEFAULTS = { display: 'flat', quality: 'medium', kiosk: true, hud: false, bg: '', sound: 'local', delay: 0 };
 
 export function openScreen(faceId, name = faceId) {
   if (!document.getElementById('screen-css')) document.head.append(el('style', { id: 'screen-css', textContent: CSS }));
@@ -68,9 +74,13 @@ export function openScreen(faceId, name = faceId) {
   const display = el('select', {}, ...['flat', 'hld'].map((v) => el('option', { value: v, textContent: v === 'hld' ? 'hld (portrait panel)' : 'flat' })));
   const quality = el('select', {}, ...['low', 'medium', 'high'].map((v) => el('option', { value: v, textContent: v })));
   const bg = el('input', { type: 'text', placeholder: 'default, #000, transparent' });
+  const sound = el('select', { title: 'House speakers: the screen plays no sound and only moves (Snapcast plays it)' },
+    el('option', { value: 'local', textContent: 'this screen' }), el('option', { value: 'external', textContent: 'house speakers' }));
+  const delay = el('input', { type: 'number', min: 0, max: 5000, step: 50, title: 'House speakers only: show each frame this many ms later, to meet speakers that play behind (Snapcast buffers 1000 ms by default)' });
   const kiosk = el('input', { type: 'checkbox' });
   const hud = el('input', { type: 'checkbox' });
   display.value = opts.display; quality.value = opts.quality; bg.value = opts.bg; kiosk.checked = opts.kiosk; hud.checked = opts.hud;
+  sound.value = opts.sound; delay.value = opts.delay;
   const link = el('input', { type: 'text', readOnly: true });
   const qrBox = el('div', { className: 'qr', hidden: true });
   const testNote = el('span', { className: 'note' });
@@ -81,11 +91,18 @@ export function openScreen(faceId, name = faceId) {
     if (kiosk.checked) p.set('kiosk', '1');
     else if (!hud.checked) p.set('hud', '0');
     if (bg.value.trim()) p.set('bg', bg.value.trim());
+    if (sound.value === 'external') {
+      p.set('audio', 'external');
+      const ms = Math.round(Number(delay.value) || 0);
+      if (ms > 0) p.set('delay', String(Math.min(5000, ms)));
+    }
     return `${viewer}/?${p}`;
   };
   const refresh = () => {
     link.value = viewer ? url() : '';
-    store.set('screen', { display: display.value, quality: quality.value, bg: bg.value, kiosk: kiosk.checked, hud: hud.checked });
+    store.set('screen', { display: display.value, quality: quality.value, bg: bg.value, kiosk: kiosk.checked, hud: hud.checked,
+      sound: sound.value, delay: Number(delay.value) || 0 });
+    delayLabel.hidden = sound.value !== 'external';
     if (!qrBox.hidden) drawQr();
     say.value = `argus-mask say "Hello from the other side of the room." --face ${faceId}${server ? ` --url ${server}` : ''}`;
   };
@@ -97,7 +114,8 @@ export function openScreen(faceId, name = faceId) {
     qr.make();
     qrBox.append(el('img', { src: qr.createDataURL(6, 2), alt: `QR code for ${link.value}` }));
   };
-  for (const input of [display, quality, bg, kiosk, hud]) input.addEventListener('input', refresh);
+  const delayLabel = el('label', {}, 'Delay, ms', delay);
+  for (const input of [display, quality, bg, kiosk, hud, sound, delay]) input.addEventListener('input', refresh);
 
   const copy = (input, button) => async () => {
     try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
@@ -134,11 +152,12 @@ export function openScreen(faceId, name = faceId) {
     stateBox,
     el('div', { className: 'opts' },
       el('label', {}, 'Display', display), el('label', {}, 'Quality', quality), el('label', {}, 'Background', bg),
+      el('label', {}, 'Sound from', sound), delayLabel,
       el('label', { className: 'check', title: 'No HUD, no cursor, full screen on the first tap' }, kiosk, 'Kiosk'),
       el('label', { className: 'check' }, hud, 'Status line')),
     el('div', { className: 'row' }, link, openBtn, copyBtn, qrBtn),
     qrBox,
-    el('div', { className: 'note', textContent: 'On the screen, one tap turns the sound on and fills the screen. A kiosk browser started with --autoplay-policy=no-user-gesture-required needs none.' }),
+    el('div', { className: 'note', textContent: 'On the screen, one tap turns the sound on and fills the screen. A kiosk browser started with --autoplay-policy=no-user-gesture-required needs none. With sound from the house speakers the screen plays nothing and needs no tap for sound; set the delay to meet the speakers (start near the Snapcast buffer, less 250 ms, and adjust by eye).' }),
     el('div', { className: 'row' }, testBtn, testNote),
     el('label', {}, 'Speak from a terminal', el('div', { className: 'row' }, say, sayBtn)),
     el('div', { className: 'row', style: 'justify-content:flex-end' }, closeBtn)));
