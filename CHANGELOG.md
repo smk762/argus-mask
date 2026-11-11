@@ -21,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorder listens on the face first, the broadcast goes, then the clip renders and muxes, as `argus-mask record` does,
   into `ARGUS_MASK_RECORDINGS_DIR`; the page plays it, offers it to download and lists recent clips. `record` now
   tells its caller it is waiting only once its socket is open, and muxes off the event loop.
+- **Face voices** (#37): the editor's **Voices** page checks reference clips for a cloned voice (speech length, sample
+  rate, bandwidth, clipping, level, noise, edges, pauses, delivery, whether the transcript fits), each check with a
+  verdict and what to change (`argus_mask.voice`, pure numpy); generates synthetic candidates from the TTS service's
+  own speaker or a described voice, reading a script per delivery; makes the voice on the service (`/clone-voice`)
+  with a `voice.json` record of where it came from (generated, your own, or a consenting speaker's under a release,
+  by its sha256) in `ARGUS_MASK_VOICES_DIR`; refuses unsuitable clips and ids the service already has; tries a line
+  in the browser. `docs/voices.md`: the reference, recording your own, synthetic voices, one voice per delivery.
+- **`say` tidies speech** (#36, on by default, `--as-is` and the Broadcast page's Tidy speech turn it off): numbers,
+  times, dates and symbols go as words (`speech.speakable`), a sentence of one to three words goes with the next, and
+  each sentence is faded in and out and brought to the same speech level. Recordings through Miso had invented
+  words for digits, one-word sentences far off in pitch, clicks at sentence ends, and 9 dB between sentences.
+- **`POST /push` and `POST /speak`** on the server (#38), for agents: a WAV or raw PCM body (or text through the
+  configured TTS) plays into a face exactly as a source does, paced, one source per face, behind the same guards;
+  `require_screen=1` refuses when no screen can hear it. The server never sees text with `/push`.
+- **External sound for house speakers** (#39): `?audio=external` (or `mute=1`) makes a viewer animate on the session's
+  timeline without playing anything and without a tap; `?delay=<ms>` lines the lips up with a speaker system's
+  buffer (Snapcast). `/health.screens` gains `sound: local | external`; an external screen is ready once connected.
+  The On screen dialog sets both.
+- **`say --context`** (#40, opt-in): each sentence goes to an HTTP TTS with the one before it, text and levelled
+  audio, as Miso's `context` (voluptas#4); a service that refuses the field is asked again without it. Off by default:
+  with a cloned voice on Miso, chaining the audio made pitch drift up and loudness sink over a briefing, where
+  sentences sent alone held steady. The Broadcast page has it as an experimental checkbox.
+- **Recording presets** (#35): 1080p, 720p and 480p, and the HLD portrait panel; an info tooltip on temperature.
 - **Temperature on the Broadcast page**: a slider (0.1 to 1.5, Miso's range), left to the service's own value unless
   set; it goes as the request's `temperature` (`-p temperature=…`). Over Wyoming, `-p` fields other than the voice's
   now ride beside the text in the `synthesize` event, for a bridge to pass on, instead of being dropped.
@@ -116,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Broadcast recording that caught another source's session on the face is discarded, not kept as this broadcast's,
+  and a failed or stopped render no longer leaves its frames behind (#35).
+- `say` (without `--stream`), `/speak` and the Voices page's Try buffered a TTS reply without limit: they now refuse
+  past 10 minutes of speech, saying to send less or stream (#3). The client pacing test has a wider margin (#5).
 - `say --voice <name> -p speaker=<n>` against a Wyoming service dropped the voice name: a speaker now goes with the
   voice (Wyoming's `{name, speaker}`), and only a name in the request stands instead of `--voice`.
 - **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the
