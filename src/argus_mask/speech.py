@@ -27,6 +27,7 @@ import re
 
 import numpy as np
 
+from argus_mask.audio import _SAMPLE_BYTES
 from argus_mask.models import AudioFormat
 
 # ── Numbers as words ──────────────────────────────────────────────────────────
@@ -131,6 +132,8 @@ _CURRENCY = {"$": ("dollar", "dollars", "cent", "cents"), "£": ("pound", "pound
 
 def _money(match: re.Match) -> str:
     one, many, small_one, small_many = _CURRENCY[match["sym"]]
+    if match["cents"] and len(match["cents"]) > 2:  # $1.234: not a sum in cents
+        return f"{_decimal_text(match['whole'] + '.' + match['cents'])} {many}"
     whole = _int(match["whole"])
     words = f"{number_words(whole)} {one if whole == 1 else many}"
     if match["cents"]:
@@ -184,7 +187,7 @@ _RULES: list[tuple[re.Pattern, object]] = [
     (re.compile(r"(?<!\w)#(?=\d)"), lambda m: "number "),
     # 192.168.1.39, 1.2.3: dotted groups, each group a number
     (
-        re.compile(r"(?<![\w.])\d+(?:\.\d+){2,}(?![\w.]|\.\d)"),
+        re.compile(r"(?<![\w.])\d+(?:\.\d+){2,}(?!\w|\.\d)"),
         lambda m: " dot ".join(_digits(g) if len(g) > 2 else number_words(int(g)) for g in m[0].split(".")),
     ),
     (
@@ -196,7 +199,7 @@ _RULES: list[tuple[re.Pattern, object]] = [
         lambda m: _clock(int(m["h"]), 0, m["ampm"].lower()) + _sentence_dot(m),
     ),
     (re.compile(r"(?<![\w.-])(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})(?![\w-])"), _date),
-    (re.compile(r"(?P<sym>[$£€])(?P<whole>\d[\d,]*)(?:\.(?P<cents>\d{1,2}))?(?!\d)"), _money),
+    (re.compile(r"(?P<sym>[$£€])(?P<whole>\d[\d,]*)(?:\.(?P<cents>\d+))?(?!\d)"), _money),
     (re.compile(r"(?<![\w.])(?P<value>-?\d[\d,]*(?:\.\d+)?)\s?°\s?(?P<unit>[CcFf](?![A-Za-z]))?"), _degrees),
     (
         re.compile(r"(?<![\w.])(?P<value>-?\d[\d,]*(?:\.\d+)?)\s?%"),
@@ -262,9 +265,16 @@ MAX_GAIN_DB = 9.0  # in either direction: a whisper stays quieter than a shout
 PEAK = 0.89  # about -1 dBFS
 
 
+def _frame_bytes(fmt: AudioFormat) -> int:
+    return _SAMPLE_BYTES[fmt.format] * fmt.channels
+
+
 def _decode(data: bytes, fmt: AudioFormat) -> np.ndarray:
+    """A new, writable (samples, channels) array; a NaN or infinite sample becomes 0 or +-1, as `PcmDecoder` does,
+    so that one bad sample cannot turn the level, and with it the whole sentence, into NaN or silence."""
     if fmt.format == "f32le":
         samples = np.frombuffer(data, dtype="<f4").astype(np.float32)
+        samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0, copy=False)
     else:
         samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
     return samples.reshape(-1, fmt.channels)
@@ -298,8 +308,8 @@ def speech_level(samples: np.ndarray, rate: int) -> float | None:
 
 def tidy_audio(data: bytes, fmt: AudioFormat, *, level: bool = True) -> bytes:
     """One sentence's PCM with soft edges and, if *level*, brought to `TARGET_DBFS`, in the same format."""
-    usable = len(data) - len(data) % ((4 if fmt.format == "f32le" else 2) * fmt.channels)
-    samples = _decode(data[:usable], fmt).copy()
+    usable = len(data) - len(data) % _frame_bytes(fmt)
+    samples = _decode(data[:usable], fmt)
     if not len(samples):
         return data
     if level and (current := speech_level(samples, fmt.sample_rate)) is not None:
@@ -327,7 +337,7 @@ class Edges:
 
     def __init__(self, fmt: AudioFormat) -> None:
         self.fmt = fmt
-        self.frame = (4 if fmt.format == "f32le" else 2) * fmt.channels
+        self.frame = _frame_bytes(fmt)
         self.hold = fmt.sample_rate * FADE_OUT_MS // 1000 * self.frame
         self.fade_in = fmt.sample_rate * FADE_IN_MS // 1000
         self.done_in = 0  # samples of the fade-in applied so far
@@ -336,7 +346,7 @@ class Edges:
     def _in(self, data: bytes) -> bytes:
         if self.done_in >= self.fade_in or not data:
             return data
-        samples = _decode(data, self.fmt).copy()
+        samples = _decode(data, self.fmt)
         ramp = _ramp(self.fade_in)[self.done_in : self.done_in + len(samples)]
         samples[: len(ramp)] *= ramp[:, None]
         self.done_in += len(ramp)
@@ -355,7 +365,7 @@ class Edges:
         usable = len(self.pending) - len(self.pending) % self.frame
         if not usable:
             return b""
-        samples = _decode(self._in(self.pending[:usable]), self.fmt).copy()
+        samples = _decode(self._in(self.pending[:usable]), self.fmt)
         self.pending = b""
-        samples *= _ramp(len(samples))[::-1, None] if len(samples) else 1.0
+        samples *= _ramp(len(samples))[::-1, None]
         return _encode(samples, self.fmt)

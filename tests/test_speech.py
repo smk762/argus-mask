@@ -80,6 +80,8 @@ def test_ordinal_words() -> None:
         ("agent 007", "agent zero zero seven"),
         ("on 2026-11-11", "on the eleventh of November twenty twenty-six"),
         ("host 192.168.1.39", "host one nine two dot one six eight dot one dot thirty-nine"),
+        ("Ping 192.168.1.39.", "Ping one nine two dot one six eight dot one dot thirty-nine."),
+        ("$1.234 a share", "one point two three four dollars a share"),
         # names keep their digits
         ("A2F renders 3D to mp4, v1.2.3", "A2F renders 3D to mp4, v1.2.3"),
         ("No numbers here.", "No numbers here."),
@@ -135,6 +137,13 @@ def test_tidy_audio_keeps_the_format() -> None:
     assert tidy_audio(b"", F32) == b""
     silent = bytes(4 * 2400)
     assert tidy_audio(silent, F32) == silent
+
+
+def test_tidy_audio_survives_a_bad_sample() -> None:
+    tone = _tone(0.5, 24000, 0.2)
+    tone[100], tone[200] = np.nan, np.inf
+    out = np.frombuffer(tidy_audio(tone.tobytes(), F32), dtype="<f4")
+    assert np.isfinite(out).all() and speech_level(out, 24000) > 0.01
 
 
 @pytest.mark.parametrize("piece", [1, 7, 333, 4096, 10**6])
