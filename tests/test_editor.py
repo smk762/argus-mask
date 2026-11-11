@@ -1056,6 +1056,17 @@ def test_a_wyoming_speaker_goes_with_the_voice_not_instead_of_it() -> None:
     }
 
 
+def test_a_named_speaker_is_sent_as_a_speaker() -> None:
+    from argus_mask.client import voiced  # noqa: PLC0415
+
+    # Qwen3-TTS CustomVoice names its speakers; a bare name would be taken for a clone
+    assert voiced({}, "speaker:Vivian", "http://h/tts") == {"speaker": "Vivian"}
+    assert voiced({}, "Vivian", "http://h/tts") == {"voice_clone_id": "Vivian"}
+    assert voiced({"voice_clone_id": "x"}, "speaker:Vivian", "http://h/tts") == {"voice_clone_id": "x"}
+    assert voiced({}, "speaker:2", "wyoming://h:1") == {"speaker": "2"}
+    assert voiced({"speaker": "3"}, "speaker:2", "wyoming://h:1") == {"speaker": "3"}  # the request's wins
+
+
 @pytest.mark.parametrize("kind", ["wyoming", "http"])
 def test_a_temperature_reaches_the_tts_service(broadcasting, kind) -> None:
     from tests.helpers import fake_tts, fake_wyoming  # noqa: PLC0415

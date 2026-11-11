@@ -164,6 +164,21 @@ def test_speak_says_text_through_the_configured_tts(assets, capsys) -> None:
     assert "chars=" in out.out + out.err and "zebras" not in out.out + out.err  # logged, but never the text
 
 
+def test_speak_passes_a_named_speaker_and_an_instruction(assets, capsys) -> None:
+    with (
+        fake_tts(tone(0.5), 24000) as (tts, seen),
+        TestClient(create_app(Settings(assets_dir=assets, tts_url=tts, tts_voice="speaker:Vivian"))) as c,
+        c.websocket_connect("/session/test-head/view") as viewer,
+    ):
+        how = "Calm, low and measured."
+        done = c.post("/speak", json={"face": "test-head", "text": "Good morning.", "instruction": how})
+        assert done.status_code == 200, done.text
+        drain(viewer)
+    assert seen == [{"text": "Good morning.", "instruction": how, "speaker": "Vivian"}]
+    out = capsys.readouterr()
+    assert "measured" not in out.out + out.err  # like the text, never logged
+
+
 def test_speak_needs_a_tts_service(client) -> None:
     refused = client.post("/speak", json={"face": "test-head", "text": "Hello there."})
     assert refused.status_code == 422 and "ARGUS_MASK_TTS_URL" in refused.json()["detail"]

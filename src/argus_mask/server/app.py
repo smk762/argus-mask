@@ -149,7 +149,14 @@ class Speak(BaseModel):
     model_config = ConfigDict(extra="forbid")
     face: str = Field(..., pattern=FACE_ID_PATTERN)
     text: str = Field(..., min_length=1, max_length=5000)
-    voice: str = Field("", max_length=200, description="default: ARGUS_MASK_TTS_VOICE")
+    voice: str = Field(
+        "",
+        max_length=200,
+        description="default: ARGUS_MASK_TTS_VOICE; a clone's name, a speaker number, or speaker:<name>",
+    )
+    instruction: str = Field(
+        "", max_length=500, description="how to say it, for a service that takes one (Qwen3-TTS CustomVoice)"
+    )
     seed: int = Field(0, ge=0, le=2**31 - 1)
     temperature: float | None = Field(None, ge=0.1, le=1.5)
     tidy: bool = Field(True, description="numbers as words, short sentences joined, soft edges, even loudness")
@@ -570,6 +577,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         body: dict = {"text": req.text}
         if req.temperature is not None:
             body["temperature"] = req.temperature
+        if req.instruction:
+            body["instruction"] = req.instruction
         body = client.voiced(body, req.voice or cfg.tts_voice, tts_url)
         log.info("speak", face=req.face, chars=len(req.text))  # never the text itself
         try:

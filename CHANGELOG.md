@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Named TTS speakers and delivery instructions**: a voice written `speaker:<name>` (`--voice`, `ARGUS_MASK_TTS_VOICE`,
+  `/speak`'s `voice`) is sent as the service's own speaker, not as a clone, for services that name their speakers, such
+  as Qwen3-TTS's CustomVoice (`speaker:Vivian`). `POST /speak` takes an optional `instruction`, how to say it, passed
+  to a service that reads one; like the text, it is never logged.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added
