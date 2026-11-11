@@ -523,9 +523,11 @@ def voiced(body: dict, voice: str, tts_url: str) -> dict:
     """*body* with *voice* as its voice, unless it already names one.
 
     A Wyoming server takes a voice name as it is. The HTTP contract has two fields: ``speaker``
-    for one of the service's own speakers (Miso numbers them) and ``voice_clone_id`` for a
-    stored clone. A number goes to the first, any other name to the second, with the
-    ``clone:`` prefix agent-composer's bridges use dropped, so the same name works on both.
+    for one of the service's own speakers (Miso numbers them; Qwen3-TTS's CustomVoice names
+    them) and ``voice_clone_id`` for a stored clone. A number, or a name with the ``speaker:``
+    prefix, goes to the first; any other name to the second, with the ``clone:`` prefix
+    agent-composer's bridges use dropped, so the same name works on both. On Wyoming,
+    ``speaker:<name>`` picks that speaker of the server's default voice.
     """
     if not voice:
         return body
@@ -536,7 +538,10 @@ def voiced(body: dict, voice: str, tts_url: str) -> dict:
     if any(k in body for k in named):
         return body
     body = dict(body)
-    if wyoming:
+    if voice.startswith("speaker:"):
+        if not wyoming or "speaker" not in body:
+            body["speaker"] = voice.removeprefix("speaker:")
+    elif wyoming:
         body["voice"] = voice
     elif voice.isdigit():
         body["speaker"] = voice
