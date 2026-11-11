@@ -217,11 +217,19 @@ def say(
         min=0,
         help="Silence between sentences in ms, each sentence its own request; 0 sends the text whole",
     ),
+    as_is: bool = Option(
+        False,
+        "--as-is",
+        help="Send the text as written and play the audio as it came: no numbers as words, no joined short "
+        "sentences, no fades or levelling",
+    ),
 ) -> None:
     """Speak text through a TTS service into a running server. The text goes to that service and nowhere else.
 
     The text goes one sentence at a time with a pause between them (twice as long between paragraphs). The whole
     utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
+    Numbers and times are sent as words, a very short sentence goes with the next, and each sentence is faded in
+    and out and brought to the same loudness; --as-is turns that off.
     """
     from argus_mask import client
 
@@ -249,6 +257,7 @@ def say(
                     seed=seed,
                     stream=stream,
                     pause_ms=pause,
+                    tidy=not as_is,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
                     on_progress=lambda i, n: typer.echo(f"sentence {i}/{n}", err=True),
                     on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),

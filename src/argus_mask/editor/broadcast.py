@@ -207,6 +207,7 @@ class Broadcasts:
         seed: int,
         stream: bool,
         pause_ms: int,
+        tidy: bool = True,
         record: RecordOptions | None = None,
     ) -> Job:
         text = str(body.get("text") or "")
@@ -221,6 +222,7 @@ class Broadcasts:
                 seed=seed,
                 stream=stream,
                 pause_ms=pause_ms,
+                tidy=tidy,
                 on_ready=lambda r: job.note("ready", f"session {r.get('session_id')}"),
                 on_progress=lambda i, n: job.note("progress", f"sentence {i}/{n}"),
                 on_audio=lambda secs: job.note("audio", f"speech: {secs:.2f}s, playing"),

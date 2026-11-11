@@ -158,7 +158,19 @@ def test_say_sends_one_sentence_at_a_time_with_pauses_between(server) -> None:
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
         result = runner.invoke(
             app,
-            ["say", "One. Two!\n\nThree?", "--face", "test-head", "--url", server, "--tts-url", tts_url, "-p", "x=1"],
+            [
+                "say",
+                "One. Two!\n\nThree?",
+                "--face",
+                "test-head",
+                "--url",
+                server,
+                "--tts-url",
+                tts_url,
+                "-p",
+                "x=1",
+                "--as-is",
+            ],
         )
     assert result.exit_code == 0, result.output
     assert [b["text"] for b in seen] == ["One.", "Two!", "Three?"] and all(b["x"] == 1 for b in seen)
@@ -167,14 +179,45 @@ def test_say_sends_one_sentence_at_a_time_with_pauses_between(server) -> None:
     assert "speech: 3.00s, playing" in result.output and "4.35s" in result.output
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
         whole = runner.invoke(
-            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--pause", "0"]
+            app,
+            [
+                "say",
+                "One. Two!",
+                "--face",
+                "test-head",
+                "--url",
+                server,
+                "--tts-url",
+                tts_url,
+                "--pause",
+                "0",
+                "--as-is",
+            ],
         )
     assert whole.exit_code == 0 and [b["text"] for b in seen] == ["One. Two!"] and "1.45s" in whole.output
     with fake_tts(tone(1.0, 24000), 24000) as (tts_url, seen):
         streamed = runner.invoke(
-            app, ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
+            app,
+            ["say", "One. Two!", "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream", "--as-is"],
         )
     assert streamed.exit_code == 0 and [b["text"] for b in seen] == ["One.", "Two!"] and "2.75s" in streamed.output
+
+
+def test_say_tidies_the_text_unless_told_not_to(server) -> None:
+    text = "Hi. The meeting is at 9:30 a.m. tomorrow. It has 3 items."
+    with fake_tts(tone(0.5, 24000), 24000) as (tts_url, seen):
+        result = runner.invoke(app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert result.exit_code == 0, result.output
+    # The one-word greeting goes with the next sentence; the numbers go as words.
+    assert [b["text"] for b in seen] == ["Hi. The meeting is at nine thirty a m tomorrow.", "It has three items."]
+    with fake_tts(tone(0.5, 24000), 24000) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, "--stream"]
+        )
+    assert result.exit_code == 0, result.output
+    # Streamed, the audio is faded but not levelled, and keeps its length: 2 x 0.5 s, a pause, the lead and tail.
+    assert [b["text"] for b in seen] == ["Hi. The meeting is at nine thirty a m tomorrow.", "It has three items."]
+    assert "1.75s" in result.output
 
 
 def test_say_picks_the_voice(server, monkeypatch) -> None:

@@ -28,6 +28,7 @@ import numpy as np
 
 from argus_mask.models import AudioFormat, SourceHello
 from argus_mask.performance import blocks
+from argus_mask.speech import Edges, join_short, speakable, tidy_audio
 
 LEAD_S = 1.0  # how far ahead of real time a source may run
 TTS_TIMEOUT_S = 180.0  # the first byte waits for a cold model to load
@@ -516,6 +517,7 @@ async def say(
     seed: int = 0,
     stream: bool = False,
     pause_ms: int = SAY_PAUSE_MS,
+    tidy: bool = True,
     on_ready: Callable[[dict], None] | None = None,
     on_audio: Callable[[float], None] | None = None,
     on_wait: Callable[[], None] | None = None,
@@ -526,6 +528,11 @@ async def say(
     The text is sent one sentence at a time, with *pause_ms* of silence between sentences
     (twice that between paragraphs): TTS models run sentences into each other, and a short
     request wanders less than a long one. *pause_ms* 0 sends the text whole.
+
+    *tidy* (the default) is what `argus_mask.speech` does: numbers and times go as words, a
+    sentence of a few words goes with the next, and each sentence comes back with soft
+    edges and, unless streamed, at the same speech level as the others. Off, the text goes
+    as written and the audio as it came.
 
     By default the whole utterance is fetched first and then pushed in real time: a
     TTS model slower than real time (Miso TTS 8B runs at about a quarter of real
@@ -541,7 +548,11 @@ async def say(
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ClientError("nothing to say")
+    if tidy:
+        text = speakable(text)
     parts = sentences(text) if pause_ms > 0 else [(text, 0)]
+    if tidy:
+        parts = join_short(parts)
     if on_wait:
         on_wait()
 
@@ -574,13 +585,19 @@ async def say(
             for i, (_, pauses) in enumerate(parts):
                 if i:
                     reply = await open_part(i)
+                edges = Edges(fmt) if tidy else None
                 try:
                     while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
-                        yield data
+                        if edges is None:
+                            yield data
+                        elif out := edges.feed(data):
+                            yield out
                 except OSError as exc:
                     raise ClientError(f"the TTS stream broke: {exc}") from exc
                 finally:
                     reply.close()
+                if edges is not None and (out := edges.end()):
+                    yield out
                 if pauses:
                     yield silence(pause_ms * pauses)
             yield tail
@@ -603,7 +620,7 @@ async def say(
         if not whole:
             raise ClientError("the TTS service sent no audio" + (f" for sentence {i + 1}" if len(parts) > 1 else ""))
         spoken += len(whole)
-        pieces.append(whole)
+        pieces.append(tidy_audio(whole, fmt) if tidy else whole)
         if pauses:
             pieces.append(silence(pause_ms * pauses))
     if on_audio:

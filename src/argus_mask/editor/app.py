@@ -130,6 +130,7 @@ class Say(BaseModel):
     seed: int = Field(0, ge=0, le=2**31 - 1)
     stream: bool = False
     pause: int = Field(300, ge=0, le=10_000, description="ms between sentences; 0 sends the text whole")
+    tidy: bool = Field(True, description="numbers as words, short sentences joined, soft edges, even loudness")
     record: Record | None = Field(None, description="also record the broadcast to a file")
 
 
@@ -472,6 +473,7 @@ def create_editor_app(
                 seed=req.seed,
                 stream=req.stream,
                 pause_ms=req.pause,
+                tidy=req.tidy,
                 record=req.record.options() if req.record else None,
             )
         except Broadcasting as exc:
