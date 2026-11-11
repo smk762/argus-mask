@@ -2,6 +2,7 @@
 
 ``GET /health``                       version, the driver and whether it answers, free VRAM, ``read_only``, live faces
 ``GET /faces``                        the faces that may be served
+``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
 ``GET /face/{id}/model``              its ``.glb``
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
@@ -43,7 +44,7 @@ from argus_mask import __version__, client
 from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
-from argus_mask.faces import FaceError, FaceStore
+from argus_mask.faces import Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
     DriverHealth,
@@ -253,7 +254,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     cfg = settings or Settings.from_env()
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
     store = FaceStore(cfg.assets_dir)
-    stages: dict[str, Stage] = {}
+    aliases = Aliases(store)
+    stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
     app = FastAPI(
         title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
     )
@@ -268,7 +270,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     def face_or_404(face_id: str) -> tuple[FaceManifest, Path]:
         try:
-            return store.load(face_id)
+            return store.load(aliases.resolve(face_id))
         except FaceError:
             # One answer for "no such face" and "refused": a refused face is not served, and says so only to `inspect`.
             raise HTTPException(status_code=404, detail=f"no face {face_id!r}") from None
@@ -288,7 +290,13 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             faces=len(faces),
             live=sorted(fid for fid, stage in stages.items() if stage.claimed),
             screens={fid: list(stage.screens.values()) for fid, stage in sorted(stages.items()) if stage.screens},
+            aliases=aliases.all(),
         )
+
+    @app.get("/aliases")
+    def alias_list() -> dict[str, str]:
+        """Stable names for faces (alias -> face id), as the editor set them in the assets' aliases.json."""
+        return aliases.all()
 
     @app.get("/faces", response_model=list[FaceManifest])
     def faces() -> list[FaceManifest]:
@@ -336,7 +344,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 probe.forget()  # ask the driver again next time
                 raise SourceRefused(str(exc)) from exc
             header = make_header(
-                face_id=face_id,
+                face_id=aliases.resolve(face_id),  # the face itself: a viewer that loaded another reloads
                 session_id=uuid.uuid4().hex,
                 fps=cfg.fps,
                 seed=hello.seed,
@@ -438,7 +446,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await refuse(ws, READ_ONLY_REFUSAL)
             return
         try:
-            store.load(face_id)
+            store.load(aliases.resolve(face_id))
         except FaceError:
             await refuse(ws, f"no face {face_id!r}")
             return
@@ -583,7 +591,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await ws.close(code=POLICY)
             return
         try:
-            store.load(face_id)
+            store.load(aliases.resolve(face_id))
         except FaceError:
             await refuse(ws, f"no face {face_id!r}")
             return

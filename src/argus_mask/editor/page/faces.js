@@ -86,6 +86,9 @@ function card(row) {
     badges.append(el('span', { className: 'badge preview', textContent: 'unexported changes', title: `assets/.preview/${row.id} differs from the export` }));
   }
   if (copy) badges.append(el('span', { className: 'badge', textContent: copy.kind }), el('span', { className: 'badge', textContent: copy.license }));
+  for (const [name, face] of Object.entries(aliases)) {
+    if (face === row.id) badges.append(el('span', { className: 'badge alias', textContent: `as ${name}`, title: `The alias ${name} points here` }));
+  }
   const info = el('div', { className: 'info' },
     el('div', { className: 'name', textContent: copy ? copy.name : row.id }),
     el('div', { className: 'id', textContent: row.id }),
@@ -120,8 +123,44 @@ function card(row) {
   return el('div', { className: 'card' }, shot, info, el('div', { className: 'actions' }, review, onScreen, remix, rename, del));
 }
 
+// ---- aliases: stable names (a persona's "holly") pointing at a face ----------------------------
+
+let aliases = {};
+function renderAliases() {
+  const served = rows.filter((r) => r.export && !r.refused).map((r) => r.id);
+  const options = (chosen) => served.map((id) => el('option', { value: id, textContent: id, selected: id === chosen }));
+  $('alias-face').replaceChildren(...options(served[0]));
+  $('alias-list').replaceChildren(...Object.entries(aliases).map(([name, face]) => {
+    const pick = el('select', {}, ...options(face));
+    pick.onchange = () => setAlias(name, pick.value);
+    const screen = el('button', { type: 'button', textContent: 'On screen…', title: `A link that asks for ${name}, whatever it points at` });
+    screen.onclick = () => openScreen(name, `${name} (now ${face})`);
+    const drop = el('button', { type: 'button', className: 'danger', textContent: 'Remove' });
+    drop.onclick = async () => {
+      if (!window.confirm(`Remove the alias ${name}? Screens and sources that ask for ${name} will find no face.`)) return;
+      try { await json(`/aliases/${enc(name)}`, { method: 'DELETE' }); await load(); status(`Removed ${name}.`); } catch (err) { status(err.message, true); }
+    };
+    return el('div', { className: 'alias-row' }, el('b', { textContent: name }), el('span', { textContent: '→' }), pick, screen, drop);
+  }));
+  if (!Object.keys(aliases).length) $('alias-list').append(el('div', { className: 'meta', textContent: 'None yet.' }));
+}
+async function setAlias(name, face) {
+  try {
+    await json(`/aliases/${enc(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ face }) });
+    await load();
+    status(`${name} now points at ${face}.`);
+    return true;
+  } catch (err) { status(err.message, true); await load(); return false; }
+}
+$('alias-new').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (await setAlias($('alias-name').value.trim(), $('alias-face').value)) $('alias-name').value = '';  // kept to fix on a refusal
+});
+
 async function load() {
   rows = await json('/saved');
+  try { ({ aliases } = await json('/aliases')); } catch { aliases = {}; }
+  renderAliases();
   render();
   status(`${rows.length} face${rows.length === 1 ? '' : 's'}.`);
   watchScreens();

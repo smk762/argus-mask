@@ -26,6 +26,13 @@
   button:disabled { opacity: .4; cursor: not-allowed; }
 
   main { padding: 16px; }
+  #aliases { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; display: grid; gap: 8px; }
+  #aliases h2 { margin: 0; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  .alias-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .alias-row b { font-family: ui-monospace, monospace; min-width: 90px; }
+  .alias-row input { width: auto; flex: 0 1 220px; }
+  .alias-row input, .alias-row select { padding: 5px 8px; background: var(--bg); color: inherit; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  .badge.alias { color: var(--accent); border-color: #2c4870; }
   #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
   .shot { position: relative; aspect-ratio: 5 / 6; background: var(--bg); cursor: zoom-in; }
@@ -81,6 +88,16 @@
   <span id="status"></span>
 </header>
 <main>
+  <section id="aliases" title="A stable name a persona or a kiosk uses forever (?face=holly), pointing at whichever face you choose here">
+    <h2>Aliases</h2>
+    <div id="alias-list"></div>
+    <form id="alias-new" class="alias-row">
+      <input type="text" id="alias-name" placeholder="new alias, e.g. holly" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required>
+      <span>→</span><select id="alias-face" required></select>
+      <button type="submit">Add</button>
+    </form>
+    <div class="meta" id="alias-note">Screens and sources that use an alias get the face it points at; a screen watching it switches to the new face on the next thing said.</div>
+  </section>
   <div id="grid"></div>
   <div class="empty" id="empty" hidden>No faces yet. Build one in the editor, then Export it.</div>
 </main>
