@@ -144,6 +144,7 @@ class Say(BaseModel):
     stream: bool = False
     pause: int = Field(300, ge=0, le=10_000, description="ms between sentences; 0 sends the text whole")
     tidy: bool = Field(True, description="numbers as words, short sentences joined, soft edges, even loudness")
+    context: bool = Field(False, description="each sentence sent with the one before it as context (experimental)")
     record: Record | None = Field(None, description="also record the broadcast to a file")
 
 
@@ -730,6 +731,7 @@ def create_editor_app(
                 stream=req.stream,
                 pause_ms=req.pause,
                 tidy=req.tidy,
+                context=req.context,
                 record=req.record.options() if req.record else None,
             )
         except Broadcasting as exc:

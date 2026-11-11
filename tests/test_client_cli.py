@@ -324,3 +324,56 @@ def test_say_speaks_through_a_wyoming_server(server) -> None:
     assert failed.exit_code == 1 and "no such voice" in failed.output
     bad = runner.invoke(app, ["say", "Hello.", "--face", "test-head", "--url", server, "--tts-url", "ftp://x"])
     assert bad.exit_code == 1 and "wyoming://" in bad.output
+
+
+def test_say_sends_the_previous_sentence_as_context(server) -> None:
+    import base64  # noqa: PLC0415
+
+    from argus_mask.models import AudioFormat  # noqa: PLC0415
+    from argus_mask.speech import tidy_audio  # noqa: PLC0415
+
+    F32_24K = AudioFormat(sample_rate=24000, format="f32le", channels=1)  # noqa: N806
+
+    pcm = tone(0.5, 24000)
+    text = "This is the first sentence here. And this is the second one. Then a third to finish."
+    for extra in (["--context"], ["--context", "--stream"]):
+        with fake_tts(pcm, 24000) as (tts_url, seen):
+            result = runner.invoke(
+                app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, *extra]
+            )
+        assert result.exit_code == 0, result.output
+        assert "context" not in seen[0]
+        for before, now in zip(seen, seen[1:], strict=False):
+            (ctx,) = now["context"]
+            assert ctx["text"] == before["text"]
+            # the audio the service sent, levelled (sent as it came, a briefing sank sentence by sentence)
+            assert base64.b64decode(ctx["audio"]) == tidy_audio(pcm.astype("<f4").tobytes(), F32_24K)
+    with fake_tts(pcm, 24000) as (tts_url, seen):
+        off = runner.invoke(app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url])
+    assert off.exit_code == 0 and all("context" not in s for s in seen)
+
+
+def test_a_service_that_refuses_context_is_asked_again_without_it(server) -> None:
+    text = "This is the first sentence here. And this is the second one. Then a third to finish."
+    with fake_tts(tone(0.5, 24000), 24000, refuse_context=True) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, "--context"]
+        )
+    assert result.exit_code == 0, result.output
+    # the second sentence is refused with context, asked again without; the third goes without
+    assert ["context" in s for s in seen] == [False, True, False, False]
+    assert [s["text"] for s in seen if "context" not in s] == [
+        "This is the first sentence here.",
+        "And this is the second one.",
+        "Then a third to finish.",
+    ]
+
+
+def test_a_wyoming_service_gets_no_context(server) -> None:
+    text = "This is the first sentence here. And this is the second one."
+    with fake_wyoming(tone(0.3, 22050), 22050) as (tts_url, seen):
+        result = runner.invoke(
+            app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, "--context"]
+        )
+    assert result.exit_code == 0, result.output
+    assert len(seen) == 2 and all("context" not in s for s in seen)

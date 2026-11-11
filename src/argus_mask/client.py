@@ -14,6 +14,7 @@ speak it). The text goes to that service and nowhere else.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import http.client
 import json
@@ -59,6 +60,14 @@ _FORMATS = {"pcm_f32le": "f32le", "f32le": "f32le", "pcm_s16le": "s16le", "s16le
 
 class ClientError(RuntimeError):
     """The server or the TTS service refused, or went away."""
+
+
+class TtsRefused(ClientError):
+    """The TTS service answered a request with an HTTP error status."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class ServiceRefused(ClientError):
@@ -580,7 +589,7 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
     if response.status != 200:
         detail = response.read(300).decode(errors="replace")
         connection.close()
-        raise ClientError(f"the TTS service answered {response.status}: {detail}")
+        raise TtsRefused(response.status, f"the TTS service answered {response.status}: {detail}")
     declared = (response.getheader("X-Audio-Format") or "").lower()
     try:
         fmt = AudioFormat(
@@ -607,6 +616,7 @@ async def say(
     stream: bool = False,
     pause_ms: int = SAY_PAUSE_MS,
     tidy: bool = True,
+    context: bool = False,
     on_ready: Callable[[dict], None] | None = None,
     on_audio: Callable[[float], None] | None = None,
     on_wait: Callable[[], None] | None = None,
@@ -617,6 +627,10 @@ async def say(
     The text is sent one sentence at a time, with *pause_ms* of silence between sentences
     (twice that between paragraphs): TTS models run sentences into each other, and a short
     request wanders less than a long one. *pause_ms* 0 sends the text whole.
+
+    *context* sends each sentence with the one before it, text and audio as the service returned it, for a
+    CSM-style model (Miso) to carry on from; see `_Carry`. Off by default: with Miso and a cloned voice,
+    chaining generated audio as context made pitch drift up and loudness sink sentence after sentence.
 
     *tidy* (the default) is what `argus_mask.speech` does: numbers and times go as words, a
     sentence of a few words goes with the next, and each sentence comes back with soft
@@ -638,7 +652,7 @@ async def say(
         # Fetch everything before the face is claimed: the service answers its headers at once and
         # then generates for as long as it takes, and the face stays free for others meanwhile.
         whole, fmt, seconds = await synthesise(
-            tts_url, body, pause_ms=pause_ms, tidy=tidy, on_wait=on_wait, on_progress=on_progress
+            tts_url, body, pause_ms=pause_ms, tidy=tidy, context=context, on_wait=on_wait, on_progress=on_progress
         )
         if on_audio:
             on_audio(seconds)
@@ -656,7 +670,8 @@ async def say(
     parts = _parts(body, pause_ms, tidy)
     if on_wait:
         on_wait()
-    reply = await _open_part(tts_url, body, parts, 0, None, on_progress)
+    carry = _Carry(tts_url, body, context)
+    reply = await _open_part(tts_url, body, parts, 0, None, on_progress, carry)
     fmt = reply.fmt
     block = fmt.sample_rate // 10 * _frame_bytes(fmt)  # ~100 ms
 
@@ -665,12 +680,15 @@ async def say(
         # TTS models start speaking on their first sample. A little silence either side gives the output
         # device time to wake before the first sound, and the mouth time to close before the stream ends.
         yield _silence(fmt, SAY_LEAD_MS)
-        for i, (_, pauses) in enumerate(parts):
+        for i, (text, pauses) in enumerate(parts):
             if i:
-                reply = await _open_part(tts_url, body, parts, i, fmt, on_progress)
+                reply = await _open_part(tts_url, body, parts, i, fmt, on_progress, carry)
             edges = Edges(fmt) if tidy else None
+            heard: list[bytes] = []
             try:
                 while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
+                    if carry.on:
+                        heard.append(data)
                     if edges is None:
                         yield data
                     elif out := edges.feed(data):
@@ -681,6 +699,7 @@ async def say(
                 reply.close()
             if edges is not None and (out := edges.end()):
                 yield out
+            carry.keep(text, b"".join(heard), fmt)
             if pauses:
                 yield _silence(fmt, pause_ms * pauses)
         yield _silence(fmt, SAY_TAIL_MS)
@@ -702,6 +721,39 @@ def _parts(body: dict, pause_ms: int, tidy: bool) -> list[tuple[str, int]]:
     return join_short(parts) if tidy else parts
 
 
+CONTEXT_MAX_S = 15.0  # the longest previous sentence sent as context; Miso takes up to 20 s
+
+
+class _Carry:
+    """The previous sentence, sent with the next as context, so the voice keeps its tone across sentences.
+
+    Miso's ``/synthesise`` contract (voluptas#4) takes ``context: [{text, audio}]``, the audio being
+    base64 ``pcm_f32le`` at the service's rate: a CSM-style model then carries on from how the last
+    sentence sounded instead of starting afresh from the clone's reference. The audio sent is levelled
+    (`speech.tidy_audio`) first: sent as it came, each sentence copied the last one's level a little
+    lower, and a briefing sank by 15 dB from its first sentence to its last. Sent only to
+    an HTTP service, only for mono f32 audio, only if the body does not already have a ``context``.
+    A service that refuses the field (400 or 422) is asked again without it, and not sent it again;
+    one that ignores it sounds as before. Stateless: nothing is kept between utterances.
+    """
+
+    def __init__(self, tts_url: str, body: dict, enabled: bool) -> None:
+        self.on = enabled and tts_url.startswith(("http://", "https://")) and "context" not in body
+        self.previous: tuple[str, bytes] | None = None
+
+    def body(self, body: dict, text: str, fmt: AudioFormat | None) -> dict:
+        out = {**body, "text": text}
+        if self.on and self.previous is not None and fmt is not None and fmt.format == "f32le" and fmt.channels == 1:
+            said, audio = self.previous
+            if 0 < len(audio) / 4 / fmt.sample_rate <= CONTEXT_MAX_S:
+                out["context"] = [{"text": said, "audio": base64.b64encode(audio).decode("ascii")}]
+        return out
+
+    def keep(self, text: str, audio: bytes, fmt: AudioFormat) -> None:
+        if self.on and audio:
+            self.previous = (text, tidy_audio(audio, fmt))
+
+
 async def _open_part(
     tts_url: str,
     body: dict,
@@ -709,10 +761,18 @@ async def _open_part(
     i: int,
     fmt: AudioFormat | None,
     on_progress: Callable[[int, int], None] | None,
+    carry: _Carry | None = None,
 ) -> TtsReply | WyomingReply:
     if on_progress and len(parts) > 1:
         on_progress(i + 1, len(parts))
-    reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
+    request = carry.body(body, parts[i][0], fmt) if carry is not None else {**body, "text": parts[i][0]}
+    try:
+        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, request), cut=None)
+    except TtsRefused as exc:
+        if "context" not in request or carry is None or exc.status not in (400, 422):
+            raise
+        carry.on = False  # this service does not take context: ask again without it, and stop sending it
+        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
     if fmt is not None and reply.fmt != fmt:
         reply.close()
         raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
@@ -725,12 +785,14 @@ async def synthesise(
     *,
     pause_ms: int = SAY_PAUSE_MS,
     tidy: bool = True,
+    context: bool = False,
     on_wait: Callable[[], None] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[bytes, AudioFormat, float]:
     """*body*'s speech, whole, as `say` would play it: (PCM in the service's format, that format, seconds of speech).
 
-    Sentence by sentence with pauses between, tidied unless *tidy* is off (see `say`). No face is involved:
+    Sentence by sentence with pauses between, tidied unless *tidy* is off, each sentence sent with the one
+    before it as context unless *context* is off (see `say`). No face is involved:
     `say` plays this into one, the editor's Voices page plays it in the browser.
     """
     parts = _parts(body, pause_ms, tidy)
@@ -739,8 +801,9 @@ async def synthesise(
     pieces: list[bytes] = []
     spoken = 0
     fmt: AudioFormat | None = None
-    for i, (_, pauses) in enumerate(parts):
-        reply = await _open_part(tts_url, body, parts, i, fmt, on_progress)
+    carry = _Carry(tts_url, body, context)
+    for i, (text, pauses) in enumerate(parts):
+        reply = await _open_part(tts_url, body, parts, i, fmt, on_progress, carry)
         fmt = reply.fmt
         try:
             whole = await _cancellable(asyncio.to_thread(reply.read), cut=reply.cut)
@@ -751,6 +814,7 @@ async def synthesise(
         if not whole:
             raise ClientError("the TTS service sent no audio" + (f" for sentence {i + 1}" if len(parts) > 1 else ""))
         spoken += len(whole)
+        carry.keep(text, whole, fmt)
         pieces.append(tidy_audio(whole, fmt) if tidy else whole)
         if pauses:
             pieces.append(_silence(fmt, pause_ms * pauses))

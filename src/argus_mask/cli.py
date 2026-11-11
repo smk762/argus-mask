@@ -217,6 +217,12 @@ def say(
         min=0,
         help="Silence between sentences in ms, each sentence its own request; 0 sends the text whole",
     ),
+    context: bool = Option(
+        False,
+        "--context",
+        help="Send each sentence with the one before it as context (text and audio; an HTTP service like Miso "
+        "takes it). Experimental: with a cloned voice it can make the tone drift rather than hold",
+    ),
     as_is: bool = Option(
         False,
         "--as-is",
@@ -258,6 +264,7 @@ def say(
                     stream=stream,
                     pause_ms=pause,
                     tidy=not as_is,
+                    context=context,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
                     on_progress=lambda i, n: typer.echo(f"sentence {i}/{n}", err=True),
                     on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
