@@ -388,10 +388,15 @@ def create_editor_app(
         if new_id != face_id:
             try:
                 aliases.repoint(face_id, new_id)  # an alias follows its face to the new id
-                expressions.repoint(face_id, new_id)  # and so does its rest set
             except OSError as exc:
                 raise HTTPException(
                     500, f"renamed to {new_id!r}, but {aliases.path.name} was not updated: {exc}"
+                ) from exc
+            try:
+                expressions.repoint(face_id, new_id)  # and so does its rest set
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"renamed to {new_id!r}, but {expressions.path.name} was not updated: {exc}"
                 ) from exc
         return {"id": new_id}
 

@@ -157,20 +157,21 @@ class Expressions:
                 problems[f"set {name}"] = str(exc)
         return good, problems
 
-    def sets(self) -> dict[str, RestSet]:
+    def sets(self, raw: dict | None = None) -> dict[str, RestSet]:
         """Every usable set: the built-in ones, then the file's (which may replace them), by name."""
-        own, _ = self._own(self.raw())
+        own, _ = self._own(self.raw() if raw is None else raw)
         return dict(sorted({**BUILTIN, **own}.items()))
 
-    def choices(self) -> dict[str, str]:
+    def choices(self, raw: dict | None = None, sets: dict[str, RestSet] | None = None) -> dict[str, str]:
         """Face id -> the set it shows, for the faces that chose a usable one."""
-        sets = self.sets()
-        return {f: s for f, s in sorted(self.raw()["faces"].items()) if s in sets}
+        raw = self.raw() if raw is None else raw
+        sets = sets if sets is not None else self.sets(raw)
+        return {f: s for f, s in sorted(raw["faces"].items()) if s in sets}
 
     def problems(self) -> dict[str, str]:
         raw = self.raw()
-        _, problems = self._own(raw)
-        sets = self.sets()
+        own, problems = self._own(raw)
+        sets = {**BUILTIN, **own}
         for face, name in raw["faces"].items():
             if name not in sets:
                 problems[f"face {face}"] = f"no rest set {name!r}"
@@ -178,12 +179,13 @@ class Expressions:
 
     def for_face(self, face_id: str, override: str | None = None) -> RestSet:
         """The set *face_id* shows: *override* if given (and it exists), else its choice, else the default."""
-        sets = self.sets()
+        raw = self.raw()
+        sets = self.sets(raw)
         if override:
             if override not in sets:
                 raise ExpressionError(f"no rest set {override!r}: there are {', '.join(sets)}")
             return sets[override]
-        return sets.get(self.choices().get(face_id, DEFAULT_SET), sets.get(DEFAULT_SET, BUILTIN["neutral"]))
+        return sets.get(self.choices(raw, sets).get(face_id, DEFAULT_SET), sets.get(DEFAULT_SET, BUILTIN["neutral"]))
 
     def _write(self, raw: dict) -> None:
         tmp = self.path.with_name(EXPRESSIONS_NAME + ".part")
@@ -195,7 +197,7 @@ class Expressions:
         """*face_id* shows the set *name*; None (or the default) clears its choice."""
         with self._lock:
             raw = self.raw()
-            if name is not None and name not in self.sets():
+            if name is not None and name not in self.sets(raw):
                 raise ExpressionError(f"no rest set {name!r}")
             faces = {k: v for k, v in raw["faces"].items() if k != face_id}
             if name is not None and name != DEFAULT_SET:

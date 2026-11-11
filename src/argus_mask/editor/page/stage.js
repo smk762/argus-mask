@@ -69,6 +69,9 @@ export class Stage {
     this.motion = new Motion();
     this.restWeights = {};
     this.restLife = 1;
+    this.restName = null;
+    this.headTurn = { yaw: 0, pitch: 0, roll: 0 };
+    this.spin = 0;
     this.shown = new Float32Array(ARKIT.length);
     this.lastT = null;
     this.loaded = false;
@@ -144,9 +147,8 @@ export class Stage {
     for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
     const rad = Math.PI / 180;
     const idle = head || { yaw: 0, pitch: 0, roll: 0 };
-    this.headTurn = this.headTurn || { yaw: 0, pitch: 0, roll: 0 };
     for (const axis of ['yaw', 'pitch', 'roll']) this.headTurn[axis] += (idle[axis] - this.headTurn[axis]) * (1 - Math.exp(-6 * dt));
-    this.spin = (this.spin || 0) + ((this.turn ? 0.6 : 0) - (this.spin || 0)) * 0.08;
+    this.spin += ((this.turn ? 0.6 : 0) - this.spin) * 0.08;
     this.pivot.rotation.set(this.headTurn.pitch * rad, this.spin + this.headTurn.yaw * rad, this.headTurn.roll * rad);
     this.look.render();
   }
@@ -169,12 +171,16 @@ export class Stage {
   // (the saved-faces page keeps it; elsewhere the choice only previews).
   poseButtons(bar, linked = [], { faceId = null, onRest = null } = {}) {
     const all = [this, ...linked];
+    const call = Symbol('poseButtons');
+    bar.poseCall = call;   // a later call on this bar supersedes this one's picker
     restSets().then((sets) => {
-      if (!sets || !bar.isConnected) return;
+      if (!sets || !bar.isConnected || bar.poseCall !== call) return;
       const pick = Object.assign(document.createElement('select'), { title: 'Rest set: the expression the face holds at rest and speaks from' });
       for (const name of Object.keys(sets.sets)) pick.append(new Option(`rest: ${name}`, name));
-      pick.value = (faceId && sets.faces[faceId]) || sets.default;
-      const show = () => { for (const st of all) st.setRest(sets.sets[pick.value]); };
+      // A face's own set; with no face, the one this stage was last shown (a modal opened and closed keeps it).
+      const start = faceId ? sets.faces[faceId] : this.restName;
+      pick.value = start && start in sets.sets ? start : sets.default;
+      const show = () => { for (const st of all) { st.setRest(sets.sets[pick.value]); st.restName = pick.value; } };
       pick.onchange = () => { show(); if (onRest) onRest(pick.value); };
       show();
       bar.append(pick);

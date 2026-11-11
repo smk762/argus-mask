@@ -18,7 +18,7 @@
 //   ?hair=a2c        a2c (alpha to coverage) | hash | cutout: how hair cards meet the background
 //   ?tone=agx        agx | aces | neutral | none, with ?exposure=1.0
 //   ?rest=<name>     the rest set to show instead of the face's own (warm, calm, neutral, ...: GET /expressions)
-//   ?life=1          how much the face moves at rest: 0 still, 1 default, up to 2
+//   ?life=1          how much the face moves at rest: 0 still, up to 2 (default: the rest set's own)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -129,6 +129,8 @@ window.addEventListener('resize', resize);
 
 let targets = new Map();   // blendshape name -> [{ influences, index }]
 let motion = new Motion();  // the lip budget, the rest set and idle life (motion.js)
+// ?life= over the rest set's own life; absent or not a number, the set's.
+const LIFE = (() => { const v = Number.parseFloat(params.get('life')); return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : null; })();
 let headBone = null;
 let headRest = null;
 
@@ -155,10 +157,9 @@ async function loadFace() {
     if (node.isBone && !headBone && /^head$/i.test(node.name)) headBone = node;
   });
   if (headBone) headRest = headBone.quaternion.clone();
-  const life = params.has('life') ? Math.min(2, Math.max(0, Number(params.get('life')) || 0)) : 1;
   let seed = 7;
   for (const ch of manifest.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;   // each face idles its own way
-  motion = new Motion({ budget: lipBudget(gltf.scene), seed, life });
+  motion = new Motion({ budget: lipBudget(gltf.scene), seed, life: LIFE ?? 1 });
   state.lips = motion.budget;
   await loadRest(faceId);
   const framing = manifest.framing || {};
@@ -181,6 +182,7 @@ async function loadRest(faceId) {
     if (!reply.ok) return;
     const rest = await reply.json();
     motion.setRest(rest.weights);
+    if (LIFE === null && Number.isFinite(rest.life)) motion.idle.life = rest.life;   // the set's own, unless ?life=
     state.rest = rest.name;
   } catch { /* neutral */ }
 }
