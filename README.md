@@ -68,7 +68,7 @@ A face is a directory under the assets root holding a `.glb` and a `manifest.jso
 
 No real person's likeness belongs in this repo, its fixtures or its examples.
 
-To make a synthetic source portrait (an SDXL image of a person who does not exist) for the photoreal face routes, see [docs/synthetic-faces.md](docs/synthetic-faces.md).
+To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](docs/synthetic-faces.md).
 
 ### The stock head
 
