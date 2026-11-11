@@ -946,7 +946,7 @@ def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
     with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _):
         body = {
             "face": "stock-01",
-            "text": "Hello there. Second sentence.",
+            "text": "Hello there, how are you? This is the second sentence.",
             "voice": "en_GB-alba",
             "params": {"speaker": "3"},
         }
@@ -956,8 +956,16 @@ def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
     assert job["state"] == "done", job["events"]
     kinds = [e["kind"] for e in job["events"]]
     assert "ready" in kinds and "progress" in kinds and kinds[-1] == "done"
-    assert [s["text"] for s in seen] == ["Hello there.", "Second sentence."]  # one sentence per request
+    assert [s["text"] for s in seen] == ["Hello there, how are you?", "This is the second sentence."]  # one each
     assert seen[0]["voice"] == {"name": "en_GB-alba", "speaker": "3"}
+    with fake_wyoming(tone(0.3)) as (tts, seen), broadcasting(tts) as (c, _):
+        for tidy, sent in [(True, ["Hi. It is nine thirty."]), (False, ["Hi.", "It is 9:30."])]:
+            job = finished(
+                c, c.post("/broadcast/say", json={"face": "stock-01", "text": "Hi. It is 9:30.", "tidy": tidy}).json()
+            )
+            assert job["state"] == "done", job["events"]
+            assert [s["text"] for s in seen] == sent
+            seen.clear()
 
 
 def test_the_voices_come_from_a_wyoming_service(broadcasting) -> None:
