@@ -16,6 +16,7 @@ import hashlib
 import json
 import re
 import struct
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -292,8 +293,9 @@ class Aliases:
     def __init__(self, store: FaceStore) -> None:
         self.store = store
         self.path = store.root / ALIASES_NAME
-        self._seen: tuple[int, int] | None = None
+        self._seen: tuple[int, int, int] | None = None
         self._raw: dict[str, str] = {}
+        self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
 
     def raw(self) -> dict[str, str]:
         """The file's entries as written, valid or not."""
@@ -302,7 +304,8 @@ class Aliases:
         except OSError:
             self._seen, self._raw = None, {}
             return {}
-        key = (stat.st_mtime_ns, stat.st_size)
+        # The inode too: every write replaces the file, so a same-size rewrite within one mtime tick is still seen.
+        key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
         if key != self._seen:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -340,7 +343,9 @@ class Aliases:
         """The face a name stands for: a face's own id is itself, an alias its face; anything else as given."""
         if not _FACE_ID.match(name) or (self.store.root / name).is_dir():
             return name
-        return self.all().get(name, name)
+        raw = self.raw()
+        target = raw.get(name)
+        return target if target is not None and self._problem(name, target, raw) is None else name
 
     def _write(self, entries: dict[str, str]) -> None:
         tmp = self.path.with_name(ALIASES_NAME + ".part")
@@ -349,27 +354,30 @@ class Aliases:
 
     def set(self, name: str, target: str) -> None:
         """Point *name* at the face *target* (made or repointed), or `AliasError` saying why not."""
-        raw = self.raw()
-        rest = {k: v for k, v in raw.items() if k != name}
-        if (why := self._problem(name, target, rest)) is not None:
-            raise AliasError(why)
-        if any(v == name for v in rest.values()):
-            raise AliasError(f"{name!r} is what another alias points at")
-        self._write({**rest, name: target})
+        with self._lock:
+            raw = self.raw()
+            rest = {k: v for k, v in raw.items() if k != name}
+            if (why := self._problem(name, target, rest)) is not None:
+                raise AliasError(why)
+            if any(v == name for v in rest.values()):
+                raise AliasError(f"{name!r} is what another alias points at")
+            self._write({**rest, name: target})
 
     def remove(self, name: str) -> bool:
-        raw = self.raw()
-        if name not in raw:
-            return False
-        self._write({k: v for k, v in raw.items() if k != name})
-        return True
+        with self._lock:
+            raw = self.raw()
+            if name not in raw:
+                return False
+            self._write({k: v for k, v in raw.items() if k != name})
+            return True
 
     def pointing_at(self, face_id: str) -> list[str]:
         return sorted(n for n, t in self.raw().items() if t == face_id)
 
     def repoint(self, old: str, new: str | None) -> None:
         """A face was renamed (*new*) or deleted (None): its aliases follow it, or go."""
-        raw = self.raw()
-        if not any(t == old for t in raw.values()):
-            return
-        self._write({n: (new if t == old else t) for n, t in raw.items() if t != old or new is not None})
+        with self._lock:
+            raw = self.raw()
+            if not any(t == old for t in raw.values()):
+                return
+            self._write({n: (new if t == old else t) for n, t in raw.items() if t != old or new is not None})

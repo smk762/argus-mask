@@ -233,10 +233,21 @@ let ended = true;
 let current = null;        // Float32Array of the weights on screen
 const head = { yaw: 0, pitch: 0, roll: 0 };
 
+// Reload once per stream: a page that joins a stream begun before a repoint is sent that stream's
+// header (the old face) after loading the new one, and reloading again would loop until it ends.
+function reloadOnce(session) {
+  try {
+    if (sessionStorage.getItem('mask.reloadedFor') === session) return false;
+    sessionStorage.setItem('mask.reloadedFor', session);
+  } catch { return false; }  // no storage: play the stream on the face shown rather than risk a loop
+  location.reload();
+  return true;
+}
+
 function onHeader(header) {
   // An alias (?face=holly) repointed to another face since this page loaded it: load the new one.
   // The stream goes on meanwhile, and the reloaded page joins it where it has got to.
-  if (header.face_id && state.faceShown && header.face_id !== state.faceShown) { location.reload(); return; }
+  if (header.face_id && state.faceShown && header.face_id !== state.faceShown && reloadOnce(header.session_id)) return;
   names = header.blendshapes;
   sampleRate = header.audio.sample_rate;
   queue = [];

@@ -149,9 +149,13 @@ async function setAlias(name, face) {
     await json(`/aliases/${enc(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ face }) });
     await load();
     status(`${name} now points at ${face}.`);
-  } catch (err) { status(err.message, true); await load(); }
+    return true;
+  } catch (err) { status(err.message, true); await load(); return false; }
 }
-$('alias-new').addEventListener('submit', (e) => { e.preventDefault(); setAlias($('alias-name').value.trim(), $('alias-face').value).then(() => { $('alias-name').value = ''; }); });
+$('alias-new').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (await setAlias($('alias-name').value.trim(), $('alias-face').value)) $('alias-name').value = '';  // kept to fix on a refusal
+});
 
 async function load() {
   rows = await json('/saved');

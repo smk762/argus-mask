@@ -320,6 +320,8 @@ def create_editor_app(
 
     @app.post("/export/{face_id}")
     async def export(face_id: str) -> dict:
+        if face_id in aliases.raw():
+            raise HTTPException(409, f"{face_id!r} is an alias: a face under that id would hide it; remove it first")
         try:
             manifest = await builder.export(face_id)
         except NoPreview as exc:
@@ -366,6 +368,8 @@ def create_editor_app(
     async def rename(face_id: str, change: Rename) -> dict:
         if change.id is None and change.name is None:
             raise HTTPException(422, "give a new id, a new name, or both")
+        if change.id is not None and change.id != face_id and change.id in aliases.raw():
+            raise HTTPException(409, f"{change.id!r} is an alias: a face under that id would hide it")
         try:
             new_id = await builder.rename(face_id, new_id=change.id, name=change.name)
         except NoPreview as exc:
@@ -375,7 +379,12 @@ def create_editor_app(
         except (BuildError, OSError, ValueError) as exc:
             raise HTTPException(500, f"rename failed: {exc}") from exc
         if new_id != face_id:
-            aliases.repoint(face_id, new_id)  # an alias follows its face to the new id
+            try:
+                aliases.repoint(face_id, new_id)  # an alias follows its face to the new id
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"renamed to {new_id!r}, but {aliases.path.name} was not updated: {exc}"
+                ) from exc
         return {"id": new_id}
 
     @app.delete("/saved/{face_id}")
@@ -447,14 +456,15 @@ def create_editor_app(
     async def screen(face_id: str) -> dict:
         if not _FACE_ID.match(face_id):
             raise HTTPException(404, f"{face_id!r} is not a face id")
+        target = aliases.resolve(face_id)
         try:
-            store.load(aliases.resolve(face_id))
+            store.load(target)
             exported = True
         except FaceError:
             exported = False
         out = await on_server(face_id) | {"face": face_id, "exported": exported}
-        if aliases.resolve(face_id) != face_id:
-            out["alias_of"] = aliases.resolve(face_id)
+        if target != face_id:
+            out["alias_of"] = target
         if not exported:
             out["hint"] = "Only an exported face can go on a screen: Export it first. A preview is never served."
         elif not out["server_ok"]:

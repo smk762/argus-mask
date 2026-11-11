@@ -164,6 +164,10 @@ def test_the_editor_sets_repoints_and_removes_aliases(editor, assets) -> None:
     assert editor.put("/aliases/holly", json={"face": "test-head"}).json() == {"alias": "holly", "face": "test-head"}
     assert editor.put("/aliases/holly", json={"face": "other-head"}).status_code == 200
     assert editor.get("/aliases").json()["aliases"] == {"holly": "other-head"}
+    # no face may take an alias's name: it would hide the alias
+    taken = editor.post("/saved/test-head/rename", json={"id": "holly"})
+    assert taken.status_code == 409 and "is an alias" in taken.json()["detail"]
+    assert editor.post("/export/holly").status_code == 409
     shadow = editor.put("/aliases/test-head", json={"face": "other-head"})
     assert shadow.status_code == 422 and "is a face" in shadow.json()["detail"]
     assert editor.put("/aliases/kiosk", json={"face": "nobody"}).status_code == 422
