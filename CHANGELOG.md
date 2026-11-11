@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`say --context`** (#40, opt-in): each sentence goes to an HTTP TTS with the one before it, text and levelled
-  audio, as Miso's `context` (voluptas#4); a service that refuses the field is asked again without it. Off by default:
-  with a cloned voice on Miso, chaining the audio made pitch drift up and loudness sink over a briefing, where
-  sentences sent alone held steady. The Broadcast page has it as an experimental checkbox.
 - **Record a broadcast from the Broadcast page**: a Record to file switch (frame size, look) for Say and Push. The
   recorder listens on the face first, the broadcast goes, then the clip renders and muxes, as `argus-mask record` does,
   into `ARGUS_MASK_RECORDINGS_DIR`; the page plays it, offers it to download and lists recent clips. `record` now
@@ -112,8 +108,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `say` (without `--stream`), `/speak` and the Voices page's Try buffered a TTS reply without limit: they now refuse
-  past 10 minutes of speech, saying to send less or stream (#3). The client pacing test has a wider margin (#5).
 - `say --voice <name> -p speaker=<n>` against a Wyoming service dropped the voice name: a speaker now goes with the
   voice (Wyoming's `{name, speaker}`), and only a name in the request stands instead of `--voice`.
 - **`say` no longer dumps a slow TTS model's speech all at once.** It fetches the whole utterance before claiming the
