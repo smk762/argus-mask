@@ -9,7 +9,7 @@ from pathlib import Path
 import typer
 from typer import Argument, Option
 
-from argus_mask.config import DEFAULT_FPS, DEFAULT_PORT, ConfigError, Settings
+from argus_mask.config import DEFAULT_EDITOR_PORT, DEFAULT_FPS, DEFAULT_PORT, ConfigError, Settings
 
 app = typer.Typer(help="A talking face: audio in, animation frames out.", no_args_is_help=True, add_completion=False)
 
@@ -193,6 +193,8 @@ def push(
         )
     except (AudioError, OSError, client.ClientError) as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
 
 
 @app.command()
@@ -201,10 +203,40 @@ def say(
     face_id: str = Option(..., "--face", help="The face to animate"),
     url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
     tts_url: str = Option("", "--tts-url", help="The TTS stream endpoint; default: ARGUS_MASK_TTS_URL"),
+    voice: str = Option(
+        "", "--voice", help="The TTS voice: a clone's name or a speaker number; default: ARGUS_MASK_TTS_VOICE"
+    ),
     param: list[str] = Option([], "--param", "-p", help="Extra field for the TTS request, key=value (repeatable)"),
     seed: int = Option(0, "--seed", help="Seed of the idle layer"),
+    stream: bool = Option(
+        False, "--stream", help="Forward audio as the TTS generates it (only for a service faster than real time)"
+    ),
+    pause: int = Option(
+        300,
+        "--pause",
+        min=0,
+        help="Silence between sentences in ms, each sentence its own request; 0 sends the text whole",
+    ),
+    context: bool = Option(
+        False,
+        "--context",
+        help="Send each sentence with the one before it as context (text and audio; an HTTP service like Miso "
+        "takes it). Experimental: with a cloned voice it can make the tone drift rather than hold",
+    ),
+    as_is: bool = Option(
+        False,
+        "--as-is",
+        help="Send the text as written and play the audio as it came: no numbers as words, no joined short "
+        "sentences, no fades or levelling",
+    ),
 ) -> None:
-    """Speak text through a TTS service into a running server. The text goes to that service and nowhere else."""
+    """Speak text through a TTS service into a running server. The text goes to that service and nowhere else.
+
+    The text goes one sentence at a time with a pause between them (twice as long between paragraphs). The whole
+    utterance is fetched before it is played, so a slow TTS model delays the start but never stalls the face.
+    Numbers and times are sent as words, a very short sentence goes with the next, and each sentence is faded in
+    and out and brought to the same loudness; --as-is turns that off.
+    """
     from argus_mask import client
 
     body: dict[str, object] = {}
@@ -217,21 +249,90 @@ def say(
         except ValueError:
             body[key] = value
     body["text"] = text
+    settings = _settings()
+    tts_url = tts_url or settings.tts_url
+    body = client.voiced(body, voice or settings.tts_voice, tts_url)
     try:
         _report(
             asyncio.run(
                 client.say(
                     url,
                     face_id,
-                    tts_url or _settings().tts_url,
+                    tts_url,
                     body,
                     seed=seed,
+                    stream=stream,
+                    pause_ms=pause,
+                    tidy=not as_is,
+                    context=context,
                     on_ready=lambda r: typer.echo(f"session {r.get('session_id')}"),
+                    on_progress=lambda i, n: typer.echo(f"sentence {i}/{n}", err=True),
+                    on_audio=lambda secs: typer.echo(f"speech: {secs:.2f}s, playing"),
+                    on_wait=lambda: typer.echo(
+                        "waiting for the TTS service (a cold model takes a minute or two)", err=True
+                    ),
                 )
             )
         )
     except client.ClientError as exc:
         raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
+
+
+@app.command()
+def record(
+    face_id: str = Option(..., "--face", help="The face to record"),
+    out: Path = Option(Path("clip.mp4"), "--out", help="The clip (.mp4, or .webm); its take and WAV go beside it"),
+    url: str = Option(DEFAULT_URL, "--url", help="The argus-mask server"),
+    width: int = Option(1280, "--width", min=16),
+    height: int = Option(720, "--height", min=16),
+    display: str = Option("flat", "--display", help="The viewer's display tier: flat or hld"),
+    bg: str = Option("", "--bg", help="Background colour, as the viewer takes it (e.g. '#202020')"),
+    quality: str = Option("high", "--quality", help="The viewer's look: low, medium or high (lighting, shadows, post)"),
+    keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
+) -> None:
+    """Record the next session on a face as a video, offline and frame-exact.
+
+    Waits on the face's viewer socket; run `say` or `push` on that face meanwhile. Then renders every frame of the
+    session in a headless browser and muxes them with the audio, so the machine's load never shows in the clip.
+    Needs argus-mask[record] and `playwright install chromium-headless-shell`.
+    """
+    from argus_mask import record as recorder
+
+    def captured(r: recorder.Recording) -> None:
+        typer.echo(f"captured {len(r.frames)} frames, {r.duration_ms / 1000:.2f}s; rendering", err=True)
+
+    last = [0]
+
+    def progress(i: int, n: int) -> None:
+        if i == n or i * 10 // n > last[0]:
+            last[0] = i * 10 // n
+            typer.echo(f"  {i}/{n} frames", err=True)
+
+    try:
+        r = asyncio.run(
+            recorder.record(
+                url,
+                face_id,
+                out,
+                width=width,
+                height=height,
+                display=display,
+                bg=bg,
+                quality=quality,
+                keep=keep,
+                on_wait=lambda: typer.echo(f"waiting for a session on {face_id} (run say or push now)", err=True),
+                on_captured=captured,
+                on_progress=progress,
+                on_renderer=lambda r: typer.echo(f"rendering on {r}", err=True),
+            )
+        )
+    except recorder.RecordError as exc:
+        raise _fail(str(exc)) from exc
+    except KeyboardInterrupt:
+        raise _fail("stopped") from None
+    typer.echo(f"wrote {out} ({len(r.frames)} frames, {r.duration_ms / 1000:.2f}s)")
 
 
 @app.command()
@@ -254,6 +355,71 @@ def serve(
     if assets_dir is not None:
         cfg = replace(cfg, assets_dir=assets_dir)
     uvicorn.run(create_app(cfg), host=host, port=port)
+
+
+@app.command()
+def editor(
+    host: str = Option("127.0.0.1", "--host", help="Address to bind. A build starts Blender: keep it local."),
+    port: int = Option(DEFAULT_EDITOR_PORT, "--port"),
+    assets_dir: Path | None = Option(None, "--assets-dir", help="Root of the faces; default: ARGUS_MASK_ASSETS_DIR"),
+    blender: str | None = Option(None, "--blender", help="The Blender binary; default: ARGUS_MASK_BLENDER or blender"),
+    blender_user: Path | None = Option(
+        None, "--blender-user", help="Blender's user directory with MPFB and its asset packs (BLENDER_USER_RESOURCES)"
+    ),
+    server_url: str | None = Option(
+        None,
+        "--server-url",
+        help="The argus-mask server, for checks and tests; default: ARGUS_MASK_SERVER_URL or :8109",
+    ),
+    viewer_url: str | None = Option(
+        None, "--viewer-url", help="The origin screens open the viewer at (a TLS proxy on a LAN); default: the server's"
+    ),
+    recordings_dir: Path | None = Option(
+        None,
+        "--recordings-dir",
+        help="Where the Broadcast page records clips; default: ARGUS_MASK_RECORDINGS_DIR or ./recordings",
+    ),
+    voices_dir: Path | None = Option(
+        None,
+        "--voices-dir",
+        help="Where the Voices page keeps checked clips and each voice's record; default: ARGUS_MASK_VOICES_DIR "
+        "or ./voices",
+    ),
+) -> None:
+    """Run the face editor: build heads from presets with headless Blender and MPFB."""
+    from dataclasses import replace
+
+    try:
+        import uvicorn
+
+        from argus_mask.config import EditorSettings
+        from argus_mask.editor.app import create_editor_app
+    except ImportError as exc:
+        raise _fail(f"the editor needs the [server] extra: {exc}") from exc
+
+    cfg = _settings()
+    if assets_dir is not None:
+        cfg = replace(cfg, assets_dir=assets_dir)
+    try:
+        ed = EditorSettings.from_env()
+    except ConfigError as exc:
+        raise _fail(str(exc)) from exc
+    if blender is not None:
+        ed = replace(ed, blender=blender)
+    if blender_user is not None:
+        ed = replace(ed, blender_user=blender_user)
+    try:
+        if server_url is not None:
+            ed = replace(ed, server_url=server_url.rstrip("/"))
+        if viewer_url is not None:
+            ed = replace(ed, viewer_url=viewer_url.rstrip("/"))
+        if recordings_dir is not None:
+            ed = replace(ed, recordings_dir=recordings_dir)
+        if voices_dir is not None:
+            ed = replace(ed, voices_dir=voices_dir)
+    except ConfigError as exc:
+        raise _fail(str(exc)) from exc
+    uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)
 
 
 @app.command()

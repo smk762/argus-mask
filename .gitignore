@@ -11,3 +11,9 @@ src/argus_mask/_version.py
 .env
 # Faces are large binaries with their own provenance; the stock head is added deliberately, by name.
 /assets/
+spec.orig.md
+
+# Broadcast page recordings (argus-mask editor --recordings-dir)
+/recordings/
+# Voices page: checked clips and each voice's record and clips (argus-mask editor --voices-dir)
+/voices/

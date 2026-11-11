@@ -7,6 +7,8 @@ named morph targets; the audio is a tone.
 from __future__ import annotations
 
 import asyncio
+import email
+import email.policy
 import json
 import socket
 import struct
@@ -129,12 +131,15 @@ def free_port() -> int:
 
 
 @contextmanager
-def fake_a2f(*, names: list[str] | None = None, fail_after: int | None = None, fps: int = 30) -> Iterator[str]:
+def fake_a2f(
+    *, names: list[str] | None = None, fail_after: int | None = None, lag_frames: int = 0, stall: bool = False
+) -> Iterator[str]:
     """An Audio2Face server speaking the ``/drive`` protocol. jawOpen follows the frame number.
 
     ``names`` is the blendshape order it announces (default: ARKit's, reversed, so a
     client that ignores the order is caught). ``fail_after`` makes it send an error
-    after that many frames.
+    after that many frames. ``lag_frames`` holds its answers that many frames behind
+    the audio, as the real model does; ``stall`` makes it answer nothing until the end.
     """
     import websockets
     from websockets.http11 import Response
@@ -178,7 +183,7 @@ def fake_a2f(*, names: list[str] | None = None, fail_after: int | None = None, f
         async for message in ws:
             if isinstance(message, bytes):
                 have += len(message) // 4
-                if not await emit(have * rate_fps // rate):
+                if not stall and not await emit(max(0, have * rate_fps // rate - lag_frames)):
                     return
             elif json.loads(message).get("end"):
                 if await emit(-(-have * rate_fps // rate)):
@@ -204,12 +209,22 @@ def fake_a2f(*, names: list[str] | None = None, fail_after: int | None = None, f
 
 @contextmanager
 def fake_tts(
-    pcm: np.ndarray, rate: int = 24000, *, status: int = 200, break_after: int | None = None
+    pcm: np.ndarray,
+    rate: int = 24000,
+    *,
+    status: int = 200,
+    break_after: int | None = None,
+    stall_s: float = 0.0,
+    voices: dict | None = None,
+    refuse_context: bool = False,
 ) -> Iterator[tuple[str, list[dict]]]:
     """A TTS service that streams *pcm* as chunked ``pcm_f32le`` with the format in headers.
 
+    ``refuse_context`` answers 422 to a request with a ``context`` field, as a strict service would.
+
     Yields its URL and the list of request bodies it received. ``break_after``
-    drops the connection after that many bytes.
+    drops the connection after that many bytes. ``stall_s`` sends the headers and
+    then nothing for that long, like a model that is still generating.
     """
     seen: list[dict] = []
     payload = pcm.astype("<f4").tobytes()
@@ -220,8 +235,57 @@ def fake_tts(
         def log_message(self, *args: object) -> None:
             pass
 
+        def do_GET(self) -> None:  # noqa: N802 - /speakers and /clones, as Miso answers them
+            body = json.dumps((voices or {}).get(self.path.rsplit("/", 1)[-1])).encode()
+            if not voices or self.path.rsplit("/", 1)[-1] not in voices:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, code: int, body: dict) -> None:
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_DELETE(self) -> None:  # noqa: N802 - DELETE /clones/<id>, as Miso answers it
+            voice = self.path.rsplit("/", 1)[-1]
+            seen.append({"delete": voice})
+            self._json(200 if status == 200 else status, {"status": "deleted", "companion_id": voice})
+
         def do_POST(self) -> None:  # noqa: N802
-            seen.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path.endswith("/clone-voice"):  # multipart, as Miso takes it: the fields and each file's size
+                message = email.message_from_bytes(
+                    b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + raw,
+                    policy=email.policy.HTTP,
+                )
+                fields, files = {}, []
+                for part in message.iter_parts():
+                    name = part.get_param("name", header="content-disposition")
+                    if part.get_filename():
+                        files.append((part.get_filename(), len(part.get_payload(decode=True))))
+                    else:
+                        fields[name] = part.get_payload(decode=True).decode()
+                seen.append({"clone": fields, "files": files})
+                if status != 200:
+                    self._json(status, {"error": "Usable speech under 2 seconds after preprocessing"})
+                    return
+                self._json(200, {"companion_id": fields.get("companion_id"), "total_seconds": 12.0, "engine": "miso",
+                                 "voice_clone_id": f"voice_clones/{fields.get('companion_id')}/prompt.pt"})  # fmt: skip
+                return
+            seen.append(json.loads(raw or b"{}"))
+            if refuse_context and "context" in seen[-1]:
+                self._json(422, {"detail": "extra fields not permitted: context"})
+                return
             if status != 200:
                 body = b'{"error": "text is required"}'
                 self.send_response(status)
@@ -236,6 +300,9 @@ def fake_tts(
             self.send_header("X-Channels", "1")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
+            self.wfile.flush()
+            if stall_s:
+                time.sleep(stall_s)
             sent = 0
             step = rate // 4 * 4  # 250 ms
             for start in range(0, len(payload), step):
@@ -257,6 +324,79 @@ def fake_tts(
         server.shutdown()
         server.server_close()
         thread.join(5)
+
+
+@contextmanager
+def fake_wyoming(
+    pcm: np.ndarray, rate: int = 24000, *, error: str | None = None, voices: list[dict] | None = None
+) -> Iterator[tuple[str, list[dict]]]:
+    """A Wyoming TTS server: answers ``describe``, and ``synthesize`` with *pcm* as 16-bit chunks.
+
+    Yields its URL and the synthesize requests it received. ``error`` makes it answer
+    an ``error`` event instead of audio.
+    """
+    seen: list[dict] = []
+    payload = (np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes()
+
+    def event(kind: str, data: dict | None = None, body: bytes = b"") -> bytes:
+        head: dict = {"type": kind}
+        if data is not None:
+            head["data"] = data
+        if body:
+            head["payload_length"] = len(body)
+        return json.dumps(head).encode() + b"\n" + body
+
+    def serve(conn: socket.socket) -> None:
+        with conn:
+            buf = b""
+            while True:
+                while b"\n" not in buf:
+                    more = conn.recv(65536)
+                    if not more:
+                        return
+                    buf += more
+                line, _, buf = buf.partition(b"\n")
+                head = json.loads(line)
+                if head["type"] == "describe":
+                    conn.sendall(event("info", {"tts": [{"name": "fake", "voices": voices or [{"name": "0"}]}]}))
+                elif head["type"] == "synthesize":
+                    seen.append(head.get("data") or {})
+                    if error:
+                        conn.sendall(event("error", {"text": error}))
+                        return
+                    conn.sendall(event("audio-start", {"rate": rate, "width": 2, "channels": 1, "timestamp": 0}))
+                    step = rate // 4 * 2
+                    for start in range(0, len(payload), step):
+                        conn.sendall(
+                            event(
+                                "audio-chunk", {"rate": rate, "width": 2, "channels": 1}, payload[start : start + step]
+                            )
+                        )
+                    conn.sendall(event("audio-stop", {"timestamp": 0}))
+                    return
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(0.2)
+    stop = threading.Event()
+
+    def accept_loop() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except TimeoutError:
+                continue
+            threading.Thread(target=serve, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=accept_loop, daemon=True)
+    thread.start()
+    try:
+        yield f"wyoming://127.0.0.1:{listener.getsockname()[1]}", seen
+    finally:
+        stop.set()
+        thread.join(2)
+        listener.close()
 
 
 @contextmanager

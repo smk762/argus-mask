@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>argus-mask broadcast</title>
+<style>
+  :root { --bg: #101216; --panel: #171a20; --raised: #1d2128; --line: #2a303a; --text: #e6e9ee; --dim: #9aa4b2;
+          --accent: #6ea8fe; --bad: #f28b82; --warn: #f6c177; --good: #8bd5a0; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+           padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  a.nav { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.nav:hover { text-decoration: underline; }
+  #server { margin-left: auto; font-size: 12px; color: var(--dim); }
+  #server.ok b { color: var(--good); } #server.bad b { color: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 16px; padding: 16px; align-items: start; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  section h2 { margin: 0 0 10px; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  .face { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 10px; border-radius: 10px;
+          border: 2px solid transparent; background: var(--bg); margin-bottom: 8px; cursor: pointer; }
+  .face.on { border-color: var(--accent); }
+  .face input { margin: 0; accent-color: var(--accent); }
+  .face .name { font-weight: 600; }
+  .face .id { grid-column: 2; color: var(--dim); font-size: 12px; font-family: ui-monospace, monospace; }
+  .face .badge { grid-row: 1 / 3; grid-column: 3; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .badge.ready { color: var(--good); border-color: #2f5a3c; } .badge.warn { color: var(--warn); border-color: #5c4a2a; }
+  .badge.live { color: #0b1220; background: var(--accent); border-color: var(--accent); }
+  .face .tools { grid-column: 2 / 4; display: none; gap: 6px; }
+  .face.on .tools { display: flex; }
+  .empty { color: var(--dim); font-size: 13px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button.on { border-color: var(--accent); color: var(--text); }
+  form { display: grid; gap: 12px; }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
+  label.check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  textarea, input[type=text], input[type=number], input[type=url], select { width: 100%; padding: 7px 9px; background: var(--bg);
+    color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  textarea { min-height: 120px; resize: vertical; font-size: 15px; }
+  .count { justify-self: end; font-size: 11px; color: var(--dim); }
+  .temp { display: grid; grid-template-columns: 110px 1fr 44px auto; gap: 10px; align-items: center; font-size: 13px; }
+  .temp input[type=range] { width: 100%; accent-color: var(--accent); }
+  .temp input[type=range]:disabled { opacity: .35; }
+  .temp output { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+  .temp label.check { font-size: 12px; color: var(--dim); }
+  .info { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; padding: 0;
+          border-radius: 50%; border: 1px solid var(--dim); background: none; color: var(--dim); font: 600 10px/1 system-ui, sans-serif;
+          cursor: help; vertical-align: 1px; }
+  .info:hover, .info:focus-visible { color: var(--text); border-color: var(--text); outline: none; }
+  .info .tip { display: none; position: absolute; z-index: 10; left: -8px; top: calc(100% + 8px); width: min(340px, 80vw);
+               padding: 10px 12px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line);
+               box-shadow: 0 8px 24px rgba(0, 0, 0, .45); color: var(--text); font: 12px/1.5 system-ui, sans-serif; text-align: left; cursor: default; }
+  .info:hover .tip, .info:focus .tip { display: grid; gap: 6px; }
+  .info .tip b { color: var(--accent); font-weight: 600; }
+  .params .row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; margin-bottom: 6px; }
+  .hint { font-size: 12px; color: var(--dim); }
+  .warnline { font-size: 13px; color: var(--warn); }
+  button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid #5b6472; background: var(--raised); color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .cli { display: flex; gap: 6px; } .cli input { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  #log { margin-top: 14px; display: grid; gap: 4px; font-size: 13px; }
+  #log .ev { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
+  #log .at { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+  #log .error, #log .stopped { color: var(--bad); } #log .done { color: var(--good); }
+  #log .head { font-weight: 600; margin-bottom: 4px; }
+  .rec { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .rec select { width: auto; }
+  #log .clip { display: grid; gap: 6px; margin: 6px 0 2px 60px; }
+  #log .clip video { width: min(480px, 100%); border-radius: 8px; background: #000; }
+  #log a, #recordings a { color: var(--accent); }
+  #recordings { margin-top: 16px; font-size: 13px; }
+  #recordings h3 { margin: 0 0 6px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  #recordings div { display: flex; gap: 10px; color: var(--dim); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+</style>
+<script src="./qr/qrcode.js"></script>  <!-- qrcode-generator 1.4.4, MIT: QR codes for screen links -->
+</head>
+<body>
+<header>
+  <h1>Broadcast</h1>
+  <a class="nav" href="./">Editor</a>
+  <a class="nav" href="./faces.html">Saved faces</a>
+  <a class="nav" href="./voices.html">Voices</a>
+  <span id="server">Asking the server…</span>
+</header>
+<main>
+  <section>
+    <h2>Faces</h2>
+    <div id="faces"><div class="empty">Loading…</div></div>
+    <div class="hint">Ready: a screen is watching and can be heard, or is set to house audio (it moves, the house speakers play the sound). Open one with On screen…</div>
+  </section>
+  <section>
+    <div class="tabs">
+      <button type="button" class="on" data-tab="say">Say: text through TTS</button>
+      <button type="button" data-tab="push">Push: an audio file</button>
+    </div>
+    <div id="target" class="warnline"></div>
+    <form id="say" autocomplete="off">
+      <label>Text <textarea id="text" maxlength="5000" placeholder="What to say. Sentences go one at a time, a blank line pauses longer." required></textarea>
+        <span class="count" id="count">0 / 5000</span></label>
+      <div class="grid">
+        <label>Voice <select id="voice"></select></label>
+        <label id="voice-other-wrap" hidden>Voice name or speaker <input type="text" id="voice-other" placeholder="a clone's name, or a speaker number"></label>
+        <label>Pause between sentences, ms <input type="number" id="pause" min="0" max="10000" step="50" value="300"></label>
+        <label>Seed (idle layer) <input type="number" id="seed" min="0" value="0"></label>
+      </div>
+      <div class="temp">
+        <span>Temperature<button type="button" class="info" aria-label="What temperature does" aria-describedby="temp-tip">i<span class="tip" id="temp-tip" role="tooltip">
+          <span>How freely the voice is sampled, sentence by sentence. It changes the delivery, not the words you send.</span>
+          <span><b>Lower, 0.5 to 0.7:</b> steadier and more even from one sentence to the next, with fewer skipped or invented words. Too low (under about 0.4) can sound flat, or loop and stall.</span>
+          <span><b>About 0.9:</b> Miso's default. Natural variation.</span>
+          <span><b>Higher, 1.0 to 1.5:</b> more expressive but less predictable. Tone and pitch jump between sentences, and words are more often slurred or made up.</span>
+          <span><b>Service default:</b> sends no temperature, so the service (or the clone's pinned value) decides. Miso takes 0.1 to 1.5.</span>
+        </span></button></span>
+        <input type="range" id="temp" min="0.1" max="1.5" step="0.05" value="0.9">
+        <output id="temp-out">0.90</output>
+        <label class="check"><input type="checkbox" id="temp-default" checked> service default</label>
+      </div>
+      <label class="check" title="Numbers and times sent as words (9:30 as nine thirty), a sentence of one to three words sent with the next, and each sentence faded in and out and brought to the same loudness (not when streamed). Off: the text goes as written and the audio plays as it came (--as-is)."><input type="checkbox" id="tidy" checked> Tidy speech: numbers as words, short sentences joined, even loudness, soft edges</label>
+      <label class="check" title="Each sentence goes to the TTS with the one before it (its text and audio), for a CSM-style model like Miso to carry on from. Experimental: with a cloned voice it made pitch drift up and loudness sink over a briefing. A service that does not take it is asked again without it (--context)."><input type="checkbox" id="context"> Previous sentence as context (experimental)</label>
+      <label class="check" title="Forward the audio as the TTS generates it: only for a service faster than real time"><input type="checkbox" id="stream"> Stream (only for a TTS faster than real time)</label>
+      <details>
+        <summary>TTS service and extra fields</summary>
+        <div style="display:grid; gap:10px; margin-top:10px">
+          <label>TTS URL <input type="text" id="tts" placeholder="http(s)://… or wyoming://host:port"></label>
+          <div class="params"><div class="hint" style="margin-bottom:6px">Extra fields for the TTS request (<code>-p key=value</code>): numbers and true/false go as themselves.</div>
+            <div id="params"></div><button type="button" class="small" id="add-param">+ field</button></div>
+        </div>
+      </details>
+      <div class="cli"><input type="text" id="cli" readonly title="The same broadcast from a terminal"><button type="button" class="small" id="copy-cli">Copy</button></div>
+      <div class="actions"><button type="submit" class="primary" id="send" title="Ctrl+Enter">Speak</button><button type="button" id="stop" disabled>Stop</button>
+        <span class="hint">The text goes to the TTS service and nowhere else.</span></div>
+    </form>
+    <form id="push" hidden>
+      <label>Audio file (WAV) <input type="file" id="file" accept=".wav,audio/wav,audio/x-wav" required></label>
+      <div class="grid"><label>Seed (idle layer) <input type="number" id="push-seed" min="0" value="0"></label></div>
+      <div class="cli"><input type="text" id="push-cli" readonly><button type="button" class="small" id="copy-push-cli">Copy</button></div>
+      <div class="actions"><button type="submit" class="primary" id="push-send">Play</button><button type="button" id="push-stop" disabled>Stop</button></div>
+    </form>
+    <div class="rec">
+      <label class="check" title="Record this broadcast to an MP4, as argus-mask record does: it listens first, then renders every frame with the audio once the broadcast ends"><input type="checkbox" id="record"> Record to file</label>
+      <select id="rec-size" title="Frame size"><option value="1920x1080">1080p (1920×1080)</option><option value="1280x720" selected>720p (1280×720)</option><option value="854x480">480p (854×480)</option><option value="1080x1920">HLD portrait (1080×1920)</option></select>
+      <select id="rec-quality" title="The viewer's look while rendering"><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select>
+      <span class="hint" id="rec-hint"></span>
+    </div>
+    <div id="log"></div>
+    <div id="recordings"></div>
+  </section>
+</main>
+<script type="module" src="./broadcast.js"></script>
+</body>
+</html>

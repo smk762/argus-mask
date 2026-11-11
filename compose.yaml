@@ -1,11 +1,15 @@
-# argus-mask: the server and its bundled viewer. The Audio2Face server, a TTS service and the TLS
-# proxy run elsewhere and are reached by URL (see .env.example).
+# argus-mask: the server and its bundled viewer, and optionally the Audio2Face server that drives it.
+# A TTS service and the TLS proxy run elsewhere and are reached by URL (see .env.example).
 #
 #   cp .env.example .env   # then edit
-#   docker compose up --build
+#   docker compose up --build                  # mask alone, with the driver named in .env
+#   docker compose --profile a2f up --build    # mask and the Audio2Face server (needs an NVIDIA GPU)
 #
 # Published on 127.0.0.1 only by default. To serve screens on the LAN, set MASK_PUBLISH to an
 # address your TLS proxy can reach and name the proxy's origin in CORS_ORIGINS.
+#
+# The a2f image is built here and not published. Its first build downloads about 5.5 GB and needs
+# about 25 GB free in Docker's data directory; see a2f/README.md.
 
 services:
   mask:
@@ -23,5 +27,31 @@ services:
     volumes:
       - ${ASSETS_DIR:-./assets}:/assets:ro
     extra_hosts:
-      # Reach services on the host (the Audio2Face server) the same way on Linux as on Docker Desktop.
+      # Reach services on the host the same way on Linux as on Docker Desktop.
       - "host.docker.internal:host-gateway"
+
+  # With this profile on, set DRIVER=a2f and A2F_URL=http://a2f:8110 in .env.
+  a2f:
+    profiles: ["a2f"]
+    build: ./a2f
+    image: argus-mask-a2f:${A2F_TAG:-dev}
+    restart: unless-stopped
+    ports:
+      # For `argus-mask drive` on the host. Mask's container reaches it as http://a2f:8110.
+      - "${A2F_PUBLISH:-127.0.0.1:8110}:8110"
+    environment:
+      A2F_MODEL: ${A2F_MODEL:-james}
+      A2F_GPU_SOLVER: ${A2F_GPU_SOLVER:-0}
+    volumes:
+      # The downloaded model and the TensorRT engine built for this host's card.
+      - a2f-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  a2f-data:

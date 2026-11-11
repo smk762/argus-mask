@@ -16,6 +16,7 @@ import hashlib
 import json
 import re
 import struct
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,7 +27,10 @@ from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, ModelFile,
 
 MANIFEST_NAME = "manifest.json"
 # The stock head's budget: a Raspberry Pi renders it once a frame, a Looking Glass Go 66 times.
-MAX_TRIANGLES = 30_000
+# 45k: room for a dressed head (a uniform is ~5k triangles, MakeHuman's teeth 7k) with long hair or a hat.
+# The weakest panels (a Raspberry Pi, the Go's 66 views a frame) are not targets for now; when they are,
+# their faces will want a smaller budget of their own.
+MAX_TRIANGLES = 45_000
 MAX_TEXTURE = 2048
 
 _GLB_MAGIC = 0x46546C67  # "glTF"
@@ -258,9 +262,122 @@ class FaceStore:
         refused: dict[str, str] = {}
         if not self.root.is_dir():
             return accepted, refused
-        for directory in sorted(p for p in self.root.iterdir() if p.is_dir()):
+        for directory in sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")):
             try:
                 accepted.append(self.load(directory.name)[0])
             except FaceError as exc:
                 refused[directory.name] = str(exc)
         return accepted, refused
+
+
+# ── Aliases ───────────────────────────────────────────────────────────────────
+
+ALIASES_NAME = "aliases.json"
+
+
+class AliasError(ValueError):
+    """An alias that may not be set, with the reason."""
+
+
+class Aliases:
+    """Stable names for faces: ``holly`` stays the name a persona and a kiosk use while the face behind it changes.
+
+    Kept in ``<assets>/aliases.json`` as ``{"aliases": {"holly": "ginger-3"}}``, written by the editor
+    and read by the server (whose assets mount may be read-only). The file is read again whenever it
+    changes, so repointing an alias needs no restart. An entry is used only if it is sound: its name is
+    a face id and not the name of a face directory (an alias never shadows a face), and it points at
+    a face the store serves, never at another alias. Anything else in the file is ignored, and
+    `problems` says why.
+    """
+
+    def __init__(self, store: FaceStore) -> None:
+        self.store = store
+        self.path = store.root / ALIASES_NAME
+        self._seen: tuple[int, int, int] | None = None
+        self._raw: dict[str, str] = {}
+        self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
+
+    def raw(self) -> dict[str, str]:
+        """The file's entries as written, valid or not."""
+        try:
+            stat = self.path.stat()
+        except OSError:
+            self._seen, self._raw = None, {}
+            return {}
+        # The inode too: every write replaces the file, so a same-size rewrite within one mtime tick is still seen.
+        key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        if key != self._seen:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                entries = data.get("aliases") if isinstance(data, dict) else None
+                self._raw = {str(k): str(v) for k, v in entries.items()} if isinstance(entries, dict) else {}
+            except (OSError, ValueError):
+                self._raw = {}
+            self._seen = key
+        return dict(self._raw)
+
+    def _problem(self, name: str, target: str, raw: dict[str, str]) -> str | None:
+        if not _FACE_ID.match(name):
+            return f"{name!r} is not a face id"
+        if (self.store.root / name).is_dir():
+            return f"{name!r} is a face: an alias may not hide it"
+        if target in raw:
+            return f"{target!r} is itself an alias: point at a face"
+        try:
+            self.store.load(target)
+        except FaceError as exc:
+            return f"{target!r} is not a face this server serves ({exc})"
+        return None
+
+    def problems(self) -> dict[str, str]:
+        """The entries that are ignored, and why."""
+        raw = self.raw()
+        return {n: why for n, t in raw.items() if (why := self._problem(n, t, raw)) is not None}
+
+    def all(self) -> dict[str, str]:
+        """The aliases in use: name -> face id, sorted by name."""
+        raw = self.raw()
+        return {n: t for n, t in sorted(raw.items()) if self._problem(n, t, raw) is None}
+
+    def resolve(self, name: str) -> str:
+        """The face a name stands for: a face's own id is itself, an alias its face; anything else as given."""
+        if not _FACE_ID.match(name) or (self.store.root / name).is_dir():
+            return name
+        raw = self.raw()
+        target = raw.get(name)
+        return target if target is not None and self._problem(name, target, raw) is None else name
+
+    def _write(self, entries: dict[str, str]) -> None:
+        tmp = self.path.with_name(ALIASES_NAME + ".part")
+        tmp.write_text(json.dumps({"aliases": dict(sorted(entries.items()))}, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(self.path)
+
+    def set(self, name: str, target: str) -> None:
+        """Point *name* at the face *target* (made or repointed), or `AliasError` saying why not."""
+        with self._lock:
+            raw = self.raw()
+            rest = {k: v for k, v in raw.items() if k != name}
+            if (why := self._problem(name, target, rest)) is not None:
+                raise AliasError(why)
+            if any(v == name for v in rest.values()):
+                raise AliasError(f"{name!r} is what another alias points at")
+            self._write({**rest, name: target})
+
+    def remove(self, name: str) -> bool:
+        with self._lock:
+            raw = self.raw()
+            if name not in raw:
+                return False
+            self._write({k: v for k, v in raw.items() if k != name})
+            return True
+
+    def pointing_at(self, face_id: str) -> list[str]:
+        return sorted(n for n, t in self.raw().items() if t == face_id)
+
+    def repoint(self, old: str, new: str | None) -> None:
+        """A face was renamed (*new*) or deleted (None): its aliases follow it, or go."""
+        with self._lock:
+            raw = self.raw()
+            if not any(t == old for t in raw.values()):
+                return
+            self._write({n: (new if t == old else t) for n, t in raw.items() if t != old or new is not None})

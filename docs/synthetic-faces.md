@@ -24,7 +24,7 @@ The rule is **no real person's face without consent**. A synthetic face involves
   
   A real person's face as an input makes the output *their* likeness. That needs their documented consent (see [#19](https://github.com/smk762/argus-mask/issues/19)), and it is a different kind of face, not a synthetic one.
 - **Look-alike check:** image models sometimes reproduce famous faces anyway. Before using a portrait, run a reverse image search and look at it honestly. If it looks like someone you could name, throw it away and change the seed. This is a best-effort check. The real guarantee is that nothing real went in.
-- **18 and over.** Write the age into the prompt ("a woman in her twenties", "a man in his forties"), and put "child, minor" in the negative prompt. Discard anything that reads as under 18. This is the same floor the head recipe uses (spec.md § The stock head).
+- **18 and over.** Write the age into the prompt ("a woman in her twenties", "a man in his forties"), and put "child, minor" in the negative prompt. Discard anything that reads as under 18. This is the same floor the head recipe uses ([spec.md § The stock head](../spec.md#the-stock-head)).
 - **The generator's license:**
   - SDXL base 1.0 is CreativeML Open RAIL++-M, which allows this use under its use restrictions.
   - Community "photoreal" fine-tunes each have their own license, and some don't say what they were trained on. Prefer the base model, or a fine-tune whose license and training data are stated.
@@ -102,6 +102,8 @@ assets/<face-id>/source/
   generation.json       # see below
   workflow.json         # the ComfyUI workflow or the diffusers script, as run
 ```
+
+Until the face has its `.glb` and `manifest.json`, the server lists `<face-id>` as refused (no manifest); that is expected. Don't keep `source/` inside a face the editor made (one with a `preset.json`): exporting it again replaces the whole directory, and deleting it moves the directory to `assets/.trash/`. Keep that face's source material in a directory of its own.
 
 `generation.json` should hold everything needed to make the image again:
 - the model, with its file name and sha256;

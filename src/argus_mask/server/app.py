@@ -2,10 +2,13 @@
 
 ``GET /health``                       version, the driver and whether it answers, free VRAM, ``read_only``, live faces
 ``GET /faces``                        the faces that may be served
+``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
 ``GET /face/{id}/model``              its ``.glb``
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
+``POST /push?face=…``                 audio in over HTTP (a WAV, or PCM with format headers), played as a source
+``POST /speak``                       text through the configured TTS service, then as ``/push``
 ``GET /``                             the viewer (static files in the package)
 
 A source is a write and a viewer hears the audio, so both sockets apply the
@@ -22,26 +25,37 @@ import json
 import struct
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
 import structlog
 from argus_cortex.gpu import free_vram_mb
 from argus_cortex.server import WriteGuard, constant_refuse, cross_site_refuse
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from argus_mask import __version__
-from argus_mask.audio import PcmDecoder
+from argus_mask import __version__, client
+from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
-from argus_mask.faces import FaceError, FaceStore
-from argus_mask.models import DriverHealth, FaceManifest, Health, SourceHello, StreamHeader
-from argus_mask.performance import Performer, make_header
+from argus_mask.faces import Aliases, FaceError, FaceStore
+from argus_mask.models import (
+    FACE_ID_PATTERN,
+    DriverHealth,
+    FaceManifest,
+    Health,
+    Screen,
+    SourceHello,
+    StreamHeader,
+    ViewerStatus,
+)
+from argus_mask.performance import BLOCK_MS, Performer, make_header
 from argus_mask.take import line
 
 log = structlog.get_logger(__name__)
@@ -54,6 +68,17 @@ MAX_CHUNK_BYTES = 4 * 1024 * 1024  # one source message: over 5 s of 48 kHz ster
 # A viewer this many messages behind is dropped. Sources send in real time plus a small lead, so a
 # healthy viewer's queue stays near empty.
 VIEWER_QUEUE = 2048
+# Audio is released once frames reach its end, give or take this many frames (the resampler holds
+# a few samples back, so the frame under a chunk's last milliseconds comes with the next chunk).
+AUDIO_SLACK_FRAMES = 2
+# A viewer's status message is a few fields; anything longer is not one.
+MAX_STATUS_BYTES = 1024
+# A driver this far behind the audio is not going to catch up: the stream is ended.
+MAX_DRIVER_LAG_MS = 10_000.0
+# POST /push: the most audio one request may carry (minutes of 48 kHz 16-bit), and how far ahead of real time
+# it is fed to the face, as a client source runs ahead.
+MAX_PUSH_BYTES = 25 * 1024 * 1024
+PUSH_LEAD_S = 1.0
 
 # WebSocket close codes.
 POLICY = 1008
@@ -69,6 +94,9 @@ class Stage:
         self.header: StreamHeader | None = None
         self.claimed = False  # a source holds the face, from its connect to its last frame
         self.viewers: set[asyncio.Queue[str | bytes | None]] = set()
+        # The viewers that have said what they are (by their queue): the screens. A socket client
+        # that never reports (record, an older page) watches, but is not counted as a screen.
+        self.screens: dict[asyncio.Queue[str | bytes | None], Screen] = {}
 
     def send(self, message: str | bytes) -> None:
         for queue in list(self.viewers):
@@ -101,19 +129,105 @@ class _DriverProbe:
         self._at = float("-inf")
 
 
-def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
-    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
-    cfg = settings or Settings.from_env()
-    driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
-    store = FaceStore(cfg.assets_dir)
-    stages: dict[str, Stage] = {}
-    app = FastAPI(
-        title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
-    )
-    app.state.settings = cfg
-    app.state.driver = driver
-    app.state.stages = stages
+class SourceRefused(RuntimeError):
+    """The driver would not open a session for a source."""
 
+
+@dataclass
+class Played:
+    """How a source's stream ended: the closing numbers, or why it failed."""
+
+    session_id: str
+    frames: int
+    duration_ms: int
+    failure: str | None
+
+
+class Speak(BaseModel):
+    """``POST /speak``: what ``argus-mask say`` takes, for an agent that hands the server text."""
+
+    model_config = ConfigDict(extra="forbid")
+    face: str = Field(..., pattern=FACE_ID_PATTERN)
+    text: str = Field(..., min_length=1, max_length=5000)
+    voice: str = Field("", max_length=200, description="default: ARGUS_MASK_TTS_VOICE")
+    seed: int = Field(0, ge=0, le=2**31 - 1)
+    temperature: float | None = Field(None, ge=0.1, le=1.5)
+    tidy: bool = Field(True, description="numbers as words, short sentences joined, soft edges, even loudness")
+    pause: int = Field(300, ge=0, le=10_000, description="ms between sentences; 0 sends the text whole")
+    require_screen: bool = False
+
+
+async def read_body(request: Request) -> bytes:
+    """The request's body, refused (413) over :data:`MAX_PUSH_BYTES` before and while it is read."""
+    too_big = HTTPException(413, f"send at most {MAX_PUSH_BYTES // 2**20} MB of audio")
+    declared = request.headers.get("content-length")
+    if declared is not None and (not declared.isdigit() or int(declared) > MAX_PUSH_BYTES):
+        raise too_big
+    data = bytearray()
+    async for piece in request.stream():
+        data += piece
+        if len(data) > MAX_PUSH_BYTES:
+            raise too_big
+    if not data:
+        raise HTTPException(422, "no audio: the body is empty")
+    return bytes(data)
+
+
+def audio_of(request: Request, data: bytes, seed: int) -> tuple[SourceHello, bytes]:
+    """A pushed body as (its format, its PCM): a WAV file, or raw PCM described by the TTS contract's headers."""
+    kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if data[:4] == b"RIFF" or kind in ("audio/wav", "audio/x-wav", "audio/wave"):
+        try:
+            mono, rate = decode_wav(data, "the pushed WAV")
+        except AudioError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not mono.size:
+            raise HTTPException(422, "the pushed WAV has no audio")
+        try:
+            hello = SourceHello(sample_rate=rate, channels=1, format="f32le", seed=seed)
+        except ValidationError as exc:
+            raise HTTPException(
+                422, f"the pushed WAV's format is not one this plays: {exc.errors()[0]['msg']}"
+            ) from exc
+        return hello, mono.astype("<f4", copy=False).tobytes()
+    rate = request.headers.get("x-sample-rate")
+    declared = (request.headers.get("x-audio-format") or "").lower()
+    if rate is None or declared not in client._FORMATS:
+        raise HTTPException(
+            422,
+            "send a WAV file, or raw PCM with X-Sample-Rate, X-Audio-Format (pcm_f32le or pcm_s16le) and X-Channels",
+        )
+    try:
+        hello = SourceHello(
+            sample_rate=int(rate),
+            channels=int(request.headers.get("x-channels") or 1),
+            format=client._FORMATS[declared],
+            seed=seed,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(422, f"the PCM headers do not describe a format this plays: {exc}") from exc
+    if len(data) < client._frame_bytes(hello):
+        raise HTTPException(422, "no audio: less than one sample")
+    return hello, data
+
+
+async def paced(pcm: bytes, fmt: SourceHello) -> AsyncIterator[bytes]:
+    """*pcm* in :data:`BLOCK_MS` pieces, no faster than real time plus :data:`PUSH_LEAD_S`, as a client source sends."""
+    frame = client._frame_bytes(fmt)
+    size = fmt.sample_rate * BLOCK_MS // 1000 * frame
+    started = time.monotonic()
+    sent_s = 0.0
+    for start in range(0, len(pcm), size):
+        piece = pcm[start : start + size]
+        yield piece
+        sent_s += len(piece) / frame / fmt.sample_rate
+        ahead = sent_s - (time.monotonic() - started) - PUSH_LEAD_S
+        if ahead > 0:
+            await asyncio.sleep(ahead)
+
+
+def install_guards(app: FastAPI, cfg: Settings) -> Callable:
+    """The write guards and CORS every mask app uses. Returns the origin predicate, for the sockets to call."""
     wildcard = "*" in cfg.cors_origins
     named = [o for o in cfg.cors_origins if o != "*"]
     origin_refusal = cross_site_refuse(named)
@@ -128,13 +242,31 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    return origin_refusal
+
+
+def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
+    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
+    cfg = settings or Settings.from_env()
+    driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
+    store = FaceStore(cfg.assets_dir)
+    aliases = Aliases(store)
+    stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
+    app = FastAPI(
+        title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
+    )
+    app.state.settings = cfg
+    app.state.driver = driver
+    app.state.stages = stages
+
+    origin_refusal = install_guards(app, cfg)
 
     def stage_for(face_id: str) -> Stage:
         return stages.setdefault(face_id, Stage(face_id))
 
     def face_or_404(face_id: str) -> tuple[FaceManifest, Path]:
         try:
-            return store.load(face_id)
+            return store.load(aliases.resolve(face_id))
         except FaceError:
             # One answer for "no such face" and "refused": a refused face is not served, and says so only to `inspect`.
             raise HTTPException(status_code=404, detail=f"no face {face_id!r}") from None
@@ -153,7 +285,14 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             read_only=cfg.read_only,
             faces=len(faces),
             live=sorted(fid for fid, stage in stages.items() if stage.claimed),
+            screens={fid: list(stage.screens.values()) for fid, stage in sorted(stages.items()) if stage.screens},
+            aliases=aliases.all(),
         )
+
+    @app.get("/aliases")
+    def alias_list() -> dict[str, str]:
+        """Stable names for faces (alias -> face id), as the editor set them in the assets' aliases.json."""
+        return aliases.all()
 
     @app.get("/faces", response_model=list[FaceManifest])
     def faces() -> list[FaceManifest]:
@@ -178,6 +317,122 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         await ws.send_text(json.dumps({"type": "error", "detail": detail}))
         await ws.close(code=code, reason=detail[:120])
 
+    async def perform(
+        face_id: str,
+        stage: Stage,
+        hello: SourceHello,
+        chunks: AsyncIterator[bytes],
+        on_ready: Callable[[StreamHeader], Awaitable[None]] | None = None,
+    ) -> Played:
+        """Play a source's audio into a claimed face: the one path for the source socket, ``/push`` and ``/speak``.
+
+        Opens the driver (`SourceRefused` if it will not), announces the stream to the viewers, feeds
+        *chunks* (PCM in *hello*'s format) to the performer, holds the audio until frames cover it, and
+        ends the stream. The face is freed before this returns, so a caller can say "done" at once.
+        """
+        performer: Performer | None = None
+        try:
+            try:
+                performer = Performer(
+                    await driver.open(cfg.fps), in_rate=hello.sample_rate, fps=cfg.fps, seed=hello.seed
+                )
+            except DriverError as exc:
+                probe.forget()  # ask the driver again next time
+                raise SourceRefused(str(exc)) from exc
+            header = make_header(
+                face_id=aliases.resolve(face_id),  # the face itself: a viewer that loaded another reloads
+                session_id=uuid.uuid4().hex,
+                fps=cfg.fps,
+                seed=hello.seed,
+                sample_rate=hello.sample_rate,
+                driver=driver,
+            )
+            stage.header = header
+            stage.send(line(header))
+            log.info("source_connected", face=face_id, session=header.session_id, sample_rate=hello.sample_rate)
+
+            decoder = PcmDecoder(hello)
+            samples = 0
+            failure: str | None = None
+            # A driver answers late: Audio2Face needs a quarter second of audio that has not been
+            # spoken yet. So audio is held until frames reach its end, and a viewer always has the
+            # mouth for a sound before it has the sound.
+            held: deque[tuple[float, bytes]] = deque()  # (where the chunk ends, in ms; the message)
+            covered_ms = 0.0
+            slack_ms = AUDIO_SLACK_FRAMES * 1000.0 / cfg.fps
+
+            def release(*, everything: bool = False) -> None:
+                while held and (everything or held[0][0] <= covered_ms + slack_ms):
+                    stage.send(held.popleft()[1])
+
+            try:
+                if on_ready is not None:  # inside: a source gone before "ready" still ends the stream for viewers
+                    await on_ready(header)
+                async for data in chunks:
+                    if len(data) > MAX_CHUNK_BYTES:
+                        failure = f"an audio message over {MAX_CHUNK_BYTES} bytes"
+                        break
+                    mono = decoder.feed(data)
+                    if not mono.size:
+                        continue
+                    start_ms = samples * 1000.0 / hello.sample_rate
+                    samples += mono.size
+                    end_ms = samples * 1000.0 / hello.sample_rate
+                    held.append((end_ms, struct.pack("<d", start_ms) + mono.astype("<f4", copy=False).tobytes()))
+                    for frame in await performer.feed(mono):
+                        stage.send(line(frame))
+                        covered_ms = frame.t_ms + 1000.0 / cfg.fps
+                    release()
+                    if end_ms - covered_ms > MAX_DRIVER_LAG_MS:
+                        failure = (
+                            f"the {driver.name} driver fell more than {MAX_DRIVER_LAG_MS / 1000:g}s behind the audio"
+                        )
+                        break
+            except DriverError as exc:
+                failure = str(exc)
+                probe.forget()
+            except BaseException:  # cancelled (the caller went away), or anything unforeseen: end it for viewers
+                held.clear()
+                gone = round(samples * 1000 / hello.sample_rate)
+                stage.send(
+                    json.dumps({"type": "end", "frames": 0, "duration_ms": gone, "error": "the source went away"})
+                )
+                raise
+
+            frames = 0
+            duration_ms = round(samples * 1000 / hello.sample_rate)
+            if failure is None:
+                try:
+                    tail, end = await performer.finish()
+                    for frame in tail:
+                        stage.send(line(frame))
+                    release(everything=True)
+                    stage.send(line(end))
+                    frames, duration_ms = end.frames, end.duration_ms
+                except DriverError as exc:
+                    failure = str(exc)
+                    probe.forget()
+            if failure is not None:
+                # Viewers are told the stream is over; what they already have is still valid. Audio no
+                # frame reached is dropped: playing it would be sound with no mouth for it.
+                held.clear()
+                stage.send(json.dumps({"type": "end", "frames": 0, "duration_ms": duration_ms, "error": failure}))
+                log.warning("source_failed", face=face_id, session=header.session_id, error=failure)
+            else:
+                log.info(
+                    "source_finished", face=face_id, session=header.session_id, frames=frames, duration_ms=duration_ms
+                )
+            # Free the face before telling the source it is over: a source that reconnects the moment
+            # it reads "done" must not be told the face is taken.
+            stage.header = None
+            stage.claimed = False
+            return Played(header.session_id, frames, duration_ms, failure)
+        finally:
+            if performer is not None:
+                await performer.close()
+            stage.header = None
+            stage.claimed = False
+
     @app.websocket("/session/{face_id}/source")
     async def source(ws: WebSocket, face_id: str) -> None:
         if cross_site(ws) is not None:
@@ -187,7 +442,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await refuse(ws, READ_ONLY_REFUSAL)
             return
         try:
-            store.load(face_id)
+            store.load(aliases.resolve(face_id))
         except FaceError:
             await refuse(ws, f"no face {face_id!r}")
             return
@@ -196,7 +451,6 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await refuse(ws, f"face {face_id!r} already has a source", TRY_LATER)
             return
         stage.claimed = True
-        performer: Performer | None = None
         try:
             if (reason := await probe.reason()) is not None:
                 await refuse(ws, f"the {driver.name} driver is down: {reason}", TRY_LATER)
@@ -210,100 +464,121 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 )
                 await ws.close(code=POLICY)
                 return
+
+            async def received() -> AsyncIterator[bytes]:
+                try:
+                    while True:
+                        message = await ws.receive()
+                        if message["type"] == "websocket.disconnect":
+                            return
+                        if message.get("text") is not None:
+                            try:
+                                note = json.loads(message["text"])
+                            except ValueError:
+                                continue
+                            if isinstance(note, dict) and note.get("type") == "end":
+                                return
+                            continue
+                        yield message.get("bytes") or b""
+                except WebSocketDisconnect:
+                    return
+
+            async def ready(header: StreamHeader) -> None:
+                await ws.send_text(json.dumps({"type": "ready", "session_id": header.session_id, "fps": cfg.fps}))
+
             try:
-                performer = Performer(
-                    await driver.open(cfg.fps), in_rate=hello.sample_rate, fps=cfg.fps, seed=hello.seed
-                )
-            except DriverError as exc:
-                probe.forget()  # ask the driver again next time
+                played = await perform(face_id, stage, hello, received(), ready)
+            except SourceRefused as exc:
                 await ws.send_text(json.dumps({"type": "error", "detail": str(exc)}))
                 await ws.close(code=TRY_LATER)
                 return
-            header = make_header(
-                face_id=face_id,
-                session_id=uuid.uuid4().hex,
-                fps=cfg.fps,
-                seed=hello.seed,
-                sample_rate=hello.sample_rate,
-                driver=driver,
-            )
-            stage.header = header
-            stage.send(line(header))
-            await ws.send_text(json.dumps({"type": "ready", "session_id": header.session_id, "fps": cfg.fps}))
-            log.info("source_connected", face=face_id, session=header.session_id, sample_rate=hello.sample_rate)
-
-            decoder = PcmDecoder(hello)
-            samples = 0
-            failure: str | None = None
             try:
-                while True:
-                    message = await ws.receive()
-                    if message["type"] == "websocket.disconnect":
-                        break
-                    if message.get("text") is not None:
-                        try:
-                            note = json.loads(message["text"])
-                        except ValueError:
-                            continue
-                        if isinstance(note, dict) and note.get("type") == "end":
-                            break
-                        continue
-                    data = message.get("bytes") or b""
-                    if len(data) > MAX_CHUNK_BYTES:
-                        failure = f"an audio message over {MAX_CHUNK_BYTES} bytes"
-                        break
-                    mono = decoder.feed(data)
-                    if not mono.size:
-                        continue
-                    start_ms = samples * 1000.0 / hello.sample_rate
-                    samples += mono.size
-                    stage.send(struct.pack("<d", start_ms) + mono.astype("<f4", copy=False).tobytes())
-                    for frame in await performer.feed(mono):
-                        stage.send(line(frame))
-            except DriverError as exc:
-                failure = str(exc)
-                probe.forget()
-            except WebSocketDisconnect:
-                pass
-
-            frames = 0
-            duration_ms = round(samples * 1000 / hello.sample_rate)
-            if failure is None:
-                try:
-                    tail, end = await performer.finish()
-                    for frame in tail:
-                        stage.send(line(frame))
-                    stage.send(line(end))
-                    frames, duration_ms = end.frames, end.duration_ms
-                except DriverError as exc:
-                    failure = str(exc)
-                    probe.forget()
-            if failure is not None:
-                # Viewers are told the stream is over; what they already have is still valid.
-                stage.send(json.dumps({"type": "end", "frames": 0, "duration_ms": duration_ms, "error": failure}))
-                log.warning("source_failed", face=face_id, session=header.session_id, error=failure)
-            else:
-                log.info(
-                    "source_finished", face=face_id, session=header.session_id, frames=frames, duration_ms=duration_ms
-                )
-            # Free the face before telling the source it is over: a source that reconnects the moment
-            # it reads "done" must not be told the face is taken.
-            stage.header = None
-            stage.claimed = False
-            try:
-                if failure is not None:
-                    await ws.send_text(json.dumps({"type": "error", "detail": failure}))
+                if played.failure is not None:
+                    await ws.send_text(json.dumps({"type": "error", "detail": played.failure}))
                     await ws.close(code=INTERNAL)
                 else:
-                    await ws.send_text(json.dumps({"type": "done", "frames": frames, "duration_ms": duration_ms}))
+                    done = {"type": "done", "frames": played.frames, "duration_ms": played.duration_ms}
+                    await ws.send_text(json.dumps(done))
                     await ws.close()
             except (RuntimeError, WebSocketDisconnect):
                 pass  # the source already went away
         finally:
-            if performer is not None:
-                await performer.close()
             stage.header = None
             stage.claimed = False
+
+    # -- HTTP sources: for agents that would rather not speak the socket protocol -------------------------
+
+    def http_claim(face_id: str, *, require_screen: bool) -> Stage:
+        """The face's stage, if a source may start on it now; otherwise the HTTP refusal, with the reason."""
+        face_or_404(face_id)
+        stage = stage_for(face_id)
+        if stage.claimed:
+            raise HTTPException(409, f"face {face_id!r} already has a source")
+        if require_screen and not any(screen.audio_ready for screen in stage.screens.values()):
+            raise HTTPException(409, f"no screen watching {face_id!r} can be heard (see /health screens)")
+        return stage
+
+    async def play_http(face_id: str, stage: Stage, hello: SourceHello, pcm: bytes) -> dict:
+        """Claim the face and play *pcm* into it at the pace of speech; the closing numbers, or the HTTP error."""
+        if stage.claimed:  # someone started while this request was being read or synthesised
+            raise HTTPException(409, f"face {face_id!r} already has a source")
+        stage.claimed = True
+        try:
+            if (reason := await probe.reason()) is not None:
+                raise HTTPException(503, f"the {driver.name} driver is down: {reason}")
+            try:
+                played = await perform(face_id, stage, hello, paced(pcm, hello))
+            except SourceRefused as exc:
+                raise HTTPException(503, str(exc)) from exc
+        finally:
+            stage.header = None
+            stage.claimed = False
+        if played.failure is not None:
+            raise HTTPException(502, played.failure)
+        return {"session_id": played.session_id, "frames": played.frames, "duration_ms": played.duration_ms}
+
+    @app.post("/push")
+    async def push(
+        request: Request,
+        face: str = Query(..., pattern=FACE_ID_PATTERN, description="the face to animate"),
+        seed: int = Query(0, ge=0, le=2**31 - 1, description="the idle layer's seed"),
+        require_screen: bool = Query(False, description="refuse (409) unless a screen watching the face can be heard"),
+    ) -> dict:
+        """Audio into a face, as a source on its socket would send it; answers when the speech ends.
+
+        The body is a WAV file, or raw PCM described by ``X-Sample-Rate``, ``X-Audio-Format``
+        (``pcm_f32le`` or ``pcm_s16le``) and ``X-Channels``, the headers a TTS service's stream carries.
+        It is played at the pace of speech: the request lasts as long as the audio.
+        """
+        stage = http_claim(face, require_screen=require_screen)
+        data = await read_body(request)
+        hello, pcm = audio_of(request, data, seed)
+        log.info("push", face=face, bytes=len(pcm), sample_rate=hello.sample_rate)
+        return await play_http(face, stage, hello, pcm)
+
+    @app.post("/speak")
+    async def speak(req: Speak) -> dict:
+        """Text through the configured TTS service (``ARGUS_MASK_TTS_URL``) into a face, as ``argus-mask say`` does.
+
+        The text goes to the TTS service and is never logged. An agent that synthesises its own
+        audio should use ``/push``, so the server never sees the text at all.
+        """
+        tts_url = cfg.tts_url
+        if not tts_url.startswith(("http://", "https://", "wyoming://")):
+            raise HTTPException(422, "no TTS service is set on this server (ARGUS_MASK_TTS_URL)")
+        stage = http_claim(req.face, require_screen=req.require_screen)
+        body: dict = {"text": req.text}
+        if req.temperature is not None:
+            body["temperature"] = req.temperature
+        body = client.voiced(body, req.voice or cfg.tts_voice, tts_url)
+        log.info("speak", face=req.face, chars=len(req.text))  # never the text itself
+        try:
+            pcm, fmt, _ = await client.synthesise(tts_url, body, pause_ms=req.pause, tidy=req.tidy)
+        except client.ClientError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        hello = SourceHello(**fmt.model_dump(), seed=req.seed)
+        pcm = client._silence(fmt, client.SAY_LEAD_MS) + pcm + client._silence(fmt, client.SAY_TAIL_MS)
+        return await play_http(req.face, stage, hello, pcm)
 
     @app.websocket("/session/{face_id}/view")
     async def view(ws: WebSocket, face_id: str) -> None:
@@ -311,7 +586,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await ws.close(code=POLICY)
             return
         try:
-            store.load(face_id)
+            store.load(aliases.resolve(face_id))
         except FaceError:
             await refuse(ws, f"no face {face_id!r}")
             return
@@ -334,8 +609,21 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     await ws.send_text(message)
 
         async def watch() -> None:
-            while (await ws.receive())["type"] != "websocket.disconnect":
-                pass  # a viewer has nothing to say; only its leaving matters
+            # A viewer says only what state it is in (ViewerStatus); anything else, or too big, is ignored.
+            while (message := await ws.receive())["type"] != "websocket.disconnect":
+                text = message.get("text")
+                if not text or len(text) > MAX_STATUS_BYTES or len(text.encode()) > MAX_STATUS_BYTES:
+                    continue
+                try:
+                    status = ViewerStatus.model_validate_json(text)
+                except ValidationError:
+                    continue
+                stage.screens[queue] = Screen(
+                    display=status.display,
+                    audio_ready=status.audio or status.sound == "external",
+                    kiosk=status.kiosk,
+                    sound=status.sound,
+                )
 
         async def first(job: Callable[[], Awaitable[None]], scope: anyio.CancelScope) -> None:
             try:
@@ -353,6 +641,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 group.start_soon(first, watch, group.cancel_scope)
         finally:
             stage.viewers.discard(queue)
+            stage.screens.pop(queue, None)
 
     if VIEWER_DIR.is_dir():
         # Last, so it never shadows a route above.

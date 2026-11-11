@@ -1,0 +1,33 @@
+{
+  "id": "stock-02",
+  "name": "Stock head 02",
+  "phenotype": {
+    "gender": 0.0,
+    "age": 0.5,
+    "muscle": 0.5,
+    "weight": 0.5,
+    "proportions": 0.5,
+    "height": 0.5,
+    "cupsize": 0.5,
+    "firmness": 0.5,
+    "race": {"asian": 0.2, "caucasian": 0.6, "african": 0.2}
+  },
+  "assets": {
+    "skin": "skins/young_caucasian_female/young_caucasian_female.mhmat",
+    "eyes": "eyes/high-poly/high-poly.mhclo",
+    "eyebrows": "eyebrows/eyebrow002/eyebrow002.mhclo",
+    "eyelashes": "eyelashes/eyelashes02/eyelashes02.mhclo",
+    "teeth": "teeth/teeth_base/teeth_base.mhclo",
+    "tongue": "tongue/tongue01/tongue01.mhclo",
+    "hair": "hair/short02/short02.mhclo",
+    "clothes": ["clothes/thegreatengineer_galactic_warrior_uniform/thegreatengineer_galactic_warrior_uniform.mhclo"]
+  },
+  "bust": {"height_m": 0.40, "half_width_m": 0.23},
+  "mouth": {"tongue_flatten": 0.6, "tongue_drop_mm": 0.0, "upper_teeth_drop_mm": 2.5, "cavity_shade": 0.02},
+  "shape_scale": {"mouthPucker": 1.5},
+  "texture_gain": {"teeth": 1.3},
+  "blend_parts": ["eyebrows", "eyelashes"],
+  "max_texture_px": 2048,
+  "max_alpha_texture_px": 1024,
+  "max_triangles": 30000
+}

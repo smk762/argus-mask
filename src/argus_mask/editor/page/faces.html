@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>argus-mask saved faces</title>
+<style>
+  :root { --bg: #101216; --panel: #171a20; --raised: #1d2128; --line: #2a303a; --text: #e6e9ee; --dim: #9aa4b2;
+          --accent: #6ea8fe; --bad: #f28b82; --warn: #f6c177; --good: #8bd5a0; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  a.nav { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.nav:hover { text-decoration: underline; }
+  #filter { flex: 0 1 260px; }
+  #status { flex: 1; color: var(--dim); font-size: 12px; }
+  #status.bad { color: var(--bad); }
+  input[type=text], input[type=search] { padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; font: inherit; width: 100%; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid #5b6472; background: var(--raised); color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button.danger { border-color: #7a3b3b; color: var(--bad); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  main { padding: 16px; }
+  #aliases { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; display: grid; gap: 8px; }
+  #aliases h2 { margin: 0; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  .alias-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .alias-row b { font-family: ui-monospace, monospace; min-width: 90px; }
+  .alias-row input { width: auto; flex: 0 1 220px; }
+  .alias-row input, .alias-row select { padding: 5px 8px; background: var(--bg); color: inherit; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  .badge.alias { color: var(--accent); border-color: #2c4870; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .shot { position: relative; aspect-ratio: 5 / 6; background: var(--bg); cursor: zoom-in; }
+  .shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .shot .wait { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 12px; }
+  .info { padding: 10px 12px 4px; display: grid; gap: 4px; }
+  .info .name { font-weight: 600; }
+  .info .id { color: var(--dim); font-size: 12px; font-family: ui-monospace, monospace; }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .badge.live { color: var(--good); border-color: #2f5a3c; }
+  .badge.preview { color: var(--warn); border-color: #5c4a2a; }
+  .info .meta { color: var(--dim); font-size: 12px; }
+  .info .refused { color: var(--bad); font-size: 12px; }
+  .info .screens.ready { color: var(--good); }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 12px; margin-top: auto; }
+  .actions button { padding: 4px 10px; font-size: 13px; }
+  .empty { color: var(--dim); padding: 40px 0; text-align: center; }
+
+  #modal { position: fixed; inset: 0; z-index: 20; background: rgba(5, 6, 9, .9); display: grid; grid-template-columns: 1fr minmax(260px, 340px); }
+  #modal .view { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; height: 100vh; }
+  #modal .top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
+  #modal .top .name { font-weight: 600; }
+  #modal .spacer { flex: 1; }
+  #stage { min-height: 0; overflow: hidden; }
+  #stage canvas { display: block; width: 100%; height: 100%; }
+  .poses { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; padding: 10px; }
+  .poses button.on, .which button.on { border-color: var(--accent); }
+  #modal .side { background: var(--panel); border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; display: grid; gap: 10px; align-content: start; font-size: 13px; }
+  #modal .side h2 { font-size: 13px; margin: 6px 0 0; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  #modal .side p { margin: 0; color: var(--dim); white-space: pre-wrap; word-break: break-word; }
+  .which { display: flex; gap: 6px; }
+
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(420px, 92vw); }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h2 { margin: 0 0 12px; font-size: 15px; }
+  dialog label { display: grid; gap: 4px; color: var(--dim); font-size: 12px; margin-bottom: 10px; }
+  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  dialog .err { color: var(--bad); font-size: 12px; min-height: 1.2em; }
+
+  @media (max-width: 760px) { #modal { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } #modal .view { height: 65vh; } #modal .side { max-height: 35vh; } }
+</style>
+<script src="./qr/qrcode.js"></script>  <!-- qrcode-generator 1.4.4, MIT: QR codes for screen links -->
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<header>
+  <h1>Saved faces</h1>
+  <a class="nav" href="./">← Editor</a>
+  <a class="nav" href="./broadcast.html">Broadcast →</a>
+  <a class="nav" href="./voices.html">Voices →</a>
+  <input type="search" id="filter" placeholder="Filter by name or id">
+  <span id="status"></span>
+</header>
+<main>
+  <section id="aliases" title="A stable name a persona or a kiosk uses forever (?face=holly), pointing at whichever face you choose here">
+    <h2>Aliases</h2>
+    <div id="alias-list"></div>
+    <form id="alias-new" class="alias-row">
+      <input type="text" id="alias-name" placeholder="new alias, e.g. holly" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required>
+      <span>→</span><select id="alias-face" required></select>
+      <button type="submit">Add</button>
+    </form>
+    <div class="meta" id="alias-note">Screens and sources that use an alias get the face it points at; a screen watching it switches to the new face on the next thing said.</div>
+  </section>
+  <div id="grid"></div>
+  <div class="empty" id="empty" hidden>No faces yet. Build one in the editor, then Export it.</div>
+</main>
+
+<div id="modal" hidden role="dialog" aria-modal="true" aria-label="Review">
+  <div class="view">
+    <div class="top"><span class="name" id="m-name"></span><span class="which" id="m-which"></span><span class="spacer"></span>
+      <button type="button" id="m-close">Close (Esc)</button></div>
+    <div id="stage"></div>
+    <div class="poses" id="m-poses"></div>
+  </div>
+  <div class="side" id="m-side"></div>
+</div>
+
+<dialog id="rename">
+  <form method="dialog" id="rename-form">
+    <h2>Rename</h2>
+    <label>Name<input type="text" id="r-name" maxlength="80" required></label>
+    <label>Id (the directory under assets/, and what screens ask for)<input type="text" id="r-id" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required></label>
+    <div class="err" id="r-err"></div>
+    <div class="row"><button type="button" id="r-cancel">Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+<script type="module" src="./faces.js"></script>
+</body>
+</html>

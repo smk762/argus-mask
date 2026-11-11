@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>argus-mask voices</title>
+<style>
+  :root { --bg: #101216; --panel: #171a20; --raised: #1d2128; --line: #2a303a; --text: #e6e9ee; --dim: #9aa4b2;
+          --accent: #6ea8fe; --bad: #f28b82; --warn: #f6c177; --good: #8bd5a0; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+           padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  a.nav { text-decoration: none; font-size: 13px; } a.nav:hover { text-decoration: underline; }
+  #tts { margin-left: auto; font-size: 12px; color: var(--dim); }
+  main { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; padding: 16px; align-items: start; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+  section h2 { margin: 0 0 10px; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  .hint { font-size: 12px; color: var(--dim); }
+  .warnline { font-size: 13px; color: var(--warn); }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
+  label.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 13px; }
+  label.check input { margin-top: 3px; }
+  textarea, input[type=text], input[type=number], select { width: 100%; padding: 7px 9px; background: var(--bg);
+    color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  textarea { min-height: 70px; resize: vertical; }
+  button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid #5b6472; background: var(--raised); color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tabs button.on { border-color: var(--accent); }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .badge.good { color: var(--good); border-color: #2f5a3c; } .badge.warn { color: var(--warn); border-color: #5c4a2a; }
+  .badge.bad { color: var(--bad); border-color: #6a3330; }
+  .voice { padding: 10px; border-radius: 10px; background: var(--bg); margin-bottom: 8px; display: grid; gap: 4px; }
+  .voice .top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .voice .name { font-weight: 600; } .voice .id { font: 12px ui-monospace, monospace; color: var(--dim); }
+  .clip { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; display: grid; gap: 8px; background: var(--bg); }
+  .clip.off { opacity: .55; }
+  .clip .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .clip .top .title { font-weight: 600; word-break: break-all; }
+  .clip canvas { width: 100%; height: 48px; display: block; border-radius: 6px; background: #0b0d10; }
+  .clip audio { width: 100%; height: 34px; }
+  table.checks { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.checks td { padding: 4px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+  table.checks td:first-child { width: 18px; }
+  table.checks .advice { color: var(--dim); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; }
+  .dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.info { background: var(--dim); }
+  .summary { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-radius: 8px; background: var(--bg); margin-bottom: 10px; }
+  .temp { display: grid; grid-template-columns: 90px 1fr 40px; gap: 10px; align-items: center; font-size: 13px; }
+  .temp input { width: 100%; accent-color: var(--accent); }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dim); border-top-color: transparent; border-radius: 50%; animation: s 1s linear infinite; vertical-align: -2px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .err { color: var(--bad); font-size: 13px; }
+  .consent { padding: 10px 12px; border-radius: 8px; border: 1px solid #5c4a2a; background: #1f1a12; font-size: 13px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voices</h1>
+  <a class="nav" href="./">Editor</a>
+  <a class="nav" href="./faces.html">Saved faces</a>
+  <a class="nav" href="./broadcast.html">Broadcast</a>
+  <a class="nav" href="https://github.com/smk762/argus-mask/blob/dev/docs/voices.md" target="_blank" rel="noopener">Guide</a>
+  <span id="tts">Asking…</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Voices</h2>
+      <div id="voices"><div class="hint">Loading…</div></div>
+    </section>
+    <section>
+      <h2>Try a voice</h2>
+      <div style="display:grid; gap:10px">
+        <label>Voice <select id="try-voice"></select></label>
+        <label>Line <textarea id="try-text" maxlength="600">Good afternoon. Your systems are running smoothly, and there are three things to look at today. Shall we start?</textarea></label>
+        <div class="temp"><span>Temperature</span><input type="range" id="try-temp" min="0.1" max="1.5" step="0.05" value="0.7"><output id="try-temp-out">0.70</output></div>
+        <div class="row"><button type="button" id="try-go">Speak</button><span class="hint" id="try-note"></span></div>
+        <audio id="try-audio" controls hidden></audio>
+      </div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>1. Reference clips</h2>
+      <div class="tabs">
+        <button type="button" class="on" data-tab="upload">Upload a recording</button>
+        <button type="button" data-tab="generate">Generate a synthetic voice</button>
+      </div>
+      <div id="tab-upload">
+        <div class="hint" style="margin-bottom:8px">12 to 20 seconds of one person speaking calmly in a quiet room, in one to three clips, each with exactly what is said. WAV or FLAC is best; any format the browser plays works. See the <a href="https://github.com/smk762/argus-mask/blob/dev/docs/voices.md" target="_blank" rel="noopener">guide</a>.</div>
+        <input type="file" id="files" accept="audio/*,.wav,.flac,.mp3,.ogg,.m4a" multiple>
+      </div>
+      <div id="tab-generate" hidden>
+        <div class="hint" style="margin-bottom:8px">The TTS service reads a script in a voice of its own: a voice no real person owns, with a transcript known word for word. Each candidate is different. Generate a few, keep the one you like that passes its checks. About a minute each on an RTX 3090.</div>
+        <div style="display:grid; gap:10px">
+          <label>Delivery to aim for <select id="gen-delivery"></select></label>
+          <label>Script (what the candidate reads: its transcript) <textarea id="gen-script" maxlength="1500"></textarea></label>
+          <div class="grid">
+            <label>Service speaker <input type="text" id="gen-speaker" value="0" placeholder="Miso: 0 or 1"></label>
+            <label title="On a service that designs voices from a description (agent-composer's Qwen3-TTS). Miso ignores it.">Or a description <input type="text" id="gen-desc" placeholder="female, warm, mid-thirties, light British accent"></label>
+          </div>
+          <div class="temp"><span>Temperature</span><input type="range" id="gen-temp" min="0.3" max="1.2" step="0.05" value="0.8"><output id="gen-temp-out">0.80</output></div>
+          <div class="row"><button type="button" class="primary" id="gen-go">Generate a candidate</button><span class="hint" id="gen-note"></span></div>
+        </div>
+      </div>
+      <div id="clips" style="margin-top:14px"></div>
+    </section>
+    <section>
+      <h2>2. Make the voice</h2>
+      <div class="summary" id="set"><span class="hint">Add a clip to see whether the set is enough.</span></div>
+      <div style="display:grid; gap:10px">
+        <div class="grid">
+          <label>Name <input type="text" id="v-name" maxlength="80" placeholder="Ginger"></label>
+          <label>Delivery <select id="v-delivery"></select></label>
+          <label>Id on the TTS service <input type="text" id="v-id" maxlength="63" placeholder="ginger-warm"></label>
+        </div>
+        <div class="hint">One voice per delivery: a warm and a brisk take of the same speaker are two voices (ginger-warm, ginger-brisk). Pick one per broadcast.</div>
+        <label>Where the voice comes from
+          <select id="v-source">
+            <option value="generated">Generated: a TTS's own or described voice, no real person</option>
+            <option value="own">My own voice</option>
+            <option value="consented">A consenting speaker, under a signed release</option>
+          </select></label>
+        <label id="v-generator-wrap">What made it <input type="text" id="v-generator" maxlength="300" placeholder="Miso speaker 1, temperature 0.8"></label>
+        <div class="grid" id="v-consent-wrap" hidden>
+          <label>Speaker, as the release names them <input type="text" id="v-speaker" maxlength="120"></label>
+          <label title="sha256sum release.pdf: the hash binds the voice to the document without keeping it here">Release sha256 <input type="text" id="v-release" maxlength="64" placeholder="64 hex characters"></label>
+        </div>
+        <label class="check consent"><input type="checkbox" id="v-confirm"> <span>These clips are not of anyone who has not agreed to it: not taken from a film, show, game, video, podcast or call, and not of someone imitated.</span></label>
+        <div class="row"><button type="button" class="primary" id="v-make" disabled>Make the voice</button><span class="hint" id="v-note"></span></div>
+      </div>
+    </section>
+  </div>
+</main>
+<script type="module" src="./voices.js"></script>
+</body>
+</html>
