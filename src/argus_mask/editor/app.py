@@ -34,7 +34,6 @@ import asyncio
 import contextlib
 import json
 import re
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -50,7 +49,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from argus_mask import __version__, client
-from argus_mask.audio import AudioError, read_wav
+from argus_mask.audio import AudioError, decode_wav, read_wav
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
@@ -69,7 +68,7 @@ from argus_mask.editor.voices import (
 )
 from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest
-from argus_mask.server.app import VIEWER_DIR, install_guards
+from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
@@ -100,18 +99,11 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
 
 
 MAX_TEXT = 5000  # characters a broadcast may say: a long paragraph or two
-MAX_AUDIO_BYTES = 25 * 1024 * 1024  # a pushed file: minutes of 48 kHz 16-bit audio
 
 
 def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
-    """:func:`read_wav` on an uploaded file's bytes; errors name the upload, not the temporary file."""
-    with tempfile.NamedTemporaryFile(suffix=".wav") as handle:
-        handle.write(data)
-        handle.flush()
-        try:
-            return read_wav(handle.name)
-        except AudioError as exc:
-            raise AudioError(str(exc).replace(handle.name, name)) from exc
+    """An uploaded WAV file's bytes as ``(mono float32, sample_rate)``; errors name the upload."""
+    return decode_wav(data, name)
 
 
 RecordSize = Literal["1920x1080", "1280x720", "854x480", "1080x1920"]  # 1080p, 720p, 480p; 1080x1920: the HLD panel
@@ -578,16 +570,7 @@ def create_editor_app(
         transcript: str = Query("", max_length=3000),
     ) -> dict:
         """A clip (the body, a WAV file) checked as a reference for a voice, and kept by its hash for making one."""
-        too_big = HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
-        declared = request.headers.get("content-length") or "0"
-        if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
-            raise too_big
-        buffer = bytearray()  # read up to the cap, never the whole of whatever is sent
-        async for chunk in request.stream():
-            buffer += chunk
-            if len(buffer) > MAX_AUDIO_BYTES:
-                raise too_big
-        data = bytes(buffer)
+        data = await read_body(request)  # up to the cap, never the whole of whatever is sent
         try:
             samples, rate = await asyncio.to_thread(wav_from_bytes, data, name)
         except AudioError as exc:
@@ -768,8 +751,8 @@ def create_editor_app(
         return {"tts_url": tts, "listed": True, "voices": found}
 
     @app.post("/broadcast/say")
-    async def broadcast_say(req: Say) -> dict:
-        tts_url = (req.tts_url or cfg.tts_url).strip()
+    async def broadcast_say(req: Say, request: Request) -> dict:
+        tts_url = chosen_tts(request, req.tts_url).strip()
         if not tts_url.startswith(("http://", "https://", "wyoming://")):
             raise HTTPException(422, "a TTS service is needed: an http(s):// or wyoming:// URL (or ARGUS_MASK_TTS_URL)")
         await served(req.face)
@@ -806,20 +789,10 @@ def create_editor_app(
         """An audio file (WAV) for a face, as `argus-mask push` plays one: the request's body is the file."""
         if record and (why_not := recording_ready()) is not None:
             raise HTTPException(422, why_not)
-        too_big = HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
-        declared = request.headers.get("content-length") or "0"
-        if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
-            raise too_big
-        data = bytearray()  # read up to the cap, never the whole of whatever is sent
-        async for chunk in request.stream():
-            data += chunk
-            if len(data) > MAX_AUDIO_BYTES:
-                raise too_big
-        if not data:
-            raise HTTPException(422, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+        data = await read_body(request)  # up to the cap, never the whole of whatever is sent
         await served(face)
         try:
-            mono, rate = await asyncio.to_thread(wav_from_bytes, bytes(data), name)
+            mono, rate = await asyncio.to_thread(wav_from_bytes, data, name)
         except AudioError as exc:
             raise HTTPException(422, str(exc)) from exc
         try:

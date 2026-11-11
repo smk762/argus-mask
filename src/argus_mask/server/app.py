@@ -157,9 +157,6 @@ class Speak(BaseModel):
     require_screen: bool = False
 
 
-_PCM_FORMATS = {"pcm_f32le": "f32le", "f32le": "f32le", "pcm_s16le": "s16le", "s16le": "s16le"}
-
-
 async def read_body(request: Request) -> bytes:
     """The request's body, refused (413) over :data:`MAX_PUSH_BYTES` before and while it is read."""
     too_big = HTTPException(413, f"send at most {MAX_PUSH_BYTES // 2**20} MB of audio")
@@ -195,7 +192,7 @@ def audio_of(request: Request, data: bytes, seed: int) -> tuple[SourceHello, byt
         return hello, mono.astype("<f4", copy=False).tobytes()
     rate = request.headers.get("x-sample-rate")
     declared = (request.headers.get("x-audio-format") or "").lower()
-    if rate is None or declared not in _PCM_FORMATS:
+    if rate is None or declared not in client._FORMATS:
         raise HTTPException(
             422,
             "send a WAV file, or raw PCM with X-Sample-Rate, X-Audio-Format (pcm_f32le or pcm_s16le) and X-Channels",
@@ -204,20 +201,19 @@ def audio_of(request: Request, data: bytes, seed: int) -> tuple[SourceHello, byt
         hello = SourceHello(
             sample_rate=int(rate),
             channels=int(request.headers.get("x-channels") or 1),
-            format=_PCM_FORMATS[declared],
+            format=client._FORMATS[declared],
             seed=seed,
         )
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, f"the PCM headers do not describe a format this plays: {exc}") from exc
-    frame = (4 if hello.format == "f32le" else 2) * hello.channels
-    if len(data) < frame:
+    if len(data) < client._frame_bytes(hello):
         raise HTTPException(422, "no audio: less than one sample")
     return hello, data
 
 
 async def paced(pcm: bytes, fmt: SourceHello) -> AsyncIterator[bytes]:
     """*pcm* in :data:`BLOCK_MS` pieces, no faster than real time plus :data:`PUSH_LEAD_S`, as a client source sends."""
-    frame = (4 if fmt.format == "f32le" else 2) * fmt.channels
+    frame = client._frame_bytes(fmt)
     size = fmt.sample_rate * BLOCK_MS // 1000 * frame
     started = time.monotonic()
     sent_s = 0.0
@@ -353,8 +349,6 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             )
             stage.header = header
             stage.send(line(header))
-            if on_ready is not None:
-                await on_ready(header)
             log.info("source_connected", face=face_id, session=header.session_id, sample_rate=hello.sample_rate)
 
             decoder = PcmDecoder(hello)
@@ -372,6 +366,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     stage.send(held.popleft()[1])
 
             try:
+                if on_ready is not None:  # inside: a source gone before "ready" still ends the stream for viewers
+                    await on_ready(header)
                 async for data in chunks:
                     if len(data) > MAX_CHUNK_BYTES:
                         failure = f"an audio message over {MAX_CHUNK_BYTES} bytes"
@@ -395,7 +391,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except DriverError as exc:
                 failure = str(exc)
                 probe.forget()
-            except asyncio.CancelledError:  # the caller went away (an HTTP client hung up): end the stream for viewers
+            except BaseException:  # cancelled (the caller went away), or anything unforeseen: end it for viewers
                 held.clear()
                 gone = round(samples * 1000 / hello.sample_rate)
                 stage.send(
@@ -580,10 +576,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             pcm, fmt, _ = await client.synthesise(tts_url, body, pause_ms=req.pause, tidy=req.tidy)
         except client.ClientError as exc:
             raise HTTPException(502, str(exc)) from exc
-        lead = bytes(fmt.sample_rate * client.SAY_LEAD_MS // 1000 * (4 if fmt.format == "f32le" else 2) * fmt.channels)
-        tail = bytes(fmt.sample_rate * client.SAY_TAIL_MS // 1000 * (4 if fmt.format == "f32le" else 2) * fmt.channels)
         hello = SourceHello(**fmt.model_dump(), seed=req.seed)
-        return await play_http(req.face, stage, hello, lead + pcm + tail)
+        pcm = client._silence(fmt, client.SAY_LEAD_MS) + pcm + client._silence(fmt, client.SAY_TAIL_MS)
+        return await play_http(req.face, stage, hello, pcm)
 
     @app.websocket("/session/{face_id}/view")
     async def view(ws: WebSocket, face_id: str) -> None:

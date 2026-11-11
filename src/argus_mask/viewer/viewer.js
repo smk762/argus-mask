@@ -295,7 +295,10 @@ function connect(faceId) {
 // "1 screen ready". State, not media (models.ViewerStatus).
 function report() {
   if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'status', audio: state.audio === 'running', display: DISPLAY, kiosk: KIOSK, sound: state.sound }));
+    // Only the tiers the server knows (models.ViewerStatus): any other ?display= draws flat, and a status
+    // naming it would be dropped whole, leaving this screen uncounted.
+    const display = ['flat', 'hld', 'go'].includes(DISPLAY) ? DISPLAY : 'flat';
+    socket.send(JSON.stringify({ type: 'status', audio: state.audio === 'running', display, kiosk: KIOSK, sound: state.sound }));
   }
 }
 

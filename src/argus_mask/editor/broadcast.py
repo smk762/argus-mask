@@ -14,6 +14,7 @@ characters) is kept for the page to show, so anyone who can read this editor can
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -157,8 +158,10 @@ class Broadcasts:
                 result = await run(job)
             except BaseException:
                 rec.cancel()
-                if rec.done() and not rec.cancelled():
-                    rec.exception()  # retrieved: the broadcast's own failure is the one to report
+                # Waited for, so its browser and files are cleaned up before the job ends (and before
+                # shutdown, which waits only on jobs); its own error is dropped: the broadcast's is the one to report.
+                with contextlib.suppress(BaseException):
+                    await rec
                 raise
             try:
                 recording = await rec

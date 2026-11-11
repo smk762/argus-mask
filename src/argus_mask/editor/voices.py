@@ -168,6 +168,7 @@ class Generation:
     error: str | None = None
     result: dict | None = None
     started: float = field(default_factory=time.monotonic)
+    ended: float | None = None
     task: asyncio.Task | None = None
 
     def public(self) -> dict:
@@ -176,7 +177,7 @@ class Generation:
             "state": self.state,
             "error": self.error,
             "result": self.result,
-            "seconds": round(time.monotonic() - self.started, 1),
+            "seconds": round((self.ended or time.monotonic()) - self.started, 1),
         }
 
 
@@ -198,8 +199,12 @@ class Generations:
         async def run() -> None:
             try:
                 reply = await asyncio.to_thread(client.open_tts, tts_url, body)
+                # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the app.
+                limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)
                 try:
-                    data = await asyncio.to_thread(reply.read)
+                    data = await client._cancellable(
+                        asyncio.to_thread(client._read_capped, reply, limit), cut=reply.cut
+                    )
                 finally:
                     reply.close()
                 samples = pcm_to_float(data, reply.fmt)
@@ -218,6 +223,8 @@ class Generations:
             except Exception as exc:  # noqa: BLE001 - the page must hear of it
                 job.state, job.error = "failed", f"{type(exc).__name__}: {exc}"
                 log.warning("voice_generate_failed", reason=str(exc))
+            finally:
+                job.ended = time.monotonic()
 
         job.task = asyncio.create_task(run())
         return job

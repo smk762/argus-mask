@@ -698,7 +698,12 @@ async def say(
                 yield _silence(fmt, pause_ms * pauses)
         yield _silence(fmt, SAY_TAIL_MS)
 
-    return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
+    try:
+        return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
+    finally:
+        # The generator closes each reply it reads, but one the server never asked for (it refused the
+        # source, or could not be reached) is open still: the service would go on generating into it.
+        reply.close()
 
 
 def _silence(fmt: AudioFormat, ms: int) -> bytes:
