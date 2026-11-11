@@ -274,16 +274,18 @@ async def record(
     # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
-    await render_frames(
-        f"{base.rstrip('/')}/?{urlencode(params)}",
-        recording,
-        frames_dir,
-        width=width,
-        height=height,
-        on_progress=on_progress,
-        on_renderer=on_renderer,
-    )
-    await asyncio.to_thread(mux, frames_dir, wav, out, recording.header.fps)
-    if not keep:
-        shutil.rmtree(frames_dir, ignore_errors=True)
+    try:
+        await render_frames(
+            f"{base.rstrip('/')}/?{urlencode(params)}",
+            recording,
+            frames_dir,
+            width=width,
+            height=height,
+            on_progress=on_progress,
+            on_renderer=on_renderer,
+        )
+        await asyncio.to_thread(mux, frames_dir, wav, out, recording.header.fps)
+    finally:  # a failed or stopped render must not leave a directory of PNGs behind either
+        if not keep:
+            shutil.rmtree(frames_dir, ignore_errors=True)
     return recording
