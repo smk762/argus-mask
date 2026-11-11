@@ -96,6 +96,7 @@ class EditorSettings:
     # Where the Broadcast page's recordings go: an MP4 per broadcast, its WAV and take beside it.
     # Not under the assets root, where the server would take a directory for a face.
     recordings_dir: Path = Path("recordings")
+    voices_dir: Path = Path("voices")  # the Voices page: checked clips, and each voice's record and source clips
 
     def __post_init__(self) -> None:
         for name in ("server_url", "viewer_url"):
@@ -134,4 +135,5 @@ class EditorSettings:
             server_url=(_env("SERVER_URL") or f"http://127.0.0.1:{DEFAULT_PORT}").rstrip("/"),
             viewer_url=_env("VIEWER_URL").rstrip("/"),
             recordings_dir=Path(_env("RECORDINGS_DIR") or "recordings"),
+            voices_dir=Path(_env("VOICES_DIR") or "voices"),
         )

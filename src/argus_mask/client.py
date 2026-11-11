@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import http.client
 import json
 import re
 import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import AsyncIterator, Callable
@@ -328,6 +330,86 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
 VOICES_TIMEOUT_S = 5.0
 
 
+def http_base(tts_url: str) -> str | None:
+    """The root of an HTTP service with the ``/synthesise`` contract, from its synthesis URL; None for anything else."""
+    if not tts_url.startswith(("http://", "https://")):
+        return None
+    parts = urllib.parse.urlsplit(tts_url)
+    base_path = re.sub(r"/synthesi[sz]e(/stream)?/?$", "", parts.path)
+    if base_path == parts.path.rstrip("/"):
+        return None
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, base_path, "", ""))
+
+
+CLONE_TIMEOUT_S = 300.0  # a cold model loads before it clones
+
+
+def _http_call(method: str, url: str, body: bytes | None, headers: dict, timeout: float) -> dict:
+    request = urllib.request.Request(url, data=body, method=method, headers=headers)  # noqa: S310 - http(s) only
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as reply:  # noqa: S310
+            data = reply.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()[:500].decode("utf-8", "replace")
+        try:
+            parsed = json.loads(detail)
+            detail = str(parsed.get("error") or parsed.get("detail") or detail) if isinstance(parsed, dict) else detail
+        except ValueError:
+            pass
+        raise ClientError(f"the TTS service answered {exc.code}: {detail}") from exc
+    except OSError as exc:
+        raise ClientError(f"the TTS service at {url} does not answer: {exc}") from exc
+    try:
+        parsed = json.loads(data or b"{}")
+    except ValueError as exc:
+        raise ClientError("the TTS service sent something that is not JSON") from exc
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def clone_voice(tts_url: str, voice_id: str, name: str, clips: list[tuple[str, bytes]], transcript: str) -> dict:
+    """Store a voice on an HTTP TTS service with the ``/synthesise`` contract: ``POST …/clone-voice``.
+
+    *clips* are (file name, WAV bytes), in order; *transcript* is what they say, in the same order.
+    Miso standardises each clip (24 kHz mono, trimmed, loudness), joins them and keeps the first 20 s.
+    """
+    base = http_base(tts_url)
+    if base is None:
+        raise ClientError("making a voice needs an HTTP TTS service with the /synthesise contract (Miso)")
+    boundary = "argus-mask-" + hashlib.sha256(b"".join(data for _, data in clips)).hexdigest()[:24]
+    parts: list[bytes] = []
+
+    def field(name_: str, value: str) -> None:
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name_}"\r\n\r\n{value}\r\n'.encode())
+
+    for filename, data in clips:
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "clip.wav"
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="audio"; filename="{safe}"\r\n'
+            "Content-Type: audio/wav\r\n\r\n".encode()
+            + data
+            + b"\r\n"
+        )
+    field("reference_text", transcript)
+    field("companion_id", voice_id)
+    field("voice_name", name)
+    parts.append(f"--{boundary}--\r\n".encode())
+    return _http_call(
+        "POST",
+        base + "/clone-voice",
+        b"".join(parts),
+        {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        CLONE_TIMEOUT_S,
+    )
+
+
+def delete_voice(tts_url: str, voice_id: str) -> dict:
+    """Remove a stored voice from an HTTP TTS service: ``DELETE …/clones/<id>``."""
+    base = http_base(tts_url)
+    if base is None:
+        raise ClientError("an HTTP TTS service with the /synthesise contract is needed")
+    return _http_call("DELETE", f"{base}/clones/{urllib.parse.quote(voice_id, safe='')}", None, {}, VOICES_TIMEOUT_S)
+
+
 def _http_voices(tts_url: str) -> list[dict] | None:
     """Voices from an HTTP service with the ``/synthesise`` contract (Miso, agent-composer's TTS servers).
 
@@ -335,11 +417,9 @@ def _http_voices(tts_url: str) -> list[dict] | None:
     ``GET …/clones`` (stored clones). Named as the Wyoming bridge names them, and as ``voiced`` maps
     them back: a speaker by its id, a clone as ``clone:<id>``. None if the service answers neither.
     """
-    parts = urllib.parse.urlsplit(tts_url)
-    base_path = re.sub(r"/synthesi[sz]e(/stream)?/?$", "", parts.path)
-    if base_path == parts.path.rstrip("/"):
+    base = http_base(tts_url)
+    if base is None:
         return None  # not the /synthesise contract: no known place to ask
-    base = urllib.parse.urlunsplit((parts.scheme, parts.netloc, base_path, "", ""))
 
     def get(path: str) -> dict | None:
         try:
@@ -545,72 +625,116 @@ async def say(
     Cancelling this (Ctrl-C in the CLI) cuts the TTS socket, so the thread reading
     it ends at once instead of holding the process open until the service gives up.
     """
+    if not stream:
+        # Fetch everything before the face is claimed: the service answers its headers at once and
+        # then generates for as long as it takes, and the face stays free for others meanwhile.
+        whole, fmt, seconds = await synthesise(
+            tts_url, body, pause_ms=pause_ms, tidy=tidy, on_wait=on_wait, on_progress=on_progress
+        )
+        if on_audio:
+            on_audio(seconds)
+        frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
+        block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+        lead, tail = _silence(fmt, SAY_LEAD_MS), _silence(fmt, SAY_TAIL_MS)
+
+        async def buffered() -> AsyncIterator[bytes]:
+            yield lead
+            for start in range(0, len(whole), block):
+                yield whole[start : start + block]
+            yield tail
+
+        return await send(base, face_id, fmt, buffered(), seed=seed, on_ready=on_ready)
+
+    parts = _parts(body, pause_ms, tidy)
+    if on_wait:
+        on_wait()
+    reply = await _open_part(tts_url, body, parts, 0, None, on_progress)
+    fmt = reply.fmt
+    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
+    block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
+
+    async def streamed() -> AsyncIterator[bytes]:
+        nonlocal reply
+        # TTS models start speaking on their first sample. A little silence either side gives the output
+        # device time to wake before the first sound, and the mouth time to close before the stream ends.
+        yield _silence(fmt, SAY_LEAD_MS)
+        for i, (_, pauses) in enumerate(parts):
+            if i:
+                reply = await _open_part(tts_url, body, parts, i, fmt, on_progress)
+            edges = Edges(fmt) if tidy else None
+            try:
+                while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
+                    if edges is None:
+                        yield data
+                    elif out := edges.feed(data):
+                        yield out
+            except OSError as exc:
+                raise ClientError(f"the TTS stream broke: {exc}") from exc
+            finally:
+                reply.close()
+            if edges is not None and (out := edges.end()):
+                yield out
+            if pauses:
+                yield _silence(fmt, pause_ms * pauses)
+        yield _silence(fmt, SAY_TAIL_MS)
+
+    return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
+
+
+def _silence(fmt: AudioFormat, ms: int) -> bytes:
+    return bytes(fmt.sample_rate * ms // 1000 * (4 if fmt.format == "f32le" else 2) * fmt.channels)
+
+
+def _parts(body: dict, pause_ms: int, tidy: bool) -> list[tuple[str, int]]:
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ClientError("nothing to say")
     if tidy:
         text = speakable(text)
     parts = sentences(text) if pause_ms > 0 else [(text, 0)]
-    if tidy:
-        parts = join_short(parts)
+    return join_short(parts) if tidy else parts
+
+
+async def _open_part(
+    tts_url: str,
+    body: dict,
+    parts: list[tuple[str, int]],
+    i: int,
+    fmt: AudioFormat | None,
+    on_progress: Callable[[int, int], None] | None,
+) -> TtsReply | WyomingReply:
+    if on_progress and len(parts) > 1:
+        on_progress(i + 1, len(parts))
+    reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
+    if fmt is not None and reply.fmt != fmt:
+        reply.close()
+        raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
+    return reply
+
+
+async def synthesise(
+    tts_url: str,
+    body: dict,
+    *,
+    pause_ms: int = SAY_PAUSE_MS,
+    tidy: bool = True,
+    on_wait: Callable[[], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> tuple[bytes, AudioFormat, float]:
+    """*body*'s speech, whole, as `say` would play it: (PCM in the service's format, that format, seconds of speech).
+
+    Sentence by sentence with pauses between, tidied unless *tidy* is off (see `say`). No face is involved:
+    `say` plays this into one, the editor's Voices page plays it in the browser.
+    """
+    parts = _parts(body, pause_ms, tidy)
     if on_wait:
         on_wait()
-
-    async def open_part(i: int) -> TtsReply | WyomingReply:
-        if on_progress and len(parts) > 1:
-            on_progress(i + 1, len(parts))
-        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, {**body, "text": parts[i][0]}), cut=None)
-        if i and reply.fmt != fmt:
-            reply.close()
-            raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
-        return reply
-
-    reply = await open_part(0)
-    fmt = reply.fmt
-    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
-    block = fmt.sample_rate // 10 * frame_bytes  # ~100 ms
-
-    def silence(ms: int) -> bytes:
-        return bytes(fmt.sample_rate * ms // 1000 * frame_bytes)
-
-    # TTS models start speaking on their first sample. A little silence either side gives the output
-    # device time to wake before the first sound, and the mouth time to close before the stream ends.
-    lead, tail = silence(SAY_LEAD_MS), silence(SAY_TAIL_MS)
-
-    if stream:
-
-        async def streamed() -> AsyncIterator[bytes]:
-            nonlocal reply
-            yield lead
-            for i, (_, pauses) in enumerate(parts):
-                if i:
-                    reply = await open_part(i)
-                edges = Edges(fmt) if tidy else None
-                try:
-                    while data := await _cancellable(asyncio.to_thread(reply.read, block), cut=reply.cut):
-                        if edges is None:
-                            yield data
-                        elif out := edges.feed(data):
-                            yield out
-                except OSError as exc:
-                    raise ClientError(f"the TTS stream broke: {exc}") from exc
-                finally:
-                    reply.close()
-                if edges is not None and (out := edges.end()):
-                    yield out
-                if pauses:
-                    yield silence(pause_ms * pauses)
-            yield tail
-
-        return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
-
-    # Fetch everything before the face is claimed: the service answers its headers at once and
-    # then generates for as long as it takes, and the face stays free for others meanwhile.
     pieces: list[bytes] = []
     spoken = 0
+    fmt: AudioFormat | None = None
     for i, (_, pauses) in enumerate(parts):
-        if i:
-            reply = await open_part(i)
+        reply = await _open_part(tts_url, body, parts, i, fmt, on_progress)
+        fmt = reply.fmt
         try:
             whole = await _cancellable(asyncio.to_thread(reply.read), cut=reply.cut)
         except OSError as exc:
@@ -622,18 +746,10 @@ async def say(
         spoken += len(whole)
         pieces.append(tidy_audio(whole, fmt) if tidy else whole)
         if pauses:
-            pieces.append(silence(pause_ms * pauses))
-    if on_audio:
-        on_audio(spoken / frame_bytes / fmt.sample_rate)
-    whole = b"".join(pieces)
-
-    async def buffered() -> AsyncIterator[bytes]:
-        yield lead
-        for start in range(0, len(whole), block):
-            yield whole[start : start + block]
-        yield tail
-
-    return await send(base, face_id, fmt, buffered(), seed=seed, on_ready=on_ready)
+            pieces.append(_silence(fmt, pause_ms * pauses))
+    assert fmt is not None  # parts is never empty
+    frame_bytes = (4 if fmt.format == "f32le" else 2) * fmt.channels
+    return b"".join(pieces), fmt, spoken / frame_bytes / fmt.sample_rate
 
 
 async def _cancellable(awaitable, *, cut: Callable[[], None] | None):  # noqa: ANN001, ANN202

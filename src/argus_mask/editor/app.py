@@ -35,6 +35,7 @@ import contextlib
 import json
 import re
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
@@ -44,7 +45,7 @@ from typing import Literal
 import numpy as np
 import structlog
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,9 +57,20 @@ from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
+from argus_mask.editor.voices import (
+    DELIVERIES,
+    SOURCES,
+    VOICE_ID,
+    Generations,
+    VoiceError,
+    VoiceStore,
+    provenance,
+    wav_bytes,
+)
 from argus_mask.faces import FaceError, FaceStore
 from argus_mask.models import FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards
+from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
 
@@ -135,6 +147,45 @@ class Say(BaseModel):
     record: Record | None = Field(None, description="also record the broadcast to a file")
 
 
+class VoiceGenerate(BaseModel):
+    """A synthetic candidate: the TTS service's own speaker, or a described voice, reading a script."""
+
+    model_config = ConfigDict(extra="forbid")
+    script: str = Field(..., min_length=20, max_length=1500)
+    speaker: str = Field("", max_length=40, description="one of the service's own speakers (Miso: 0 or 1)")
+    description: str = Field("", max_length=300, description="a described voice, on a service that designs them")
+    instruction: str = Field("", max_length=300, description="how to say it, on a service that takes one")
+    temperature: float | None = Field(None, ge=0.1, le=1.5)
+    tts_url: str = Field("", max_length=500)
+
+
+class VoiceClip(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sha: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    name: str = Field("clip.wav", max_length=200)
+    transcript: str = Field(..., min_length=1, max_length=3000)
+    generated: bool = False
+
+
+class VoiceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(..., pattern=VOICE_ID)
+    name: str = Field(..., min_length=1, max_length=80)
+    delivery: Literal[DELIVERIES] = "neutral"  # type: ignore[valid-type]
+    clips: list[VoiceClip] = Field(..., min_length=1, max_length=5)
+    source: dict = Field(..., description="kind (generated, own, consented), and what made it or the release")
+    tts_url: str = Field("", max_length=500)
+
+
+class VoiceTry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    voice: str = Field(..., min_length=1, max_length=200)
+    text: str = Field(..., min_length=1, max_length=600)
+    temperature: float | None = Field(None, ge=0.1, le=1.5)
+    tidy: bool = True
+    tts_url: str = Field("", max_length=500)
+
+
 class Rename(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = Field(None, pattern=FACE_ID_PATTERN)
@@ -161,11 +212,14 @@ def create_editor_app(
     store = FaceStore(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
+    voice_store = VoiceStore(ed.voices_dir)
+    generations = Generations(voice_store)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await broadcasts.stop_all()
+        await generations.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -433,6 +487,197 @@ def create_editor_app(
             }
         return out
 
+    def chosen_tts(request: Request, given: str) -> str:
+        """The TTS service a request names, or the configured one. A host the caller names is reached from here,
+        so that takes the origin check the writes have: no other site may use the editor to probe the LAN."""
+        given = given.strip()
+        if given and given != cfg.tts_url:
+            why = origin_refusal(request.scope, request.headers)
+            if why is None and request.headers.get("sec-fetch-site") == "cross-site":
+                why = "a cross-site request may not name a TTS service"
+            if why is not None:
+                raise HTTPException(403, why)
+        return given or cfg.tts_url
+
+    # -- the Voices page --------------------------------------------------------------------------------
+
+    @app.get("/voice/state")
+    def voice_state() -> dict:
+        base = client.http_base(cfg.tts_url)
+        return {
+            "tts_url": cfg.tts_url,
+            "can_make": base is not None,
+            "reason": None
+            if base is not None
+            else "making a voice needs an HTTP TTS service with the /synthesise contract (Miso); set ARGUS_MASK_TTS_URL",
+            "voices": voice_store.records(),
+            "sources": list(SOURCES),
+            "deliveries": list(DELIVERIES),
+        }
+
+    @app.post("/voice/check")
+    async def voice_check(
+        request: Request,
+        name: str = Query("clip.wav", max_length=200),
+        transcript: str = Query("", max_length=3000),
+    ) -> dict:
+        """A clip (the body, a WAV file) checked as a reference for a voice, and kept by its hash for making one."""
+        declared = request.headers.get("content-length") or "0"
+        if not declared.isdigit() or int(declared) > MAX_AUDIO_BYTES:
+            raise HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+        data = await request.body()
+        if len(data) > MAX_AUDIO_BYTES:
+            raise HTTPException(413, f"send a WAV file of at most {MAX_AUDIO_BYTES // 2**20} MB")
+        try:
+            samples, rate = await asyncio.to_thread(wav_from_bytes, data, name)
+        except AudioError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        report = await asyncio.to_thread(analyse, samples, rate, transcript)
+        sha = await asyncio.to_thread(voice_store.stage, data)
+        return {"sha": sha, "name": name, "report": report.public()}
+
+    @app.get("/voice/clip/{sha}")
+    def voice_clip(sha: str) -> FileResponse:
+        try:
+            return FileResponse(voice_store.clip(sha), media_type="audio/wav")
+        except VoiceError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/voice/assess")
+    def voice_assess(clips: list[dict]) -> dict:
+        """The set of checked clips (their reports, as /voice/check gave them): enough speech, and one voice."""
+        try:
+            return assess(clips[:5]).public()
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise HTTPException(422, "send the reports /voice/check gave") from exc
+
+    @app.post("/voice/generate")
+    async def voice_generate(req: VoiceGenerate, request: Request) -> dict:
+        tts = chosen_tts(request, req.tts_url)
+        if not tts.startswith(("http://", "https://", "wyoming://")):
+            raise HTTPException(422, "a TTS service is needed: set ARGUS_MASK_TTS_URL")
+        body: dict = {"text": req.script}
+        if req.description.strip():
+            body["voice_description"] = req.description.strip()
+        else:
+            body = client.voiced(body, req.speaker.strip() or "0", tts)
+        if req.instruction.strip():
+            body["instruction"] = req.instruction.strip()
+        if req.temperature is not None:
+            body["temperature"] = req.temperature
+        try:
+            job = generations.start(tts, body)
+        except VoiceError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        log.info("voice_generate", chars=len(req.script))  # never the script
+        return job.public()
+
+    @app.get("/voice/generate/{job_id}")
+    def voice_generation(job_id: str) -> dict:
+        job = generations.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such candidate")
+        return job.public()
+
+    @app.post("/voice/create")
+    async def voice_create(req: VoiceCreate, request: Request) -> dict:
+        """Make a voice on the TTS service from checked clips, and keep its record: where it came from, and the clips."""
+        tts = chosen_tts(request, req.tts_url)
+        if client.http_base(tts) is None:
+            raise HTTPException(422, "making a voice needs an HTTP TTS service with the /synthesise contract (Miso)")
+        try:
+            source = provenance(req.source)
+            paths = [voice_store.clip(c.sha) for c in req.clips]
+        except VoiceError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if voice_store.record(req.id) is not None:
+            raise HTTPException(409, f"there is already a voice called {req.id}: delete it first, or pick another name")
+        existing = await asyncio.to_thread(client.tts_voices, tts)
+        if existing and any(v["name"] == f"clone:{req.id}" for v in existing):
+            raise HTTPException(409, f"the TTS service already has a voice called {req.id}: pick another name")
+        reports = []
+        for clip, path in zip(req.clips, paths, strict=True):
+            samples, rate = await asyncio.to_thread(read_wav, path)
+            reports.append(
+                (await asyncio.to_thread(analyse, samples, rate, clip.transcript, generated=clip.generated)).public()
+            )
+        for clip, report in zip(req.clips, reports, strict=True):
+            if report["verdict"] == "not suitable":
+                bad = "; ".join(c["label"] for c in report["checks"] if c["verdict"] == "bad")
+                raise HTTPException(422, f"{clip.name} is not suitable ({bad}): see its checks")
+        overall = assess(reports).public()
+        if overall["verdict"] == "not suitable":
+            raise HTTPException(422, "; ".join(c["advice"] for c in overall["checks"] if c["verdict"] == "bad"))
+        transcript = " ".join(c.transcript.strip() for c in req.clips)
+        clips = [(c.name, path.read_bytes()) for c, path in zip(req.clips, paths, strict=True)]
+        try:
+            made = await asyncio.to_thread(client.clone_voice, tts, req.id, req.name, clips, transcript)
+        except client.ClientError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        record = {
+            "id": req.id,
+            "name": req.name,
+            "delivery": req.delivery,
+            "tts": client.http_base(tts),
+            "created": time.time(),
+            "source": source,
+            "clips": [
+                {
+                    "file": f"clip-{i + 1}.wav",
+                    "name": c.name,
+                    "sha256": c.sha,
+                    "transcript": c.transcript,
+                    "seconds": r["metrics"]["seconds"],
+                    "verdict": r["verdict"],
+                }  # fmt: skip
+                for i, (c, r) in enumerate(zip(req.clips, reports, strict=True))
+            ],
+            "check": {
+                "verdict": overall["verdict"],
+                "score": overall["score"],
+                "speech_seconds": overall["metrics"]["speech_seconds"],
+            },  # noqa: E501
+            "service": {k: made.get(k) for k in ("voice_clone_id", "total_seconds", "engine") if k in made},
+        }
+        await asyncio.to_thread(voice_store.write, record, paths)
+        log.info("voice_made", voice=req.id, source=source["kind"], delivery=req.delivery)
+        return record
+
+    @app.post("/voice/try")
+    async def voice_try(req: VoiceTry, request: Request) -> Response:
+        """A line in a voice, as a WAV for the browser to play: no face involved."""
+        tts = chosen_tts(request, req.tts_url)
+        if not tts.startswith(("http://", "https://", "wyoming://")):
+            raise HTTPException(422, "a TTS service is needed: set ARGUS_MASK_TTS_URL")
+        body = client.voiced(
+            {"text": req.text, **({"temperature": req.temperature} if req.temperature else {})}, req.voice, tts
+        )
+        try:
+            pcm, fmt, _ = await client.synthesise(tts, body, tidy=req.tidy)
+        except client.ClientError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        from argus_mask.editor.voices import pcm_to_float  # noqa: PLC0415
+
+        return Response(wav_bytes(pcm_to_float(pcm, fmt), fmt.sample_rate), media_type="audio/wav")
+
+    @app.delete("/voice/{voice_id}")
+    async def voice_delete(voice_id: str, request: Request, tts_url: str = Query("", max_length=500)) -> dict:
+        """Remove a voice made here: from the TTS service, and its record to the trash. Only voices with a record."""
+        record = voice_store.record(voice_id)
+        if record is None:
+            raise HTTPException(404, "only a voice made on this page (one with a record here) can be deleted here")
+        tts = chosen_tts(request, tts_url)
+        removed = False
+        if client.http_base(tts) is not None:
+            try:
+                await asyncio.to_thread(client.delete_voice, tts, voice_id)
+                removed = True
+            except client.ClientError as exc:
+                if "404" not in str(exc):
+                    raise HTTPException(502, str(exc)) from exc
+        voice_store.trash(voice_id)
+        return {"id": voice_id, "removed_from_tts": removed}
+
     @app.get("/voices")
     async def voices(request: Request, tts: str = Query("", max_length=500)) -> dict:
         """The voices the TTS service offers, if it says (a Wyoming server does; the HTTP contract cannot).
@@ -440,13 +685,7 @@ def create_editor_app(
         A host the caller names is reached from here, so a read though it is, that takes the origin check
         the writes have: no other site may use the editor to probe the LAN.
         """
-        if tts and tts != cfg.tts_url:
-            why = origin_refusal(request.scope, request.headers)
-            if why is None and request.headers.get("sec-fetch-site") == "cross-site":
-                why = "a cross-site request may not name a TTS service"
-            if why is not None:
-                raise HTTPException(403, why)
-        tts = tts or cfg.tts_url
+        tts = chosen_tts(request, tts)
         if not tts:
             return {"tts_url": tts, "listed": False, "voices": [], "reason": "no TTS service set"}
         try:

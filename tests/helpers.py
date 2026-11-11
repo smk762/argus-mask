@@ -7,6 +7,8 @@ named morph targets; the audio is a tone.
 from __future__ import annotations
 
 import asyncio
+import email
+import email.policy
 import json
 import socket
 import struct
@@ -243,8 +245,41 @@ def fake_tts(
             self.end_headers()
             self.wfile.write(body)
 
+        def _json(self, code: int, body: dict) -> None:
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_DELETE(self) -> None:  # noqa: N802 - DELETE /clones/<id>, as Miso answers it
+            voice = self.path.rsplit("/", 1)[-1]
+            seen.append({"delete": voice})
+            self._json(200 if status == 200 else status, {"status": "deleted", "companion_id": voice})
+
         def do_POST(self) -> None:  # noqa: N802
-            seen.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path.endswith("/clone-voice"):  # multipart, as Miso takes it: the fields and each file's size
+                message = email.message_from_bytes(
+                    b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + raw,
+                    policy=email.policy.HTTP,
+                )
+                fields, files = {}, []
+                for part in message.iter_parts():
+                    name = part.get_param("name", header="content-disposition")
+                    if part.get_filename():
+                        files.append((part.get_filename(), len(part.get_payload(decode=True))))
+                    else:
+                        fields[name] = part.get_payload(decode=True).decode()
+                seen.append({"clone": fields, "files": files})
+                if status != 200:
+                    self._json(status, {"error": "Usable speech under 2 seconds after preprocessing"})
+                    return
+                self._json(200, {"companion_id": fields.get("companion_id"), "total_seconds": 12.0, "engine": "miso",
+                                 "voice_clone_id": f"voice_clones/{fields.get('companion_id')}/prompt.pt"})  # fmt: skip
+                return
+            seen.append(json.loads(raw or b"{}"))
             if status != 200:
                 body = b'{"error": "text is required"}'
                 self.send_response(status)

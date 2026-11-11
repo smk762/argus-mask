@@ -14,3 +14,5 @@ src/argus_mask/_version.py
 
 # Broadcast page recordings (argus-mask editor --recordings-dir)
 /recordings/
+# Voices page: checked clips and each voice's record and clips (argus-mask editor --voices-dir)
+/voices/
