@@ -1,8 +1,8 @@
 """One performance: audio in, finished frames out.
 
 A :class:`Performer` joins the pieces in order: resample to the driver's rate,
-drive, add the idle layer, stamp each frame with its time on the audio
-timeline. The server runs one per source; ``argus-mask drive`` runs one over a
+drive, read the voice's cues (stresses, pauses) from the same audio, add the
+idle layer with them, stamp each frame with its time on the audio timeline. The server runs one per source; ``argus-mask drive`` runs one over a
 file. Both feed it the same block size, so a file driven offline and the same
 file pushed live give the same frames.
 """
@@ -16,6 +16,7 @@ from argus_mask.audio import DRIVER_RATE, Resampler
 from argus_mask.drivers import Driver, DriverSession
 from argus_mask.idle import IdleLayer
 from argus_mask.models import AudioFormat, DriverInfo, Frame, StreamEnd, StreamHeader
+from argus_mask.prosody import Prosody
 
 BLOCK_MS = 100  # how much audio the offline path feeds at a time, and what `push` sends
 WEIGHT_DECIMALS = 4
@@ -27,6 +28,7 @@ class Performer:
         self._session = session
         self._resampler = Resampler(in_rate, DRIVER_RATE)
         self._idle = IdleLayer(seed, fps)
+        self._prosody = Prosody(fps)
         self._seq = 0
         self._samples_in = 0
         self._in_rate = in_rate
@@ -34,7 +36,7 @@ class Performer:
     def _frames(self, weights: list[np.ndarray]) -> list[Frame]:
         out = []
         for w in weights:
-            layered, head = self._idle.apply(self._seq, w)
+            layered, head = self._idle.apply(self._seq, w, self._prosody.cue(self._seq))
             out.append(
                 Frame(
                     seq=self._seq,
@@ -49,11 +51,14 @@ class Performer:
     async def feed(self, mono: np.ndarray) -> list[Frame]:
         """Take mono float32 at the source's rate; return the frames it completed."""
         self._samples_in += mono.size
-        return self._frames(await self._session.feed(self._resampler.feed(mono)))
+        pcm = self._resampler.feed(mono)
+        self._prosody.push(pcm)  # before the driver: a frame's audio is always there when its frame is
+        return self._frames(await self._session.feed(pcm))
 
     async def finish(self) -> tuple[list[Frame], StreamEnd]:
         """No more audio: the remaining frames, and the stream's closing message."""
         tail = self._resampler.feed(np.zeros(0, dtype=np.float32), last=True)
+        self._prosody.push(tail)
         weights = await self._session.feed(tail) if tail.size else []
         frames = self._frames(weights + await self._session.finish())
         return frames, StreamEnd(frames=self._seq, duration_ms=round(self._samples_in * 1000 / self._in_rate))

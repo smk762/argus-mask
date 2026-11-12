@@ -39,7 +39,7 @@ Do not rebuild these.
 
 1. **Connect.** A source opens the audio socket for a face and states its sample rate. One source per face at a time; a second is refused.
 2. **Drive.** Mask resamples to 16 kHz and hands the audio to the driver, which returns 52 ARKit blendshape weights per animation frame (30 fps by default).
-3. **Layer.** Mask adds the idle layer: blinks, small eye movement and a slow head sway, generated from a seed so a take replays identically. The result is one frame: weights plus a head rotation.
+3. **Layer.** Mask reads speech cues from the same audio (stresses, phrase starts and ends) and adds the idle layer: nods and brow raises on the cues, blinks timed to pauses, saccades, micro-motion and a slow head sway, from the audio and a seed so a take replays identically. The result is one frame: weights plus a head rotation.
 4. **Stamp.** Every frame carries its time on the audio timeline, in milliseconds from the start of the session.
 5. **Send.** Each viewer of that face receives the audio and the frames on one socket. A driver answers late, so an audio chunk is sent only once frames reach its end: the mouth for a sound always arrives before the sound.
 6. **Render.** The viewer plays the audio through WebAudio and applies each frame when the audio clock reaches its timestamp, interpolating between frames up to the screen's refresh rate. Lip sync is the viewer's audio clock, not arrival time, so network jitter costs latency and never sync.

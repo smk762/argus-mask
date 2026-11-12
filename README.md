@@ -232,7 +232,7 @@ With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the dr
 | `energy` | nothing | The jaw opens with loudness and the mouth widens on hissy sounds. No lip shapes. For tests and for hosts with no NVIDIA GPU. |
 | `a2f` | the [Audio2Face server](a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
 
-Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances and a slow head sway, from a seed, so a take replays identically.
+Neither driver blinks or moves the eyes, or moves the head. Mask reads the voice itself (loudness and pitch: stressed syllables, phrase ends) and its idle layer adds the rest: nods on stresses and brows on emphasis, a settle at each phrase end, blinks in the pauses, saccades and glances with the head following, small movements of brow and mouth, and a slow sway. All from the audio and a seed, so a take replays identically.
 
 ## Speech from a TTS service
 

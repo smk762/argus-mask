@@ -16,9 +16,10 @@ Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus) (`
 - `models.py`: the wire contract (`StreamHeader`, `Frame`, `StreamEnd`, `SourceHello`, `FaceManifest`, `Health`) and `render_wire_schema()`. **This is the API surface**: change it, then run `make schema` and commit the result.
 - `audio.py`: `PcmDecoder` (bytes to mono float32, across chunk boundaries), `Resampler` (streaming, to 16 kHz), `read_wav`.
 - `drivers/`: the seam. `Driver` / `DriverSession` protocols, `energy.py` (CPU, deterministic), `a2f.py` (WebSocket client of the Audio2Face server; its protocol is in the module docstring).
-- `idle.py`: blinks, gaze and head sway, a function of the seed and the frame number.
+- `prosody.py`: speech cues per frame from the 16 kHz stream (loudness, pitch; stresses, phrase starts and ends) and the nods, settles and brow raises they add. Causal: a frame's cue depends only on audio up to that frame's end.
+- `idle.py`: blinks (timed to pauses), saccades and glances, micro-motion and the head (sway, cues, a share of each glance); a function of the seed, the frame number and the cue.
 - `expressions.py`: rest sets, the named baseline expressions a face holds at rest (built in, plus `expressions.json` in the assets root, written by the editor and read by the server like `aliases.json`), and each face's choice. Served as `GET /face/{id}/rest`.
-- `performance.py`: `Performer` joins resampler, driver and idle layer and stamps frames; `perform()` runs a whole clip.
+- `performance.py`: `Performer` joins resampler, driver, prosody and idle layer and stamps frames; `perform()` runs a whole clip.
 - `speech.py`: what `say` does to text and audio by default (`--as-is` turns it off): numbers as words (`speakable`), short sentences joined (`join_short`), fades and levelling (`tidy_audio`, `Edges` for streams). Pure.
 - `voice.py`: checks a reference clip for a cloned voice (`analyse`) and a set of them (`assess`), each check with a verdict and advice. Pure numpy.
 - `take.py`: take files (`.ndjson`) and `line()`, the one place a message becomes JSON.
