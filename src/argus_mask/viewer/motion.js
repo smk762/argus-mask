@@ -47,24 +47,44 @@ function slope(p0, p1, p2, monotone) {
   return Math.sign(m) * Math.min(Math.abs(m), 3 * Math.min(Math.abs(d0), Math.abs(d1)));
 }
 
-// The value a fraction k (0..1) of the way from p1 to p2, with p0 before and p3 after (cubic Hermite).
-export function cubic(p0, p1, p2, p3, k, monotone = false) {
-  const m1 = slope(p0, p1, p2, monotone);
-  const m2 = slope(p1, p2, p3, monotone);
+// The cubic Hermite basis at a fraction k (0..1) of the way from p1 to p2, into `h`.
+function basis(k, h) {
   const k2 = k * k;
   const k3 = k2 * k;
-  return (2 * k3 - 3 * k2 + 1) * p1 + (k3 - 2 * k2 + k) * m1 + (3 * k2 - 2 * k3) * p2 + (k3 - k2) * m2;
+  h[0] = 2 * k3 - 3 * k2 + 1;
+  h[1] = k3 - 2 * k2 + k;
+  h[2] = 3 * k2 - 2 * k3;
+  h[3] = k3 - k2;
+  return h;
 }
 
-const AXES = ['yaw', 'pitch', 'roll'];
+function hermite(p0, p1, p2, p3, h, monotone) {
+  return h[0] * p1 + h[1] * slope(p0, p1, p2, monotone) + h[2] * p2 + h[3] * slope(p1, p2, p3, monotone);
+}
+
+const H = new Float64Array(4);
+
+// The value a fraction k (0..1) of the way from p1 to p2, with p0 before and p3 after (cubic Hermite).
+export function cubic(p0, p1, p2, p3, k, monotone = false) {
+  return hermite(p0, p1, p2, p3, basis(k, H), monotone);
+}
+
+export const AXES = ['yaw', 'pitch', 'roll'];
+
+// Weight arrays (into `out`) between a and b, a fraction k of the way, with p before and n after (monotone,
+// so no weight leaves the two frames it lies between). The viewer's frames and the editor's preview share it.
+export function blend(p, a, b, n, k, out) {
+  basis(k, H);
+  for (let i = 0; i < out.length; i += 1) out[i] = hermite(p[i], a[i], b[i], n[i], H, true);
+}
 
 // Weights (into `out`) and head between frames a and b, a fraction k of the way; `before` and `after` are
 // the frames either side, or null at a stream's ends. Frames are { weights, head }.
 export function interpolate(before, a, b, after, k, out, head) {
   const p = before || a;
   const n = after || b;
-  for (let i = 0; i < out.length; i += 1) out[i] = cubic(p.weights[i], a.weights[i], b.weights[i], n.weights[i], k, true);
-  for (const axis of AXES) head[axis] = cubic(p.head[axis], a.head[axis], b.head[axis], n.head[axis], k);
+  blend(p.weights, a.weights, b.weights, n.weights, k, out);
+  for (const axis of AXES) head[axis] = hermite(p.head[axis], a.head[axis], b.head[axis], n.head[axis], H, false);
 }
 
 function percentile(values, p) {

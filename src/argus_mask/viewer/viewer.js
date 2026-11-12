@@ -25,7 +25,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
-import { ARKIT, Motion, interpolate, lipBudget } from './motion.js';
+import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -257,6 +257,7 @@ let passed = null;         // the frame before queue[0], for a curve through it
 let ended = true;
 let current = null;        // Float32Array of the weights on screen
 const head = { yaw: 0, pitch: 0, roll: 0 };
+state.head = head;        // the head turn on screen, degrees, updated in place: for checking motion from outside
 
 // Reload once per stream: a page that joins a stream begun before a repoint is sent that stream's
 // header (the old face) after loading the new one, and reloading again would loop until it ends.
@@ -416,10 +417,9 @@ function draw() {
   applyWeights(shown.weights, order);
   if (!live) {
     const k = 1 - Math.exp(-RELAX_PER_S * dt);   // ease from the stream's last head to the idle's
-    for (const axis of ['yaw', 'pitch', 'roll']) head[axis] += (shown.head[axis] - head[axis]) * k;
+    for (const axis of AXES) head[axis] += (shown.head[axis] - head[axis]) * k;
   }
   applyHead();
-  state.head = head;   // the head turn on screen now, degrees: for checking motion from outside
   look.render();
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 

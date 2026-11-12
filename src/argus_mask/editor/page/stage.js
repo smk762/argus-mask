@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
-import { ARKIT, Motion, cubic, lipBudget } from './motion.js';
+import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
 // face is judged speaking as it will on a screen: the same lip budget, rest set and idle life (motion.js).
@@ -31,9 +31,8 @@ export const POSES = {
     const f = talk.frames;
     if (i >= f.length) return { weights: NONE, live: false };
     if (i + 1 >= f.length) return { weights: f[i], live: true };
-    // Between frames as a screen plays them (motion.js `interpolate`): smooth, through every frame.
-    const [p, a, b, n] = [f[Math.max(0, i - 1)], f[i], f[i + 1], f[Math.min(f.length - 1, i + 2)]];
-    for (let j = 0; j < talkOut.length; j += 1) talkOut[j] = cubic(p[j], a[j], b[j], n[j], at - i, true);
+    // Between frames as a screen plays them (motion.js `blend`): smooth, through every frame.
+    blend(f[Math.max(0, i - 1)], f[i], f[i + 1], f[Math.min(f.length - 1, i + 2)], at - i, talkOut);
     return { weights: talkOut, live: true };
   },
   open: fixed({ jawOpen: 0.6, mouthFunnel: 0.1 }),
@@ -155,7 +154,7 @@ export class Stage {
     for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
     const rad = Math.PI / 180;
     const idle = head || { yaw: 0, pitch: 0, roll: 0 };
-    for (const axis of ['yaw', 'pitch', 'roll']) this.headTurn[axis] += (idle[axis] - this.headTurn[axis]) * (1 - Math.exp(-6 * dt));
+    for (const axis of AXES) this.headTurn[axis] += (idle[axis] - this.headTurn[axis]) * (1 - Math.exp(-6 * dt));
     this.spin += ((this.turn ? 0.6 : 0) - this.spin) * 0.08;
     this.pivot.rotation.set(this.headTurn.pitch * rad, this.spin + this.headTurn.yaw * rad, this.headTurn.roll * rad);
     this.look.render();
