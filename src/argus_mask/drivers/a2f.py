@@ -28,6 +28,12 @@ from argus_mask.drivers import DriverError
 HEALTH_TIMEOUT_S = 3.0
 OPEN_TIMEOUT_S = 10.0
 FINISH_TIMEOUT_S = 30.0
+# Backpressure: once this much audio is waiting on frames, feed() waits for them before it returns,
+# so a source that sends faster than real time is slowed to the model's pace instead of cut off.
+# Well above the model's lookahead (a quarter second), so a paced source never waits.
+MAX_AHEAD_S = 2.0
+# A model that sends no frame for this long while audio waits has stopped, not slowed.
+STALL_TIMEOUT_S = 10.0
 
 
 def _ws_url(base: str) -> str:
@@ -38,11 +44,17 @@ def _ws_url(base: str) -> str:
 
 
 class A2FSession:
-    def __init__(self, ws, order: list[int | None]) -> None:  # noqa: ANN001 - websockets is optional
+    def __init__(self, ws, order: list[int | None], fps: int) -> None:  # noqa: ANN001 - websockets is optional
         self._ws = ws
         self._order = order  # position in the server's weights -> index in ARKIT_52, or None
+        self._fps = fps
         self._next = 0
+        self._sent = 0  # samples sent
         self._ended = False
+
+    def _waiting(self) -> int:
+        """Samples sent that no frame has covered yet (integer frame boundaries, as everywhere)."""
+        return self._sent - self._next * DRIVER_RATE // self._fps
 
     def _frame(self, message: dict) -> np.ndarray:
         if message.get("i") != self._next:
@@ -87,12 +99,20 @@ class A2FSession:
             await self._ws.send(pcm.astype("<f4", copy=False).tobytes())
         except websockets.ConnectionClosed as exc:
             raise DriverError("a2f closed the stream") from exc
+        self._sent += pcm.size
         out: list[np.ndarray] = []
         while not self._ended:
             try:
                 frame = await self._recv(0.001)  # only what has already arrived
             except TimeoutError:
                 break
+            if frame is not None:
+                out.append(frame)
+        while not self._ended and self._waiting() > MAX_AHEAD_S * DRIVER_RATE:
+            try:
+                frame = await self._recv(STALL_TIMEOUT_S)
+            except TimeoutError as exc:
+                raise DriverError(f"the a2f driver fell behind the audio: no frame for {STALL_TIMEOUT_S:g}s") from exc
             if frame is not None:
                 out.append(frame)
         return out
@@ -174,4 +194,4 @@ class A2FDriver:
         except DriverError:
             await ws.close()
             raise
-        return A2FSession(ws, [INDEX.get(name) if isinstance(name, str) else None for name in names])
+        return A2FSession(ws, [INDEX.get(name) if isinstance(name, str) else None for name in names], fps)

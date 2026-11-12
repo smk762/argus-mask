@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as Qwen3-TTS's CustomVoice (`speaker:Vivian`). `POST /speak` takes an optional `instruction`, how to say it, passed
   to a service that reads one; like the text, it is never logged.
 
+### Fixed
+
+- **A source that sends faster than real time is slowed, not cut off** (#2). The `a2f` driver lets up to 2 s of audio
+  wait on frames, then holds the source until the model catches up; a burst of a 15 s clip used to end the stream with
+  "fell more than 10s behind". A model that sends no frame for 10 s while audio waits still ends it.
+- **The Audio2Face server reports a dead worker at once** (#4), not on the client's next message: a worker that crashed
+  during a pause in speech left the face frozen with no error.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

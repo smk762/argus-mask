@@ -132,7 +132,12 @@ def free_port() -> int:
 
 @contextmanager
 def fake_a2f(
-    *, names: list[str] | None = None, fail_after: int | None = None, lag_frames: int = 0, stall: bool = False
+    *,
+    names: list[str] | None = None,
+    fail_after: int | None = None,
+    lag_frames: int = 0,
+    stall: bool = False,
+    delay_s: float = 0.0,
 ) -> Iterator[str]:
     """An Audio2Face server speaking the ``/drive`` protocol. jawOpen follows the frame number.
 
@@ -140,6 +145,7 @@ def fake_a2f(
     client that ignores the order is caught). ``fail_after`` makes it send an error
     after that many frames. ``lag_frames`` holds its answers that many frames behind
     the audio, as the real model does; ``stall`` makes it answer nothing until the end.
+    ``delay_s`` is how long it thinks about each audio message, so a burst outruns it.
     """
     import websockets
     from websockets.http11 import Response
@@ -183,6 +189,8 @@ def fake_a2f(
         async for message in ws:
             if isinstance(message, bytes):
                 have += len(message) // 4
+                if delay_s:
+                    await asyncio.sleep(delay_s)
                 if not stall and not await emit(max(0, have * rate_fps // rate - lag_frames)):
                     return
             elif json.loads(message).get("end"):

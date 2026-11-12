@@ -76,8 +76,6 @@ VIEWER_QUEUE = 2048
 AUDIO_SLACK_FRAMES = 2
 # A viewer's status message is a few fields; anything longer is not one.
 MAX_STATUS_BYTES = 1024
-# A driver this far behind the audio is not going to catch up: the stream is ended.
-MAX_DRIVER_LAG_MS = 10_000.0
 # POST /push: the most audio one request may carry (minutes of 48 kHz 16-bit), and how far ahead of real time
 # it is fed to the face, as a client source runs ahead.
 MAX_PUSH_BYTES = 25 * 1024 * 1024
@@ -411,12 +409,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     for frame in await performer.feed(mono):
                         stage.send(line(frame))
                         covered_ms = frame.t_ms + 1000.0 / cfg.fps
+                    # A driver that falls behind holds feed() until it catches up (the source is not
+                    # read meanwhile), and raises DriverError if it stops: no lag check here.
                     release()
-                    if end_ms - covered_ms > MAX_DRIVER_LAG_MS:
-                        failure = (
-                            f"the {driver.name} driver fell more than {MAX_DRIVER_LAG_MS / 1000:g}s behind the audio"
-                        )
-                        break
             except DriverError as exc:
                 failure = str(exc)
                 probe.forget()
