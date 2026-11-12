@@ -284,8 +284,27 @@ def test_audio_is_held_until_the_frames_for_it_exist(assets) -> None:
     assert chunks == 10  # every chunk still arrives, the last ones once the driver has finished
 
 
-def test_a_driver_that_falls_far_behind_ends_the_stream(assets, monkeypatch) -> None:
-    monkeypatch.setattr("argus_mask.server.app.MAX_DRIVER_LAG_MS", 500.0)
+def test_a_source_faster_than_the_driver_is_slowed_not_cut_off(assets) -> None:
+    """A burst of audio (#2): the driver holds the source back until it catches up."""
+    with (
+        fake_a2f(delay_s=0.03) as url,
+        TestClient(create_app(Settings(assets_dir=assets, driver="a2f", a2f_url=url))) as client,
+        client.websocket_connect("/session/test-head/view") as viewer,
+        client.websocket_connect("/session/test-head/source") as source,
+    ):
+        source.send_text(HELLO)
+        assert source.receive_json()["type"] == "ready"
+        for _ in range(15):  # 15 s at once; the model takes longer than that would allow
+            source.send_bytes(pcm(1.0))
+        source.send_text(json.dumps({"type": "end"}))
+        assert source.receive_json() == {"type": "done", "frames": 450, "duration_ms": 15000}
+        notes, audio = drain(viewer)
+        assert notes[-1] == {"type": "end", "frames": 450, "duration_ms": 15000}
+        assert len(audio) == 15
+
+
+def test_a_driver_that_stops_answering_ends_the_stream(assets, monkeypatch) -> None:
+    monkeypatch.setattr("argus_mask.drivers.a2f.STALL_TIMEOUT_S", 0.3)
     with (
         fake_a2f(stall=True) as url,
         TestClient(create_app(Settings(assets_dir=assets, driver="a2f", a2f_url=url))) as client,
@@ -296,7 +315,7 @@ def test_a_driver_that_falls_far_behind_ends_the_stream(assets, monkeypatch) -> 
         ):
             source.send_text(HELLO)
             assert source.receive_json()["type"] == "ready"
-            for _ in range(8):
+            for _ in range(30):  # 3 s: more than the driver lets wait on frames
                 source.send_bytes(pcm(0.1))
             failure = source.receive_json()
             notes, audio = drain(viewer)
