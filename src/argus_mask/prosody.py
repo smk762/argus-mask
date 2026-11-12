@@ -115,11 +115,10 @@ def _pitch(window: np.ndarray) -> float | None:
         return None
     # Multiples of the period correlate nearly as well as the period itself: take the shortest lag
     # that peaks close to the best, or a voice is heard an octave (or a twelfth) too low.
-    for i in range(r.size):
-        peak = 0 < i < r.size - 1 and r[i - 1] <= r[i] >= r[i + 1]  # a peak, not a slope at the edge
-        if peak and r[i] >= OCTAVE_TOLERANCE * best:
-            return DRIVER_RATE / (lo + i)
-    return DRIVER_RATE / (lo + int(np.argmax(r)))
+    inner = r[1:-1]
+    peaks = np.flatnonzero((r[:-2] <= inner) & (inner >= r[2:]) & (inner >= OCTAVE_TOLERANCE * best))
+    i = int(peaks[0]) + 1 if peaks.size else int(np.argmax(r))  # a peak, not a slope at the edge
+    return DRIVER_RATE / (lo + i)
 
 
 @dataclass
@@ -139,6 +138,10 @@ class Prosody:
     _bumps: list[_Bump] = field(default_factory=list)
     _tilt: float = 1.0  # which way the next phrase-end tilt leans
     _next: int = 0  # the next frame to cue
+
+    def _frames(self, seconds: float) -> float:
+        """*seconds* as a count of frames, rounded so that 0.15 s at 20 fps is 3 frames, not 3.0000000000000004."""
+        return round(seconds * self.fps, 6)
 
     def push(self, pcm: np.ndarray) -> None:
         if pcm.size:
@@ -169,15 +172,15 @@ class Prosody:
             self._buf = self._buf[cut:]
             self._start = keep_from
 
-        was_speaking = self._since_sound * dt <= HANG_S
+        was_speaking = self._since_sound <= self._frames(HANG_S)
         self._since_sound = 0 if sounding else self._since_sound + 1
-        speaking = self._since_sound * dt <= HANG_S
+        speaking = self._since_sound <= self._frames(HANG_S)
         phrase_start = sounding and self._since_sound == 0 and not was_speaking and self._phrase == 0
         phrase_end = False
         if sounding:
             self._phrase += 1
-        elif self._phrase and self._since_sound * dt >= PAUSE_S:
-            phrase_end = self._phrase * dt >= MIN_PHRASE_S
+        elif self._phrase and self._since_sound >= self._frames(PAUSE_S):
+            phrase_end = self._phrase >= self._frames(MIN_PHRASE_S)
             self._phrase = 0
 
         # Running speech level (of the loud syllables: quick up, slow down), only while sounding.
@@ -206,12 +209,12 @@ class Prosody:
             and self._level is not None
             and rise >= RISE_DB
             and level_db >= self._level - STRESS_UNDER_DB
-            and (frame - self._last_stress) * dt >= REFRACTORY_S
+            and frame - self._last_stress >= self._frames(REFRACTORY_S)
         ):
             stress = min(1.0, max(0.3, (level_db - self._level + STRESS_UNDER_DB * 2) / (STRESS_UNDER_DB * 3)))
             self._last_stress = frame
             self._bumps.append(_Bump(frame, NOD_TAU, pitch=NOD_DEG * stress * (0.7 + 0.3 * accent)))
-            if accent > 0.0 and (frame - self._last_brow) * dt >= BROW_GAP_S:
+            if accent > 0.0 and frame - self._last_brow >= self._frames(BROW_GAP_S):
                 self._last_brow = frame
                 self._bumps.append(_Bump(frame, BROW_TAU, brow=BROW * accent * stress))
         if phrase_end:

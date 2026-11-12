@@ -146,7 +146,8 @@ class IdleLayer:
         if self._due is not None and t >= self._due and self._blinking is None and not held:
             # A blink that waited out a word starts now, not when it fell due: started in the past, it
             # would be over (or nearly) before its first frame, and never seen.
-            start = self._due if self._due > t - dt else t
+            # (A due within rounding of the previous frame was due on that frame, and held there.)
+            start = self._due if self._due > t - dt + 1e-9 else t
             self._blinking = self._last_blink = start
             self._due = start + BLINK_DOUBLE_GAP_S if double < BLINK_DOUBLE else None
         if self._blinking is None:
@@ -172,10 +173,11 @@ class IdleLayer:
 
     def _gaze(self, t: float, cue: Cue) -> tuple[float, float]:
         rng = self._rng
-        a, b, c, d = rng.random(), rng.random(), rng.random(), rng.random()  # four draws per frame, always
+        # Five draws per frame, always; how many fixations a glance lasts (e) is drawn apart from how long each is (b).
+        a, b, c, d, e = rng.random(), rng.random(), rng.random(), rng.random(), rng.random()
         glance = (cue.phrase_start and a < GLANCE_AT_PHRASE_START) or (cue.phrase_end and a < GLANCE_IN_PAUSE)
         if glance and self._away == 0:
-            self._away = GLANCE_FIXATIONS[0] + int(b * (GLANCE_FIXATIONS[1] - GLANCE_FIXATIONS[0] + 1))
+            self._away = GLANCE_FIXATIONS[0] + int(e * (GLANCE_FIXATIONS[1] - GLANCE_FIXATIONS[0] + 1))
             self._jump(t, self._away_target(c, d))
             self._next_fixation = t + FIXATION_S[0] + (FIXATION_S[1] - FIXATION_S[0]) * b
         elif t >= self._next_fixation:
