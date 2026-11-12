@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Personal and cleared faces and voices** (#19). Provenance gains `personal` (your own use, anything lawful in
+  private, such as a cartoon or a character LoRA; needs only a `source`) and `consented` (a real person or owned
+  character under a release: `subject` and `release_sha256`). Every provenance carries a derived `cleared`: true for
+  `stock`, `synthetic` and `consented`. `/faces`, the Saved faces page and the Broadcast page show it.
+  `inspect --write-manifest` defaults to `personal`; `stock` and `synthetic` still need a licence. The Voices page has a
+  **Personal use** source that records where the clips came from and is never cleared. The wire contract is 1.1.
 - **The face follows the voice** (#14, #15). A new `prosody.py` reads each frame's loudness and pitch from the audio
   and marks stressed syllables, phrase ends and phrase starts. In takes:
   - **Nods and brows.** The head nods on stressed syllables (up to about 2.5 degrees), settles with a small tilt at

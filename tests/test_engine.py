@@ -10,7 +10,7 @@ from argus_mask.arkit import ARKIT_52, INDEX
 from argus_mask.audio import AudioError, PcmDecoder, Resampler, read_wav
 from argus_mask.drivers import build_driver
 from argus_mask.idle import IdleLayer
-from argus_mask.models import AudioFormat, StreamHeader
+from argus_mask.models import MASK_VERSION, AudioFormat, StreamHeader
 from argus_mask.performance import Performer, perform
 from argus_mask.take import TakeError, read_take, render_take
 from tests.helpers import tone, write_wav
@@ -131,6 +131,8 @@ async def test_take_round_trips_and_a_broken_one_is_refused(tmp_path) -> None:
     (tmp_path / "no-header.ndjson").write_text(frames[0].model_dump_json() + "\n", encoding="utf-8")
     with pytest.raises(TakeError):
         read_take(tmp_path / "no-header.ndjson")
-    (tmp_path / "v9.ndjson").write_text(header.model_dump_json().replace('"1.0"', '"9.0"') + "\n", encoding="utf-8")
+    (tmp_path / "v9.ndjson").write_text(
+        header.model_dump_json().replace(f'"{MASK_VERSION}"', '"9.0"') + "\n", encoding="utf-8"
+    )
     with pytest.raises(TakeError):
         read_take(tmp_path / "v9.ndjson")

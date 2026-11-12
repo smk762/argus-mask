@@ -37,10 +37,16 @@ def inspect(
     ),
     face_id: str = Option("", "--id", help="The face's id; default: its directory's name"),
     name: str = Option("", "--name", help="Display name; default: the id"),
-    kind: str = Option("", "--kind", help="Provenance kind: stock or synthetic"),
+    kind: str = Option(
+        "personal",
+        "--kind",
+        help="Provenance kind: personal (your own use, anything; the default), stock, synthetic or consented",
+    ),
     source: str = Option("", "--source", help="Provenance: where the model came from"),
     license_: str = Option("", "--license", help="Provenance: the model's licence"),
     notes: str = Option("", "--notes", help="Provenance: anything else worth recording"),
+    subject: str = Option("", "--subject", help="Provenance, consented: the person, as the release names them"),
+    release: str = Option("", "--release-sha256", help="Provenance, consented: sha256 of the signed release"),
     distance: float = Option(0.6, "--distance", help="Framing: camera distance from the model's origin, in metres"),
     height: float = Option(0.0, "--height", help="Framing: camera height above the origin, in metres"),
     fov: float = Option(30.0, "--fov", help="Framing: vertical field of view, in degrees"),
@@ -77,12 +83,22 @@ def inspect(
                     model,
                     face_id=face_id or model.resolve().parent.name,
                     name=name or face_id or model.resolve().parent.name,
-                    provenance=Provenance(kind=kind, source=source, license=license_, notes=notes),  # type: ignore[arg-type]
+                    provenance=Provenance(
+                        kind=kind,  # type: ignore[arg-type]
+                        source=source,
+                        license=license_,
+                        notes=notes,
+                        subject=subject,
+                        release_sha256=release.strip().lower() or None,
+                    ),
                     framing=Framing(distance=distance, height=height, fov=fov),
                 )
             except ValidationError as exc:
                 raise _fail(
-                    f"cannot write a manifest: {'; '.join(e['msg'] + ' (' + '.'.join(map(str, e['loc'])) + ')' for e in exc.errors())}"
+                    "cannot write a manifest: "
+                    + "; ".join(
+                        e["msg"] + (f" ({'.'.join(map(str, e['loc']))})" if e["loc"] else "") for e in exc.errors()
+                    )
                 ) from exc
             (model.parent / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
     except (FaceError, OSError) as exc:
@@ -113,7 +129,11 @@ def inspect(
         if manifest:
             p = manifest.provenance
             typer.echo(f"face       {manifest.id} ({manifest.name})")
-            typer.echo(f"provenance {p.kind}: {p.source} [{p.license}]")
+            typer.echo(
+                f"provenance {p.kind}: {p.source}"
+                + (f" [{p.license}]" if p.license else "")
+                + ("" if p.cleared else " (personal use: not cleared to show or share)")
+            )
         typer.echo(
             f"shapes     {len(report.present)} of 52 ARKit shapes"
             + (f", {len(report.extra)} others" if report.extra else "")

@@ -14,10 +14,11 @@ from __future__ import annotations
 from typing import Literal
 
 from argus_cortex.wire import make_versioned_base, render_schema
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 # 1.0: initial contract.
-MASK_VERSION = "1.0"
+# 1.1: provenance kinds personal and consented, consent fields, and the derived ``cleared``.
+MASK_VERSION = "1.1"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -87,13 +88,46 @@ class StreamEnd(BaseModel):
     duration_ms: int = Field(..., ge=0)
 
 
-class Provenance(BaseModel):
-    """Where a face came from. Required: a face without it is not served."""
+ProvenanceKind = Literal["personal", "stock", "synthetic", "consented", "curated"]
+# The kinds the project may ship, show or demo. ``personal`` is served on the user's own screens and is
+# never cleared: a cartoon, a character from a film, a character LoRA. Legal for private use is the floor;
+# what argus-darkroom refuses (its illegal rules) is not a face here either.
+CLEARED_KINDS: frozenset[str] = frozenset({"stock", "synthetic", "consented"})
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
-    kind: Literal["stock", "synthetic", "curated"]
+
+class Provenance(BaseModel):
+    """Where a face came from. Required: a face without it is not served.
+
+    - ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not
+      cleared to show or share.
+    - ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or
+      owned character going in.
+    - ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the
+      release's sha256 (never the document) and the subject as the release names them.
+    - ``curated``: refused until 0.3 defines what a curated face must prove.
+    """
+
+    kind: ProvenanceKind
     source: str = Field(..., min_length=1)
-    license: str = Field(..., min_length=1)
+    license: str = ""
     notes: str = ""
+    subject: str = ""
+    release_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def _complete(self) -> Provenance:
+        if self.kind != "personal" and not self.license.strip():
+            raise ValueError(f"a {self.kind} face states its licence")
+        if self.kind == "consented" and not (self.release_sha256 and self.subject.strip()):
+            raise ValueError("a consented face names its subject and the sha256 of the signed release")
+        return self
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cleared(self) -> bool:
+        """Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public."""
+        return self.kind in CLEARED_KINDS
 
 
 class ModelFile(BaseModel):
