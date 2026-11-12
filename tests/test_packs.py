@@ -270,6 +270,48 @@ def test_a_bad_download_installs_nothing(tmp_path: Path, data_dir: Path) -> None
     assert files_under(data_dir) == set()
 
 
+def test_a_download_cut_short_tries_the_mirror(tmp_path: Path) -> None:
+    import http.client  # noqa: PLC0415
+
+    data = pack_zip()
+    (pack,) = load_catalogue(write_catalogue(tmp_path / "c.json", data)).values()
+
+    class Cut(io.BytesIO):
+        def read(self, n: int = -1) -> bytes:
+            raise http.client.IncompleteRead(b"", 10)
+
+    def opener(url: str):
+        return Cut() if url == URL else io.BytesIO(data)
+
+    assert download(pack, tmp_path / "p.zip", lambda _: None, opener) == MIRROR
+
+
+def test_stopping_stops_the_download_thread(tmp_path: Path, data_dir: Path) -> None:
+    import asyncio  # noqa: PLC0415
+    import threading  # noqa: PLC0415
+
+    data = pack_zip()
+    catalogue = load_catalogue(write_catalogue(tmp_path / "c.json", data))
+    reading = threading.Event()
+
+    class Slow(io.BytesIO):
+        def read(self, n: int = -1) -> bytes:
+            reading.set()
+            time.sleep(0.01)
+            return b"x"
+
+    async def go() -> dict:
+        installs = Installs(data_dir, catalogue, lambda _: Slow())
+        job = installs.start("hair09")
+        await asyncio.to_thread(reading.wait, 5)
+        await asyncio.wait_for(installs.stop_all(), 5)
+        return job.public()
+
+    job = asyncio.run(go())
+    assert job["state"] == "failed" and "stopped" in job["error"]
+    assert files_under(data_dir) == set()
+
+
 def test_only_a_catalogued_pinned_pack_installs(tmp_path: Path, data_dir: Path) -> None:
     data = pack_zip()
     catalogue = load_catalogue(write_catalogue(tmp_path / "c.json", data, sha256=None))

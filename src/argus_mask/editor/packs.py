@@ -18,11 +18,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import http.client
 import json
 import os
 import re
 import shutil
 import stat
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -58,6 +60,10 @@ class PackError(ValueError):
 
 class Busy(PackError):
     """A pack is already being installed."""
+
+
+class Stopped(PackError):
+    """An install stopped before it unpacked anything: the editor is shutting down."""
 
 
 @dataclass(frozen=True)
@@ -312,7 +318,10 @@ def download(pack: Pack, dest: Path, progress: Callable[[int], None], opener: Op
             finally:
                 with contextlib.suppress(Exception):
                     reply.close()  # type: ignore[attr-defined]
-        except (urllib.error.URLError, OSError, PackError) as exc:
+        except Stopped:
+            dest.unlink(missing_ok=True)
+            raise
+        except (urllib.error.URLError, http.client.HTTPException, OSError, PackError) as exc:
             errors.append(f"{host}: {getattr(exc, 'reason', exc)}")
             continue
         if digest.hexdigest() != pack.sha256:
@@ -338,6 +347,7 @@ class Install:
     started: float = field(default_factory=time.monotonic)
     ended: float | None = None
     task: asyncio.Task | None = None
+    stop: threading.Event = field(default_factory=threading.Event)  # the worker thread checks it between chunks
 
     @property
     def running(self) -> bool:
@@ -365,6 +375,11 @@ class Installs:
         self.opener = opener
         self.jobs: dict[str, Install] = {}
 
+    @property
+    def ready(self) -> bool:
+        """Whether MPFB's data directory is set and exists: where a pack would install."""
+        return self.data_dir is not None and self.data_dir.is_dir()
+
     def listing(self) -> list[dict]:
         have = installed(self.data_dir)
         return [p.public(p.id in have) for p in self.catalogue.values()]
@@ -373,7 +388,7 @@ class Installs:
         pack = self.catalogue.get(pack_id)
         if pack is None:
             raise PackError(f"no pack {pack_id!r} in the catalogue")
-        if self.data_dir is None or not self.data_dir.is_dir():
+        if self.data_dir is None or not self.ready:
             raise PackError("MPFB's data directory is not set or does not exist (set ARGUS_MASK_BLENDER_USER)")
         if pack_id in installed(self.data_dir):
             raise PackError(f"{pack_id} is already installed")
@@ -392,7 +407,15 @@ class Installs:
             downloads.mkdir(exist_ok=True)
             zip_path = downloads / f"{pack_id}-{job.id}.zip"
             try:
-                url = download(pack, zip_path, lambda n: setattr(job, "done_bytes", n), self.opener)
+
+                def progress(n: int) -> None:
+                    if job.stop.is_set():
+                        raise Stopped("stopped: the editor is shutting down")
+                    job.done_bytes = n
+
+                url = download(pack, zip_path, progress, self.opener)
+                if job.stop.is_set():
+                    raise Stopped("stopped: the editor is shutting down")
                 job.state = "unpacking"
                 out = unpack(zip_path, data_dir, pack_id)
             finally:
@@ -419,7 +442,13 @@ class Installs:
         return job
 
     async def stop_all(self) -> None:
-        tasks = [j.task for j in self.jobs.values() if j.task is not None and not j.task.done()]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        """Stop every running install and wait for it to end.
+
+        Cancelling the task would not stop its thread (``asyncio.to_thread`` cannot be cancelled), which
+        would go on downloading, and unpacking, after shutdown. The thread stops at its next chunk instead;
+        an unpack already under way finishes, all or nothing.
+        """
+        running = [j for j in self.jobs.values() if j.task is not None and not j.task.done()]
+        for job in running:
+            job.stop.set()
+        await asyncio.gather(*(j.task for j in running), return_exceptions=True)

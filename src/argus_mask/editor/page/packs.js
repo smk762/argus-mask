@@ -40,7 +40,7 @@ function matches(pack, asset, words) {
 }
 
 function packMatches(pack, words) {
-  if ($('installed-only').checked && !pack.installed) return [];
+  if ($('installed-only').checked && !pack.installed) return null;
   const assets = pack.assets.filter((a) => matches(pack, a, words));
   if (assets.length) return assets;
   // A pack without an asset table (faceunits01) still shows when nothing narrows by asset.
@@ -173,12 +173,15 @@ async function install(id) {
 }
 
 async function follow(job) {
+  let misses = 0; // a poll that fails is not an install that failed: the install runs on, so ask again
   while (job.state === 'downloading' || job.state === 'unpacking') {
     await new Promise((r) => setTimeout(r, 700));
     try {
       job = await json(`./packs/jobs/${encodeURIComponent(job.id)}`);
+      misses = 0;
     } catch (err) {
-      job = { ...job, state: 'failed', error: err.message };
+      if (++misses < 10) continue;
+      job = { ...job, state: 'failed', error: `lost track of the install: ${err.message}` };
     }
     jobs.set(job.pack, job);
     render();

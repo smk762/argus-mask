@@ -294,7 +294,7 @@ def create_editor_app(
     def pack_list() -> dict:
         return {
             "data_dir": str(packs.data_dir) if packs.data_dir else None,
-            "ready": packs.data_dir is not None and packs.data_dir.is_dir(),
+            "ready": packs.ready,
             "packs": packs.listing(),
             "jobs": [j.public() for j in packs.jobs.values() if j.running],
         }
