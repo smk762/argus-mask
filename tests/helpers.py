@@ -1,6 +1,6 @@
 """Fixtures built in code: a tiny ``.glb``, WAV files, and fake Audio2Face and TTS services.
 
-No real person's face or voice is in the repo. The model is one triangle with
+Only cleared material is in the repo: no real person's face or voice, no owned character. The model is one triangle with
 named morph targets; the audio is a tone.
 """
 

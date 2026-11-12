@@ -118,7 +118,7 @@
           "type": "string"
         },
         "mask_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Mask Version",
           "type": "string"
         },
@@ -319,19 +319,27 @@
       "type": "object"
     },
     "Provenance": {
-      "description": "Where a face came from. Required: a face without it is not served.",
+      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.",
       "properties": {
+        "cleared": {
+          "description": "Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public.",
+          "readOnly": true,
+          "title": "Cleared",
+          "type": "boolean"
+        },
         "kind": {
           "enum": [
+            "personal",
             "stock",
             "synthetic",
+            "consented",
             "curated"
           ],
           "title": "Kind",
           "type": "string"
         },
         "license": {
-          "minLength": 1,
+          "default": "",
           "title": "License",
           "type": "string"
         },
@@ -340,16 +348,34 @@
           "title": "Notes",
           "type": "string"
         },
+        "release_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Sha256"
+        },
         "source": {
           "minLength": 1,
           "title": "Source",
+          "type": "string"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
           "type": "string"
         }
       },
       "required": [
         "kind",
         "source",
-        "license"
+        "cleared"
       ],
       "title": "Provenance",
       "type": "object"
@@ -510,7 +536,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Mask Version",
           "type": "string"
         },

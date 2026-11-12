@@ -168,7 +168,9 @@ class VoiceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     delivery: Literal[DELIVERIES] = "neutral"  # type: ignore[valid-type]
     clips: list[VoiceClip] = Field(..., min_length=1, max_length=5)
-    source: dict = Field(..., description="kind (generated, own, consented), and what made it or the release")
+    source: dict = Field(
+        ..., description="kind (generated, own, consented, personal), and what made it, the release, or where from"
+    )
     tts_url: str = Field("", max_length=500)
 
 
@@ -592,7 +594,12 @@ def create_editor_app(
                 "live": health.get("live") or [],
                 "screens": health.get("screens") or {},
                 "faces": [
-                    {"id": f["id"], "name": f.get("name") or f["id"], "kind": (f.get("provenance") or {}).get("kind")}
+                    {
+                        "id": f["id"],
+                        "name": f.get("name") or f["id"],
+                        "kind": (f.get("provenance") or {}).get("kind"),
+                        "cleared": bool((f.get("provenance") or {}).get("cleared")),
+                    }
                     for f in (faces or [])
                     if isinstance(f, dict) and f.get("id")
                 ]

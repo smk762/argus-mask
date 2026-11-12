@@ -193,12 +193,14 @@ async function generate() {
 function source() {
   const kind = $('v-source').value;
   return { kind, confirmed: $('v-confirm').checked, generator: $('v-generator').value.trim(),
-    speaker: $('v-speaker').value.trim(), release_sha256: $('v-release').value.trim() };
+    speaker: $('v-speaker').value.trim(), release_sha256: $('v-release').value.trim(), origin: $('v-origin').value.trim() };
 }
 function paintMake() {
   const kind = $('v-source').value;
   $('v-generator-wrap').hidden = kind !== 'generated';
   $('v-consent-wrap').hidden = kind !== 'consented';
+  $('v-origin-wrap').hidden = kind !== 'personal';
+  $('v-confirm-wrap').hidden = kind === 'personal';
   const used = clips.filter((c) => c.use && c.report);
   const why = !state.can_make ? state.reason
     : !used.length ? 'Choose at least one checked clip.'
@@ -207,7 +209,8 @@ function paintMake() {
           : setReport?.verdict === 'not suitable' ? 'The set is not enough yet.'
             : !/^[a-z0-9][a-z0-9-]{0,62}$/.test($('v-id').value) ? 'An id: lower case letters, digits and dashes.'
               : !$('v-name').value.trim() ? 'A name.'
-                : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
+                : kind === 'personal' ? (!$('v-origin').value.trim() ? 'Say where the clips come from, for your own record.' : '')
+                  : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
   $('v-make').disabled = Boolean(why);
   $('v-note').textContent = why;
 }
@@ -240,7 +243,8 @@ async function refresh() {
       if (!confirm(`Delete ${r.id} from the TTS service? Its record and clips go to the trash folder here.`)) return;
       try { await json(`/voice/${encodeURIComponent(r.id)}`, { method: 'DELETE' }); refresh(); } catch (err) { alert(err.message); }
     };
-    const src = r.source.kind === 'generated' ? 'generated' : r.source.kind === 'own' ? 'own voice' : `consented: ${r.source.speaker}`;
+    const src = r.source.kind === 'generated' ? 'generated' : r.source.kind === 'own' ? 'own voice'
+      : r.source.kind === 'personal' ? `personal use, not cleared: ${r.source.origin}` : `consented: ${r.source.speaker}`;
     return el('div', { className: 'voice' },
       el('div', { className: 'top' }, el('span', { className: 'name', textContent: r.name }), el('span', { className: 'badge', textContent: r.delivery }),
         el('span', { className: `badge ${verdictClass(r.check.verdict)}`, textContent: r.check.verdict }), el('span', { style: 'margin-left:auto' }), del),
@@ -290,7 +294,7 @@ for (const [range, out] of [['gen-temp', 'gen-temp-out'], ['try-temp', 'try-temp
   const paint = () => { $(out).textContent = Number($(range).value).toFixed(2); };
   $(range).addEventListener('input', paint); paint();
 }
-for (const id of ['v-id', 'v-name', 'v-confirm', 'v-source', 'v-generator', 'v-speaker', 'v-release']) $(id).addEventListener('input', paintMake);
+for (const id of ['v-id', 'v-name', 'v-confirm', 'v-source', 'v-generator', 'v-speaker', 'v-release', 'v-origin']) $(id).addEventListener('input', paintMake);
 $('v-name').addEventListener('input', () => {
   if ($('v-id').dataset.touched) return;
   const base = $('v-name').value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

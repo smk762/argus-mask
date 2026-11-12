@@ -407,6 +407,7 @@ class Builder:
                 entry[place] = {
                     "name": manifest.name,
                     "kind": manifest.provenance.kind,
+                    "cleared": manifest.provenance.cleared,
                     "license": manifest.provenance.license,
                     "notes": manifest.provenance.notes,
                     "editable": self.editable(manifest.id, place),

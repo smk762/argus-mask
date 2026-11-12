@@ -85,7 +85,10 @@ function card(row) {
   if (row.preview && row.export && row.preview.sha256 !== row.export.sha256) {
     badges.append(el('span', { className: 'badge preview', textContent: 'unexported changes', title: `assets/.preview/${row.id} differs from the export` }));
   }
-  if (copy) badges.append(el('span', { className: 'badge', textContent: copy.kind }), el('span', { className: 'badge', textContent: copy.license }));
+  if (copy) {
+    badges.append(el('span', { className: 'badge', textContent: copy.kind, title: copy.cleared ? 'Cleared to show or share' : 'Personal use: not cleared to show or share' }));
+    if (copy.license) badges.append(el('span', { className: 'badge', textContent: copy.license }));
+  }
   for (const [name, face] of Object.entries(aliases)) {
     if (face === row.id) badges.append(el('span', { className: 'badge alias', textContent: `as ${name}`, title: `The alias ${name} points here` }));
   }
@@ -213,8 +216,9 @@ async function openReview(row, place = main(row)) {
   const prov = manifest.provenance;
   $('m-side').replaceChildren(
     el('h2', { textContent: 'Where' }), el('p', { textContent: place === 'export' ? `assets/${row.id}: on the server's /faces` : `assets/.preview/${row.id}: the editor's preview` }),
-    el('h2', { textContent: 'Licence' }), el('p', { textContent: prov.license }),
-    el('h2', { textContent: 'Kind' }), el('p', { textContent: prov.kind }),
+    el('h2', { textContent: 'Licence' }), el('p', { textContent: prov.license || '—' }),
+    el('h2', { textContent: 'Kind' }), el('p', { textContent: prov.cleared ? prov.kind : `${prov.kind}: your own screens only, not cleared to show or share` }),
+    ...(prov.subject ? [el('h2', { textContent: 'Release' }), el('p', { textContent: `${prov.subject}, release sha256 ${prov.release_sha256}` })] : []),
     el('h2', { textContent: 'Source' }), el('p', { textContent: prov.source }),
     el('h2', { textContent: 'Credits and notes' }), el('p', { textContent: prov.notes || '—' }),
     el('h2', { textContent: 'Model' }), el('p', { textContent: `${manifest.model.file}, ${manifest.blendshapes.length} of 52 shapes\nsha256 ${manifest.model.sha256}` }),

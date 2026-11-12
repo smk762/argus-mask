@@ -51,6 +51,43 @@ def test_a_curated_face_is_refused(tmp_path) -> None:
         FaceStore(tmp_path).load("someone")
 
 
+RELEASE = "a" * 64
+
+
+def test_a_personal_face_needs_only_its_source_and_is_never_cleared(tmp_path) -> None:
+    make_face(
+        tmp_path, "cartoon", provenance=Provenance(kind="personal", source="a cartoon character, for my own screens")
+    )
+    manifest, _ = FaceStore(tmp_path).load("cartoon")
+    assert manifest.provenance.kind == "personal" and manifest.provenance.cleared is False
+    assert json.loads(manifest.model_dump_json())["provenance"]["cleared"] is False
+    stock, _ = FaceStore(tmp_path).load(make_face(tmp_path, "stock-head").name)
+    assert stock.provenance.cleared is True
+
+
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"kind": "stock", "source": "a pack"}, "a stock face states its licence"),
+        ({"kind": "synthetic", "source": "SDXL", "license": "  "}, "a synthetic face states its licence"),
+        ({"kind": "consented", "source": "a capture", "license": "release", "subject": "A. Person"}, "sha256"),
+        ({"kind": "consented", "source": "a capture", "license": "release", "release_sha256": RELEASE}, "subject"),
+    ],
+)
+def test_a_cleared_kind_proves_what_it_claims(fields, why) -> None:
+    with pytest.raises(ValueError, match=why):
+        Provenance(**fields)
+
+
+def test_a_consented_face_is_served_and_cleared(tmp_path) -> None:
+    provenance = Provenance(
+        kind="consented", source="a capture", license="per the release", subject="A. Person", release_sha256=RELEASE
+    )
+    make_face(tmp_path, "agreed", provenance=provenance)
+    manifest, _ = FaceStore(tmp_path).load("agreed")
+    assert manifest.provenance.cleared is True and manifest.provenance.subject == "A. Person"
+
+
 def test_a_manifest_must_match_its_directory_and_its_model(tmp_path) -> None:
     make_face(tmp_path, "one").rename(tmp_path / "two")
     with pytest.raises(FaceError, match="the directory is 'two'"):
