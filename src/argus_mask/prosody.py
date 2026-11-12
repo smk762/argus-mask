@@ -104,10 +104,12 @@ def _pitch(window: np.ndarray) -> float | None:
     energy = float(np.dot(x, x))
     if energy <= 1e-9:
         return None
-    r = np.empty(hi - lo + 1)
-    for i, lag in enumerate(range(lo, hi + 1)):
-        a, b = x[:-lag], x[lag:]
-        r[i] = float(np.dot(a, b)) / math.sqrt(float(np.dot(a, a)) * float(np.dot(b, b)) + 1e-12)
+    # Normalised autocorrelation at every lag at once: x[:-lag] . x[lag:] over the energies of both parts.
+    n = x.size
+    lags = np.arange(lo, hi + 1)
+    ac = np.correlate(x, x, mode="full")[n - 1 :]
+    squares = np.concatenate(([0.0], np.cumsum(x * x)))
+    r = ac[lags] / np.sqrt(squares[n - lags] * (squares[n] - squares[lags]) + 1e-12)
     best = float(r.max())
     if best < VOICED_CORRELATION:
         return None

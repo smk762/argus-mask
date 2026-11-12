@@ -105,12 +105,16 @@ def test_blinks_wait_for_pauses() -> None:
     found = cues(speech(phrases))
     zeros = np.zeros(52, dtype=np.float32)
     layer = IdleLayer(5, FPS)
-    blinks = [layer.apply(i, zeros, c)[0][INDEX["eyeBlinkLeft"]] for i, c in enumerate(found)]
+    blinks, fired = [], set()
+    for i, c in enumerate(found):
+        blinks.append(layer.apply(i, zeros, c)[0][INDEX["eyeBlinkLeft"]])
+        fired.add(layer._last_blink)
     starts = [i for i in range(1, len(blinks)) if blinks[i] > 0.0 and blinks[i - 1] == 0.0]
     # The first frame of a blink is the one before its weight rises.
     started = [i - 1 for i in starts]
     assert len(started) >= 8
     assert not any(found[i].sounding for i in started)
+    assert len(started) == len(fired) - 1  # every blink is seen, even one that waited out a word
     gaps = np.diff(started) / FPS
     assert gaps.min() >= BLINK_DOUBLE_GAP_S - 1 / FPS  # the closest pair is a double blink
     assert gaps.max() <= BLINK_MAX_GAP_S + BLINK_HOLD_S + 0.1

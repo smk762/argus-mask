@@ -144,8 +144,11 @@ class IdleLayer:
         # A blink waits out a sounding word, unless it is well overdue.
         held = cue.sounding and t - self._last_blink < BLINK_MAX_GAP_S + BLINK_HOLD_S
         if self._due is not None and t >= self._due and self._blinking is None and not held:
-            self._blinking = self._last_blink = self._due
-            self._due = self._due + BLINK_DOUBLE_GAP_S if double < BLINK_DOUBLE else None
+            # A blink that waited out a word starts now, not when it fell due: started in the past, it
+            # would be over (or nearly) before its first frame, and never seen.
+            start = self._due if self._due > t - dt else t
+            self._blinking = self._last_blink = start
+            self._due = start + BLINK_DOUBLE_GAP_S if double < BLINK_DOUBLE else None
         if self._blinking is None:
             return 0.0
         since = t - self._blinking
