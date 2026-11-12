@@ -6,7 +6,17 @@ Guidance for AI agents working in this repo. Human-facing usage lives in [README
 
 A talking face for the Argus suite: audio in, facial animation frames out, rendered in a browser on any screen on the LAN
 
-Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus) (`argus-quarry` → `argus-curator` → `argus-lens` → `argus-forge` → `argus-proof`). Shared code — the target taxonomy, wire-schema versioning, and the local/remote model contract — lives in **argus-cortex**; import it rather than re-implementing.
+Shared code — the target taxonomy, wire-schema versioning, and the local/remote model contract — lives in **argus-cortex**; import it rather than re-implementing.
+
+## Argus suite
+<!-- argus-suite: keep this block; argus-ci checks for it -->
+This repo is part of the Argus suite. The suite map below lists every sibling and what it owns; check it before
+building something a sibling may already do. **On every release, update this repo's row and capabilities in
+argus-cortex's SUITE.md** (a PR to argus-cortex in the same release).
+
+@../argus-core/SUITE.md
+
+Not checked out? Read https://github.com/smk762/argus-cortex/blob/main/SUITE.md
 
 ## Layout
 
