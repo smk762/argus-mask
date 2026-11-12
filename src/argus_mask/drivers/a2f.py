@@ -4,7 +4,8 @@ The server is reached over one WebSocket per stream, ``<url>/drive``:
 
 * client -> ``{"fps": 30, "sample_rate": 16000}`` (text)
 * server -> ``{"blendshapes": [name, ...]}`` (text): the order of its weights
-* client -> 16 kHz mono ``f32le`` PCM (binary), as it arrives
+* client -> 16 kHz mono ``f32le`` PCM (binary), as it arrives; once more than ``MAX_AHEAD_S`` of it
+  waits on frames, the client waits for frames before it sends more
 * server -> ``{"i": n, "weights": [...]}`` (text), one per finished frame, in order
 * client -> ``{"end": true}``; the server sends its remaining frames, then ``{"end": true}``
 
@@ -32,6 +33,7 @@ FINISH_TIMEOUT_S = 30.0
 # so a source that sends faster than real time is slowed to the model's pace instead of cut off.
 # Well above the model's lookahead (a quarter second), so a paced source never waits.
 MAX_AHEAD_S = 2.0
+MAX_AHEAD_SAMPLES = int(MAX_AHEAD_S * DRIVER_RATE)
 # A model that sends no frame for this long while audio waits has stopped, not slowed.
 STALL_TIMEOUT_S = 10.0
 
@@ -102,16 +104,13 @@ class A2FSession:
         self._sent += pcm.size
         out: list[np.ndarray] = []
         while not self._ended:
+            # Take what has already arrived; while too much audio waits on frames, wait for the next one.
+            behind = self._waiting() > MAX_AHEAD_SAMPLES
             try:
-                frame = await self._recv(0.001)  # only what has already arrived
-            except TimeoutError:
-                break
-            if frame is not None:
-                out.append(frame)
-        while not self._ended and self._waiting() > MAX_AHEAD_S * DRIVER_RATE:
-            try:
-                frame = await self._recv(STALL_TIMEOUT_S)
+                frame = await self._recv(STALL_TIMEOUT_S if behind else 0.001)
             except TimeoutError as exc:
+                if not behind:
+                    break
                 raise DriverError(f"the a2f driver fell behind the audio: no frame for {STALL_TIMEOUT_S:g}s") from exc
             if frame is not None:
                 out.append(frame)
