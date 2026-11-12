@@ -20,12 +20,17 @@
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
 ``GET  /broadcast/{job}``, ``POST /broadcast/{job}/stop``  a broadcast's progress; stop it
 ``GET  /broadcast.html``                the Broadcast page
+``GET  /packs``                         the community asset packs in the catalogue, and which are installed
+``POST /packs/{id}/install``            install a catalogued pack into MPFB's data (a job); ``GET /packs/jobs/{job}``
+``GET  /packs.html``                    the Asset packs page
 ``GET  /``                              the editor page
 
 ``POST /build`` starts Blender, so it is behind the same origin and read-only
 guards as the server's writes. A preset names assets by reference, and every
 reference is looked up in the installed library: no path from the request
 reaches the file system or Blender's command line except through that lookup.
+A pack is installed by its catalogue id alone: the URL, the hash and where it
+unpacks come from the catalogue and the configured data directory, never the request.
 """
 
 from __future__ import annotations
@@ -55,6 +60,8 @@ from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_rea
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
+from argus_mask.editor.packs import Busy as Installing
+from argus_mask.editor.packs import Installs, PackError, load_catalogue
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.editor.voices import (
     DELIVERIES,
@@ -221,7 +228,11 @@ PAGE_DIR = Path(__file__).resolve().parent / "page"
 
 
 def create_editor_app(
-    settings: Settings | None = None, editor: EditorSettings | None = None, *, builder: Builder | None = None
+    settings: Settings | None = None,
+    editor: EditorSettings | None = None,
+    *,
+    builder: Builder | None = None,
+    packs: Installs | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -242,12 +253,14 @@ def create_editor_app(
     voice_store = VoiceStore(ed.voices_dir)
     generations = Generations(voice_store)
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
+    packs = packs or Installs(ed.data_dir, load_catalogue())
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await broadcasts.stop_all()
         await generations.stop_all()
+        await packs.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -274,6 +287,35 @@ def create_editor_app(
         if asset is None or asset.thumb is None:
             raise HTTPException(404, "no thumbnail")
         return FileResponse(asset.thumb, media_type="image/png")
+
+    # ---- asset packs: the community's packs, from the checked-in catalogue, installed by id ------------
+
+    @app.get("/packs")
+    def pack_list() -> dict:
+        return {
+            "data_dir": str(packs.data_dir) if packs.data_dir else None,
+            "ready": packs.data_dir is not None and packs.data_dir.is_dir(),
+            "packs": packs.listing(),
+            "jobs": [j.public() for j in packs.jobs.values() if j.running],
+        }
+
+    @app.post("/packs/{pack_id}/install")
+    async def pack_install(pack_id: str) -> dict:
+        try:
+            job = packs.start(pack_id)
+        except Installing as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except PackError as exc:
+            raise HTTPException(404 if pack_id not in packs.catalogue else 422, str(exc)) from exc
+        log.info("pack_install", pack=pack_id)
+        return job.public()
+
+    @app.get("/packs/jobs/{job_id}")
+    def pack_job(job_id: str) -> dict:
+        job = packs.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such install")
+        return job.public()
 
     @app.get("/modifiers")
     def modifiers() -> dict:
