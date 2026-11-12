@@ -68,6 +68,17 @@ def _tags(path: Path) -> tuple[str, ...]:
     return tuple(ln.split(None, 1)[1].strip().lower() for ln in lines if ln.startswith("tag ") and len(ln.split()) > 1)
 
 
+def _hair_as_clothes(entries: dict, directory: str, name: str) -> tuple[str, dict]:
+    """A hairstyle's pack entry when the pack types it ``clothes``, as MakeHuman 1.x hair packs do (hair02, hair03).
+
+    The files are in ``hair/``, where MPFB loads them as hair; only the index's type is old. The entry is the
+    same asset by name, with its licence and author, so it is offered as hair.
+    """
+    if directory != PART_DIRS["hair"]:
+        return "", {}
+    return entries.get((CLOTHES_DIR, name), ("", {}))
+
+
 class AssetLibrary:
     """One MPFB data directory: ``$BLENDER_USER_RESOURCES/extensions/.user/user_default/mpfb/data``."""
 
@@ -149,7 +160,7 @@ class AssetLibrary:
                 for sub in sorted(p for p in root.iterdir() if p.is_dir() and _NAME.match(p.name)):
                     if not (sub / f"{sub.name}{ext}").is_file():
                         continue  # eyes/materials and the like: not an asset of this part
-                    pack, entry = entries.get((directory, sub.name), ("", {}))
+                    pack, entry = entries.get((directory, sub.name)) or _hair_as_clothes(entries, directory, sub.name)
                     licence = _licence(str(entry.get("license") or ""))
                     if not licence:
                         continue
