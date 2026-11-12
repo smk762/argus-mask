@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The face follows the voice** (#14, #15). A new `prosody.py` reads each frame's loudness and pitch from the audio
+  and marks stressed syllables, phrase ends and phrase starts. In takes:
+  - **Nods and brows.** The head nods on stressed syllables (up to about 2.5 degrees), settles with a small tilt at
+    each phrase end (alternating sides), and the brows rise on emphasis, about once a phrase, added to the driver's own.
+  - **Blinks in pauses.** Most blinks come just as a phrase ends; none starts while a word is sounding unless the last
+    was more than 8 s ago. About 18 a minute, sometimes doubled.
+  - **Saccades.** The eyes jump and hold for 0.2-0.6 s with a slight drift. A phrase start or a pause sometimes takes
+    them away (to the side, or up, as people look away to think), and the head turns a little with them.
+  - **Micro-motion.** Slow, small changes of brow tension, and of mouth tension while not speaking.
+
+  It is all a function of the audio and the seed, so takes stay byte-identical. On five synthetic voices: 1.8 to 2.0
+  stresses a second of speech, brows raised in 7-20% of frames, and every blink starting in a pause or between words.
+  Analysis costs about 0.3% of real time.
 - **Rest sets and idle life**: a face at rest shows a named baseline expression, `warm` by default (also `neutral`,
   `calm`, `bright`, `attentive`, and your own in the assets' `expressions.json`), chosen per face on Saved faces and
   served as `GET /face/{id}/rest`; a screen may override it (`?rest=`). While speaking, the set's brows, eyes and cheeks
