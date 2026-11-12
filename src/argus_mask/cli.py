@@ -89,13 +89,16 @@ def inspect(
                         license=license_,
                         notes=notes,
                         subject=subject,
-                        release_sha256=release.lower() or None,
+                        release_sha256=release.strip().lower() or None,
                     ),
                     framing=Framing(distance=distance, height=height, fov=fov),
                 )
             except ValidationError as exc:
                 raise _fail(
-                    f"cannot write a manifest: {'; '.join(e['msg'] + ' (' + '.'.join(map(str, e['loc'])) + ')' for e in exc.errors())}"
+                    "cannot write a manifest: "
+                    + "; ".join(
+                        e["msg"] + (f" ({'.'.join(map(str, e['loc']))})" if e["loc"] else "") for e in exc.errors()
+                    )
                 ) from exc
             (model.parent / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
     except (FaceError, OSError) as exc:

@@ -53,7 +53,7 @@ function renderFaces() {
     const row = el('label', { className: `face${f.id === face ? ' on' : ''}` },
       radio, el('span', { className: 'name', textContent: f.name }),
       el('span', { className: `badge ${r.cls}`, textContent: r.text }),
-      ...(f.kind && f.kind !== 'alias' && !f.cleared ? [el('span', { className: 'badge', textContent: 'personal', title: 'Your own screens only: not cleared to show or share' })] : []),
+      ...(f.cleared === false ? [el('span', { className: 'badge', textContent: 'personal', title: 'Your own screens only: not cleared to show or share' })] : []),
       el('span', { className: 'id', textContent: f.id }),
       el('span', { className: 'tools' }, onScreen));
     radio.onchange = () => { face = f.id; store.set('face', face); renderFaces(); updateTarget(); updateCli(); };

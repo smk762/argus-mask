@@ -69,7 +69,7 @@ from argus_mask.editor.voices import (
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
 from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
-from argus_mask.models import FACE_ID_PATTERN, FaceManifest
+from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
@@ -101,6 +101,18 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
 
 
 MAX_TEXT = 5000  # characters a broadcast may say: a long paragraph or two
+
+
+def face_row(face: dict) -> dict:
+    """A served face as the Broadcast page lists it. A server that predates ``cleared`` is read by its kind."""
+    prov = face.get("provenance") or {}
+    cleared = prov.get("cleared")
+    return {
+        "id": face["id"],
+        "name": face.get("name") or face["id"],
+        "kind": prov.get("kind"),
+        "cleared": cleared if isinstance(cleared, bool) else prov.get("kind") in CLEARED_KINDS,
+    }
 
 
 def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
@@ -588,23 +600,16 @@ def create_editor_app(
         }
         if status == 200 and isinstance(health, dict):
             _, faces, _ = await asyncio.to_thread(server_get, ed.server_url, "/faces")
+            rows = [face_row(f) for f in (faces or []) if isinstance(f, dict) and f.get("id")]
+            cleared = {r["id"]: r["cleared"] for r in rows}  # an alias is as cleared as the face it names
             out |= {
                 "read_only": bool(health.get("read_only")),
                 "driver": health.get("driver") or {},
                 "live": health.get("live") or [],
                 "screens": health.get("screens") or {},
-                "faces": [
-                    {
-                        "id": f["id"],
-                        "name": f.get("name") or f["id"],
-                        "kind": (f.get("provenance") or {}).get("kind"),
-                        "cleared": bool((f.get("provenance") or {}).get("cleared")),
-                    }
-                    for f in (faces or [])
-                    if isinstance(f, dict) and f.get("id")
-                ]
+                "faces": rows
                 + [
-                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias"}
+                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias", "cleared": cleared.get(face, True)}
                     for alias, face in (health.get("aliases") or {}).items()
                 ],
             }

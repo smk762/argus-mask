@@ -165,12 +165,11 @@ def provenance(source: dict) -> dict:
         out["origin"] = str(source.get("origin") or "").strip()[:300]
         if not out["origin"]:
             raise VoiceError("say where the clips come from, for your own record")
-        out["cleared"] = False
-        return out
-    if not source.get("confirmed"):
-        raise VoiceError("confirm the recording is not of anyone who has not agreed to it")
-    out["confirmed"] = True
-    out["cleared"] = True
+    if kind != "personal":  # personal records where the clips come from instead
+        if not source.get("confirmed"):
+            raise VoiceError("confirm the recording is not of anyone who has not agreed to it")
+        out["confirmed"] = True
+    out["cleared"] = kind in CLEARED_SOURCES
     return out
 
 

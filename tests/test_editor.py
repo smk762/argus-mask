@@ -1222,3 +1222,11 @@ def test_only_recordings_are_served_from_the_recordings_directory(recording_rig,
         assert c.get("/recordings/kept.mp4").content == b"clip"
         for bad in ["../secret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "nothere.mp4"]:
             assert c.get(f"/recordings/{bad}").status_code == 404, bad
+
+
+def test_a_broadcast_face_row_reads_cleared_or_falls_back_on_its_kind() -> None:
+    from argus_mask.editor.app import face_row
+
+    assert face_row({"id": "a", "provenance": {"kind": "personal", "cleared": False}})["cleared"] is False
+    assert face_row({"id": "b", "provenance": {"kind": "stock", "license": "CC0-1.0"}})["cleared"] is True
+    assert face_row({"id": "c", "provenance": {"kind": "personal"}})["cleared"] is False
