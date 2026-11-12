@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
-import { ARKIT, Motion, lipBudget } from './motion.js';
+import { ARKIT, Motion, cubic, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
 // face is judged speaking as it will on a screen: the same lip budget, rest set and idle life (motion.js).
@@ -17,6 +17,7 @@ const talkReady = fetch('talk.json').then((r) => (r.ok ? r.json() : null)).then(
 }).catch(() => {});
 
 const NONE = new Float32Array(ARKIT.length);
+const talkOut = new Float32Array(ARKIT.length);
 const fixed = (weights) => { const w = new Float32Array(ARKIT.length); for (const [n, v] of Object.entries(weights)) w[ARKIT.indexOf(n)] = v; return () => ({ weights: w, live: true }); };
 
 // Each pose gives the frame weights (ARKit order) at t seconds, and whether it is speech (no idle life).
@@ -25,8 +26,15 @@ export const POSES = {
   speak: (t) => {
     if (!talk) return { weights: NONE, live: false };
     const loop = talk.frames.length / talk.fps + TALK_GAP_S;
-    const i = Math.floor((t % loop) * talk.fps);
-    return i < talk.frames.length ? { weights: talk.frames[i], live: true } : { weights: NONE, live: false };
+    const at = (t % loop) * talk.fps;
+    const i = Math.floor(at);
+    const f = talk.frames;
+    if (i >= f.length) return { weights: NONE, live: false };
+    if (i + 1 >= f.length) return { weights: f[i], live: true };
+    // Between frames as a screen plays them (motion.js `interpolate`): smooth, through every frame.
+    const [p, a, b, n] = [f[Math.max(0, i - 1)], f[i], f[i + 1], f[Math.min(f.length - 1, i + 2)]];
+    for (let j = 0; j < talkOut.length; j += 1) talkOut[j] = cubic(p[j], a[j], b[j], n[j], at - i, true);
+    return { weights: talkOut, live: true };
   },
   open: fixed({ jawOpen: 0.6, mouthFunnel: 0.1 }),
   smile: fixed({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),

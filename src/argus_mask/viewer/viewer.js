@@ -25,7 +25,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
-import { ARKIT, Motion, lipBudget } from './motion.js';
+import { ARKIT, Motion, interpolate, lipBudget } from './motion.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -253,6 +253,7 @@ function timelineNow() {
 
 let names = [];            // blendshape order of the current stream
 let queue = [];            // frames not yet passed, by t_ms
+let passed = null;         // the frame before queue[0], for a curve through it
 let ended = true;
 let current = null;        // Float32Array of the weights on screen
 const head = { yaw: 0, pitch: 0, roll: 0 };
@@ -275,6 +276,7 @@ function onHeader(header) {
   names = header.blendshapes;
   sampleRate = header.audio.sample_rate;
   queue = [];
+  passed = null;
   anchor = null;
   ended = false;
   current = current && current.length === names.length ? current : new Float32Array(names.length);
@@ -386,17 +388,21 @@ function draw() {
     current.set(posed.weights);
     Object.assign(head, posed.head);
   } else if (current && t !== null && queue.length) {
-    while (queue.length > 1 && queue[1].t_ms <= t) queue.shift();   // frames already passed
+    while (queue.length > 1 && queue[1].t_ms <= t) passed = queue.shift();   // frames already passed
     const a = queue[0];
     const b = queue[1];
     if (a.t_ms <= t) {   // until the first frame is due, the face stays idle
       live = true;
-      const k = b && b.t_ms > a.t_ms ? Math.min(1, Math.max(0, (t - a.t_ms) / (b.t_ms - a.t_ms))) : 0;
-      for (let i = 0; i < current.length; i += 1) {
-        current[i] = b ? a.weights[i] + (b.weights[i] - a.weights[i]) * k : a.weights[i];
+      if (b) {
+        const k = b.t_ms > a.t_ms ? Math.min(1, Math.max(0, (t - a.t_ms) / (b.t_ms - a.t_ms))) : 0;
+        const before = passed && passed.seq === a.seq - 1 ? passed : null;
+        const after = queue[2] && queue[2].seq === b.seq + 1 ? queue[2] : null;
+        interpolate(before, a, b, after, k, current, head);
+      } else {
+        current.set(a.weights);
+        Object.assign(head, a.head);
       }
-      for (const axis of ['yaw', 'pitch', 'roll']) head[axis] = b ? a.head[axis] + (b.head[axis] - a.head[axis]) * k : a.head[axis];
-      if (!b && ended && t > a.t_ms + 100) { queue = []; anchor = null; }   // the last frame has been shown
+      if (!b && ended && t > a.t_ms + 100) { queue = []; passed = null; anchor = null; }   // the last frame has been shown
     }
   }
   const order = names.length ? names : ARKIT;   // before any stream, the ARKit order
@@ -413,6 +419,7 @@ function draw() {
     for (const axis of ['yaw', 'pitch', 'roll']) head[axis] += (shown.head[axis] - head[axis]) * k;
   }
   applyHead();
+  state.head = head;   // the head turn on screen now, degrees: for checking motion from outside
   look.render();
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 
