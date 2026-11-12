@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and scales the lip-closing shapes so the lips never pass through each other (1 mm allowed for pressing), with
   `mouthShrugLower` and the rolls at 0.7. On ginger-3, lips overlapping by more than 3 mm went from 12% of frames to
   none, and the lower lip no longer rides up over the upper. Screens, `record` and the editor's previews alike.
+- **Smooth playback between frames** (#13): screens and the editor's `speak` preview draw a cubic through the
+  frames on either side instead of a straight line between two, so 30 fps motion has no corners (the speed jump at
+  each frame, up to 0.44 of a weight per frame on Audio2Face output, is now none). Weights use a monotone cubic, so a
+  mouth never overshoots a closure; the head turns as Catmull-Rom. The curve passes through every frame at its own
+  time: lip timing is unchanged, and `record` (which renders at the frame times) shows exactly the frames, as before.
 - **The editor's previews speak**: the `speak` pose (now the default) loops 12 s of real Audio2Face motion, with the
   lip budget, rest set and idle life a screen shows, instead of a sine-wave mouth; a `rest:` picker previews each set.
 

@@ -7,6 +7,9 @@
 //   the lips further than the opening shapes (jawOpen, funnel, ...) leave room for, plus a millimetre for
 //   lips that press together. Lips still meet for m, b and p; they no longer pass through each other.
 // - The rest set: a named baseline expression (warm, calm, ...) the face holds at rest and speaks from.
+// - Playback between frames: a cubic through the frames on either side, so 30 fps motion has no corners
+//   where one straight segment meets the next. It passes through every frame at its own time, so lip
+//   timing is unchanged and `record` (which renders at the frame times) shows exactly the frames.
 // - Idle life, while no stream plays: blinks, glances with the head following, breathing, and small
 //   expression shifts that come and go. Cosmetic: never recorded, and absent from takes.
 //
@@ -29,6 +32,60 @@ export const ARKIT = [
 export const LIP_MARGIN_MM = 1.0;
 export const LIP_GAINS = { mouthShrugLower: 0.7, mouthRollLower: 0.7, mouthRollUpper: 0.7 };
 const SENSITIVE_MM = 0.3;   // a shape that moves the lip gap less than this per unit weight is left alone
+
+// ---- between frames ------------------------------------------------------------------------
+
+// The slope at p1 for a curve through p0, p1, p2 (evenly spaced). `monotone` keeps the curve between its
+// frames (Fritsch-Carlson): no slope at a turning point, and none steeper than three times either side's.
+// Weights use it, so a mouth never overshoots a closure or leaves 0..1; the head turns as Catmull-Rom.
+function slope(p0, p1, p2, monotone) {
+  const m = (p2 - p0) / 2;
+  if (!monotone) return m;
+  const d0 = p1 - p0;
+  const d1 = p2 - p1;
+  if (d0 * d1 <= 0) return 0;
+  return Math.sign(m) * Math.min(Math.abs(m), 3 * Math.min(Math.abs(d0), Math.abs(d1)));
+}
+
+// The cubic Hermite basis at a fraction k (0..1) of the way from p1 to p2, into `h`.
+function basis(k, h) {
+  const k2 = k * k;
+  const k3 = k2 * k;
+  h[0] = 2 * k3 - 3 * k2 + 1;
+  h[1] = k3 - 2 * k2 + k;
+  h[2] = 3 * k2 - 2 * k3;
+  h[3] = k3 - k2;
+  return h;
+}
+
+function hermite(p0, p1, p2, p3, h, monotone) {
+  return h[0] * p1 + h[1] * slope(p0, p1, p2, monotone) + h[2] * p2 + h[3] * slope(p1, p2, p3, monotone);
+}
+
+const H = new Float64Array(4);
+
+// The value a fraction k (0..1) of the way from p1 to p2, with p0 before and p3 after (cubic Hermite).
+export function cubic(p0, p1, p2, p3, k, monotone = false) {
+  return hermite(p0, p1, p2, p3, basis(k, H), monotone);
+}
+
+export const AXES = ['yaw', 'pitch', 'roll'];
+
+// Weight arrays (into `out`) between a and b, a fraction k of the way, with p before and n after (monotone,
+// so no weight leaves the two frames it lies between). The viewer's frames and the editor's preview share it.
+export function blend(p, a, b, n, k, out) {
+  basis(k, H);
+  for (let i = 0; i < out.length; i += 1) out[i] = hermite(p[i], a[i], b[i], n[i], H, true);
+}
+
+// Weights (into `out`) and head between frames a and b, a fraction k of the way; `before` and `after` are
+// the frames either side, or null at a stream's ends. Frames are { weights, head }.
+export function interpolate(before, a, b, after, k, out, head) {
+  const p = before || a;
+  const n = after || b;
+  blend(p.weights, a.weights, b.weights, n.weights, k, out);
+  for (const axis of AXES) head[axis] = hermite(p.head[axis], a.head[axis], b.head[axis], n.head[axis], H, false);
+}
 
 function percentile(values, p) {
   const s = Float64Array.from(values).sort();
