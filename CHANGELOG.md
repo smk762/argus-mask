@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provenance says what it means** (#64). An unknown field is refused, not dropped in silence, and `licence` is
+  read as `license` (a provenance with both, disagreeing, is refused). A `source` of only whitespace is refused like a
+  missing one. A dumped record's `cleared` still reads back, and is recomputed.
 - **A source that sends faster than real time is slowed, not cut off** (#2). The `a2f` driver lets up to 2 s of audio
   wait on frames, then holds the source until the model catches up; a burst of a 15 s clip used to end the stream with
   "fell more than 10s behind". A model that sends no frame for 10 s while the source is held still ends it.

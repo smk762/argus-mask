@@ -79,6 +79,24 @@ def test_a_cleared_kind_proves_what_it_claims(fields, why) -> None:
         Provenance(**fields)
 
 
+def test_a_provenance_refuses_what_it_does_not_know_and_takes_licence_for_license() -> None:
+    with pytest.raises(ValueError, match="liscense"):
+        Provenance(kind="personal", source="x", liscense="CC0-1.0")
+    assert Provenance(kind="stock", source="a pack", licence="CC0").license == "CC0"
+    with pytest.raises(ValueError, match="disagree"):
+        Provenance(kind="stock", source="a pack", licence="CC0", license="CC-BY")
+    # A dumped record carries the derived ``cleared``; it reads back, recomputed rather than believed.
+    dumped = Provenance(kind="personal", source="a cartoon").model_dump()
+    assert dumped["cleared"] is False
+    assert Provenance.model_validate({**dumped, "cleared": True}).cleared is False
+
+
+@pytest.mark.parametrize("source", ["", "   ", "\t\n"])
+def test_a_provenance_names_a_source(source) -> None:
+    with pytest.raises(ValueError, match="source"):
+        Provenance(kind="personal", source=source)
+
+
 def test_a_consented_face_is_served_and_cleared(tmp_path) -> None:
     provenance = Provenance(
         kind="consented", source="a capture", license="per the release", subject="A. Person", release_sha256=RELEASE

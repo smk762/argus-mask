@@ -107,7 +107,12 @@ class Provenance(BaseModel):
     - ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the
       release's sha256 (never the document) and the subject as the release names them.
     - ``curated``: refused until 0.3 defines what a curated face must prove.
+
+    Unknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for
+    ``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     kind: ProvenanceKind
     source: str = Field(..., min_length=1)
@@ -116,8 +121,23 @@ class Provenance(BaseModel):
     subject: str = ""
     release_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        data = {k: v for k, v in data.items() if k != "cleared"}
+        if "licence" in data:
+            licence = data.pop("licence")
+            if "license" in data and data["license"] != licence:
+                raise ValueError("give the licence once: `license` and `licence` disagree")
+            data["license"] = licence
+        return data
+
     @model_validator(mode="after")
     def _complete(self) -> Provenance:
+        if not self.source.strip():
+            raise ValueError("a face states its source: where it came from")
         if self.kind != "personal" and not self.license.strip():
             raise ValueError(f"a {self.kind} face states its licence")
         if self.kind == "consented" and not (self.release_sha256 and self.subject.strip()):
