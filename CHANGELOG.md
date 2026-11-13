@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-13
+
 ### Added
 
 - **Splat heads**: a LAM Gaussian-splat avatar (a `.zip`: `skin.glb`, `offset.ply`, `animation.glb`,
@@ -61,22 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/speak`'s `voice`) is sent as the service's own speaker, not as a clone, for services that name their speakers, such
   as Qwen3-TTS's CustomVoice (`speaker:Vivian`). `POST /speak` takes an optional `instruction`, how to say it, passed
   to a service that reads one; like the text, it is never logged.
-
-### Fixed
-
-- **A provenance says what it means** (#64). An unknown field is refused, not dropped in silence, and `licence` is
-  read as `license` (a provenance with both, disagreeing, is refused). A `source` of only whitespace is refused like a
-  missing one. A dumped record's `cleared` still reads back, and is recomputed.
-- **A source that sends faster than real time is slowed, not cut off** (#2). The `a2f` driver lets up to 2 s of audio
-  wait on frames, then holds the source until the model catches up; a burst of a 15 s clip used to end the stream with
-  "fell more than 10s behind". A model that sends no frame for 10 s while the source is held still ends it.
-- **The Audio2Face server reports a dead worker at once** (#4), not on the client's next message: a worker that crashed
-  during a pause in speech left the face frozen with no error.
-
-## [0.1.0] - 2026-11-11
-
-### Added
-
 - **Face aliases** (#41): a stable name for a face, such as `holly` for a persona, that the agent speaking and the
   kiosk showing it use for good while the face behind it is chosen in the editor (Saved faces → Aliases: add,
   repoint, remove, open on a screen). Kept in the assets' `aliases.json`, written by the editor and read by the server
@@ -207,6 +193,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provenance says what it means** (#64). An unknown field is refused, not dropped in silence, and `licence` is
+  read as `license` (a provenance with both, disagreeing, is refused). A `source` of only whitespace is refused like a
+  missing one. A dumped record's `cleared` still reads back, and is recomputed.
+- **A source that sends faster than real time is slowed, not cut off** (#2). The `a2f` driver lets up to 2 s of audio
+  wait on frames, then holds the source until the model catches up; a burst of a 15 s clip used to end the stream with
+  "fell more than 10s behind". A model that sends no frame for 10 s while the source is held still ends it.
+- **The Audio2Face server reports a dead worker at once** (#4), not on the client's next message: a worker that crashed
+  during a pause in speech left the face frozen with no error.
 - **`POST /speak` in Docker**: `compose.yaml` passes `TTS_URL` and `TTS_VOICE` from `.env` to the server as
   `ARGUS_MASK_TTS_URL` and `ARGUS_MASK_TTS_VOICE`; without them `/speak` always answered `422`.
 - A Broadcast recording that caught another source's session on the face is discarded, not kept as this broadcast's,
