@@ -120,10 +120,10 @@ An alias is a stable name for a face: `holly` for a persona's face, used by the 
 - **Repointing:** new connections get the new face at once. A screen already watching `holly` switches on the next thing said: each stream's header names the face itself, and a viewer that loaded another face reloads, with its URL, and joins the stream where it has got to.
 - **Rules:** an alias is a face id that isn't a face's directory (it never hides a face), it points at a face the server serves, and never at another alias. An entry that breaks a rule is ignored (the editor shows why). Renaming a face in the editor carries its aliases along; deleting one an alias points at is refused until the alias points elsewhere.
 
-A kiosk for a persona, with the sound on the house speakers (see [House audio](#house-audio-snapcast)):
+A kiosk for a persona, with the sound on the house speakers (see [House audio](#house-audio-snapcast)). `<GPU_HOST>` and `<LAN_HOST>` below are placeholders; the real host/IP is in the local `.env` (see `.env.example`), so check it there:
 
 ```
-http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
+http://<GPU_HOST>:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
 ```
 
 ### Rest sets and idle life
@@ -277,7 +277,7 @@ export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
 export ARGUS_MASK_TTS_VOICE=inara-nobility
 argus-mask say "Hello from the other side of the room." --face stock-01
 
-argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 --voice "Claribel Dervla"
+argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://<LAN_HOST>:10200 --voice "Claribel Dervla"
 ```
 
 `say` sends the text one sentence at a time and leaves `--pause` ms of silence between sentences (default 300; twice that between paragraphs, which are blank lines in the text). TTS models run sentences into each other, and a short request wanders less than a long one. `--pause 0` sends the text whole. By default `say` also tidies the speech (`argus_mask.speech`): numbers, times, dates and symbols go as words ("9:30am" as "nine thirty a m"), since a model guesses at digits; a sentence of one to three words goes with the next, since a lone "Greetings." comes back furthest from the rest in pitch and level; and each sentence is faded in and out (5 ms, 30 ms) and brought to the same speech level (-20 dBFS, within 9 dB), since a model often stops while the last sound is still at full level, and sentences generated apart differ in loudness. With `--stream` there are fades but no levelling. `--as-is` (the Broadcast page's **Tidy speech** checkbox) sends the text as written and plays the audio as it came. `--context` (experimental, off by default; the Broadcast page's **Previous sentence as context**) sends each sentence to an HTTP service with the one before it, its text and levelled audio, for a CSM-style model like Miso to carry on from; a service that refuses the field is asked again without it. With a cloned voice it can make the tone drift rather than hold. `say` also puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
