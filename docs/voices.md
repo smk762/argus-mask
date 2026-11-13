@@ -103,6 +103,6 @@ What the Voices page measures, per clip and for the set. A clip with a bad check
 
 ## What a good reference doesn't fix
 
-- **Tone drift between sentences.** `say` sends one sentence at a time, and each is generated with only the reference as context, so neighbouring sentences can land in slightly different moods. `say` already evens their loudness and softens their edges. The real fix is to give each sentence the previous one as context, which needs a change to Miso.
+- **Tone drift between sentences.** `say` sends one sentence at a time, and each is generated with only the reference as context, so neighbouring sentences can land in slightly different moods. `say` already evens their loudness and softens their edges. `say --context` (and the Broadcast page's checkbox) sends the previous sentence's text and levelled audio as context, and a service that refuses it is retried without; it is experimental and off by default, because with a cloned voice on Miso it can make the tone drift rather than hold.
 - **Runaway generation.** Now and then the model keeps talking after the text ends. Miso caps a request at 30 s; a cap scaled to the text's length would stop it sooner, which also needs a change to Miso.
 - **Numbers.** `say` writes numbers and times as words before sending them (`--as-is` turns it off), because the model guesses at digits.
