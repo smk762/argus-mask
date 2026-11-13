@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+import struct
 import warnings
 import zipfile
 
@@ -160,6 +161,32 @@ def test_not_a_zip_is_refused(tmp_path) -> None:
     (tmp_path / "head.zip").write_bytes(b"PK but not really a zip")
     with pytest.raises(FaceError, match="not a zip archive"):
         inspect_splat(tmp_path / "head.zip")
+
+
+def glb_of(doc: object) -> bytes:
+    """A .glb whose JSON chunk is *doc*, whatever its shape."""
+    body = json.dumps(doc).encode()
+    body += b" " * (-len(body) % 4)
+    return struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(body)) + struct.pack("<II", len(body), 0x4E4F534A) + body
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [{"meshes": [1, 2]}, {"meshes": [{"primitives": [{"indices": 0}]}], "accessors": [7]}, {"images": ["x"]}],
+)
+def test_a_skin_glb_not_shaped_like_gltf_is_refused_not_raised(tmp_path, doc) -> None:
+    # The archive is an upload: a crash here would come out of FaceStore.scan() and break every listing.
+    with pytest.raises(FaceError, match="not a well-formed glTF"):
+        inspect_splat(make_splat_zip(tmp_path / "head.zip", splat_members() | {"skin.glb": glb_of(doc)}))
+
+
+def test_json_nested_past_the_stack_is_refused(tmp_path) -> None:
+    deep = b"[" * 200_000 + b"]" * 200_000
+    members = splat_members()
+    del members["vertex_order.json"]
+    stored = zipfile.ZipInfo("avatar/vertex_order.json")  # stored: deflated, it would trip the ratio cap first
+    with pytest.raises(FaceError, match="vertex_order.json is not JSON"):
+        inspect_splat(make_splat_zip(tmp_path / "head.zip", members, entries=[(stored, deep)]))
 
 
 # ---- a splat face, served -------------------------------------------------------------------------

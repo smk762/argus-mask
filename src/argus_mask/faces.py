@@ -91,7 +91,7 @@ def read_glb(path: str | Path) -> tuple[dict, bytes]:
     return parse_glb(Path(path).read_bytes(), str(path))
 
 
-def parse_glb(data: bytes, path: str = "model") -> tuple[dict, bytes]:
+def parse_glb(data: bytes | bytearray, path: str = "model") -> tuple[dict, bytes]:
     """:func:`read_glb` of bytes already in memory (*path* names them in errors)."""
     if len(data) < 20:
         raise FaceError(f"{path}: too short to be a .glb")
@@ -113,7 +113,7 @@ def parse_glb(data: bytes, path: str = "model") -> tuple[dict, bytes]:
             except ValueError as exc:
                 raise FaceError(f"{path}: the JSON chunk does not parse: {exc}") from exc
         elif kind == _CHUNK_BIN and not binary:
-            binary = body
+            binary = bytes(body)
         pos += 8 + size
     if not isinstance(doc, dict):
         raise FaceError(f"{path}: no JSON chunk")
@@ -251,7 +251,7 @@ class SplatReport:
         return []
 
 
-def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, path: str) -> bytes:
+def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, path: str) -> bytearray:
     """A member's bytes, counted as they unpack: the sizes in a zip's headers are the archive's own claim."""
     out = bytearray()
     try:
@@ -262,7 +262,7 @@ def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, path: str) -> 
                     raise FaceError(f"{path}: {info.filename} unpacks to more than it says")
     except (zipfile.BadZipFile, OSError, EOFError, RuntimeError, ValueError) as exc:  # a bad CRC, a bad stream
         raise FaceError(f"{path}: {info.filename} does not unpack: {exc}") from exc
-    return bytes(out)
+    return out  # not copied to bytes: the archive may unpack to SPLAT_MAX_TOTAL, held once
 
 
 def _member_name(name: str, path: str) -> PurePosixPath:
@@ -293,7 +293,7 @@ def inspect_splat(path: str | Path) -> SplatReport:
         raise FaceError(f"{label}: the archive is over {SPLAT_MAX_TOTAL >> 20} MiB")
     try:
         archive = zipfile.ZipFile(path)
-    except (zipfile.BadZipFile, OSError) as exc:
+    except (zipfile.BadZipFile, OSError, EOFError, ValueError, NotImplementedError) as exc:  # a crafted directory
         raise FaceError(f"{label}: not a zip archive ({exc})") from exc
     with archive:
         infos = archive.infolist()
@@ -356,10 +356,17 @@ def inspect_splat(path: str | Path) -> SplatReport:
         if member in data:
             try:
                 json.loads(data[member])
-            except ValueError as exc:
+            except (ValueError, RecursionError) as exc:  # RecursionError: nesting deep enough to exhaust the stack
                 raise FaceError(f"{label}: {member} is not JSON: {exc}") from exc
-    parse_glb(data["animation.glb"], f"{label}: animation.glb")
-    skin = glb_report(*parse_glb(data["skin.glb"], f"{label}: skin.glb"))
+    # The glTF readers trust a .glb's JSON to have glTF's shape; this one comes from an upload, so a member that
+    # does not is refused here, never an AttributeError out of FaceStore.scan() for every listing.
+    try:
+        parse_glb(data["animation.glb"], f"{label}: animation.glb")
+        skin = glb_report(*parse_glb(data["skin.glb"], f"{label}: skin.glb"))
+    except FaceError:
+        raise
+    except (AttributeError, TypeError, KeyError, IndexError, ValueError, RecursionError, struct.error) as exc:
+        raise FaceError(f"{label}: skin.glb or animation.glb is not a well-formed glTF: {exc!r}") from exc
     if skin.extra:
         raise FaceError(f"{label}: skin.glb has morph targets that are not ARKit shapes: {', '.join(skin.extra)}")
     if not skin.present:
@@ -478,6 +485,8 @@ class FaceStore:
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size)
         if key not in self._splats:
+            for old in [k for k in self._splats if k[0] == key[0]]:  # an earlier version of this file
+                del self._splats[old]
             try:
                 self._splats[key] = inspect_splat(path)
             except FaceError as exc:

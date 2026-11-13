@@ -352,12 +352,14 @@ def create_editor_app(
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
 
-    @app.get("/face/{face_id}/model")
-    def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
-        manifest, path = find_face(face_id, where)
+    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
         return FileResponse(
             path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
         )
+
+    @app.get("/face/{face_id}/model")
+    def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
+        return model_response(*find_face(face_id, where))
 
     @app.get("/face/{face_id}/model/{file}")
     def face_model_named(face_id: str, file: str, where: str | None = Query(None, alias="from")) -> FileResponse:
@@ -365,9 +367,7 @@ def create_editor_app(
         manifest, path = find_face(face_id, where)
         if file != manifest.model.file:
             raise HTTPException(404, f"face {face_id!r} has no file {file!r}")
-        return FileResponse(
-            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
-        )
+        return model_response(manifest, path)
 
     @app.post("/build")
     async def build(preset: Preset) -> dict:

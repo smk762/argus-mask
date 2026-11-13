@@ -174,9 +174,7 @@ async function loadFace() {
     if (node.isBone && !headBone && /^head$/i.test(node.name)) headBone = node;
   });
   if (headBone) headRest = headBone.quaternion.clone();
-  let seed = 7;
-  for (const ch of manifest.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;   // each face idles its own way
-  motion = new Motion({ budget: lipBudget(gltf.scene), seed, life: LIFE ?? 1 });
+  motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
   await loadRest(faceId);
   const framing = manifest.framing || {};
@@ -189,6 +187,13 @@ async function loadFace() {
   state.faceShown = manifest.id;   // the face itself: faceId may be an alias for it
   state.ready = true;
   return faceId;
+}
+
+// Each face idles its own way: the idle seed, from its id.
+function faceSeed(id) {
+  let seed = 7;
+  for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  return seed;
 }
 
 // A LAM Gaussian-splat head (splat.js): the same frames, rest set, idle life and lip budget, drawn by the
@@ -206,12 +211,11 @@ async function loadSplat(faceId, manifest) {
   if (colour === 'transparent') colour = '#101216';   // the splat renderer draws on an opaque canvas
   try { new THREE.Color(colour); document.body.style.background = colour; } catch { colour = '#101216'; }
   splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD });
-  let seed = 7;
-  for (const ch of manifest.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;   // each face idles its own way
-  const knee = Number.parseFloat(params.get('jaw'));
-  motion = new Motion({ budget: skin.budget, seed, life: LIFE ?? 1, cap: jawCap(Number.isFinite(knee) ? knee : JAW.knee) });
+  const asked = Number.parseFloat(params.get('jaw'));
+  const knee = Number.isFinite(asked) ? Math.max(0, asked) : JAW.knee;   // below 0, the jaw would never open
+  motion = new Motion({ budget: skin.budget, seed: faceSeed(manifest.id), life: LIFE ?? 1, cap: jawCap(knee) });
   state.lips = motion.budget;
-  state.jaw = Number.isFinite(knee) ? knee : JAW.knee;
+  state.jaw = knee;
   state.look = null;
   await loadRest(faceId);
   // The face at rest, drawn once before anyone is told it is ready.
