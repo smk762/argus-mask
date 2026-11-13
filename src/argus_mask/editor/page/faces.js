@@ -193,7 +193,8 @@ async function openReview(row, place = main(row)) {
   if (!manifest) return;
   $('modal').hidden = false;
   stage.attach($('stage'));
-  await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
+  // A review opened since this one shows its own face: this one's name and buttons must not land over it.
+  if (!(await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format))) return;
   // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
   const keep = place === 'export' ? async (name) => {
     try {

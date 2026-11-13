@@ -235,6 +235,13 @@ async def paced(pcm: bytes, fmt: SourceHello) -> AsyncIterator[bytes]:
             await asyncio.sleep(ahead)
 
 
+def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+    """A face's model file, typed by its format. The manifest's sha256 changes with the model: a viewer may cache by it."""
+    return FileResponse(
+        path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
+    )
+
+
 def install_guards(app: FastAPI, cfg: Settings) -> Callable:
     """The write guards and CORS every mask app uses. Returns the origin predicate, for the sockets to call."""
     wildcard = "*" in cfg.cors_origins
@@ -329,12 +336,6 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     @app.get("/face/{face_id}", response_model=FaceManifest)
     def face(face_id: str) -> FaceManifest:
         return face_or_404(face_id)[0]
-
-    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
-        # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
-        return FileResponse(
-            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
-        )
 
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str) -> FileResponse:

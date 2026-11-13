@@ -104,16 +104,21 @@ class Pack:
         }
 
 
+def _community_url(url: object) -> str | None:
+    """*url* if it is https on the community's site (what the page may link to or load), else None."""
+    if not isinstance(url, str) or urllib.parse.urlsplit(url).scheme != "https":
+        return None
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return url if host == "makehumancommunity.org" or host.endswith(".makehumancommunity.org") else None
+
+
 def _asset(raw: object) -> dict | None:
     if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
         return None
     out = {k: str(raw.get(k) or "")[:200] for k in ("name", "type", "author", "license")}
-    thumb = raw.get("thumb")
     # A thumbnail is shown by the browser, straight from the community's site: an https URL there, or none.
-    if isinstance(thumb, str) and urllib.parse.urlsplit(thumb).scheme == "https":
-        host = urllib.parse.urlsplit(thumb).hostname or ""
-        if host.endswith(".makehumancommunity.org"):
-            out["thumb"] = thumb
+    if thumb := _community_url(raw.get("thumb")):
+        out["thumb"] = thumb
     return out
 
 
@@ -145,7 +150,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
             urls=urls,
             bytes=size if isinstance(size, int) and size > 0 else None,
             sha256=sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None,
-            page=str(raw.get("page") or ""),
+            page=_community_url(raw.get("page")) or "",  # the page links to it: never javascript: or elsewhere
             assets=tuple(a for a in map(_asset, raw.get("assets") or []) if a is not None),
         )
     return packs
@@ -218,14 +223,16 @@ def plan(zip_path: Path, data_dir: Path, pack_id: str) -> tuple[list[tuple[zipfi
             rel = _member_path(info)
             if rel is None:
                 continue
-            target = (root / rel).resolve()
+            placed = root / rel
+            target = placed.resolve()
             if not target.is_relative_to(root) or target == root:
                 raise PackError(f"the zip has a member outside the pack: {info.filename!r}")
             if str(rel) in names:
                 raise PackError(f"the zip has {info.filename!r} twice")
             names.add(str(rel))
-            if target.exists() or target.is_symlink():
-                if target.is_file() and not target.is_symlink() and _same(target, zf, info):
+            # A link where the file would go (even a dangling one) is installed: unpack would replace the link.
+            if placed.is_symlink() or target.exists():
+                if not placed.is_symlink() and target.is_file() and _same(target, zf, info):
                     skipped += 1
                     continue
                 conflicts.append(str(rel))

@@ -442,6 +442,7 @@ class FaceStore:
         self.root = Path(root)
         self._hashes: dict[tuple[str, int, int], str] = {}  # (path, mtime_ns, size) -> sha256
         self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
+        self._splat_lock = threading.Lock()  # routes run in threads: one inspection (up to 160 MiB) at a time
 
     def _sha256(self, path: Path) -> str:
         stat = path.stat()
@@ -484,14 +485,16 @@ class FaceStore:
         """The archive's report, checked once per version of the file; :class:`FaceError` if it is refused."""
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size)
-        if key not in self._splats:
-            for old in [k for k in self._splats if k[0] == key[0]]:  # an earlier version of this file
-                del self._splats[old]
-            try:
-                self._splats[key] = inspect_splat(path)
-            except FaceError as exc:
-                self._splats[key] = str(exc).replace(f"{path}: ", "", 1)
-        found = self._splats[key]
+        with self._splat_lock:
+            found = self._splats.get(key)
+            if found is None:
+                for old in [k for k in self._splats if k[0] == key[0]]:  # an earlier version of this file
+                    del self._splats[old]
+                try:
+                    found = inspect_splat(path)
+                except FaceError as exc:
+                    found = str(exc).replace(f"{path}: ", "", 1)
+                self._splats[key] = found
         if isinstance(found, str):
             raise FaceError(found)
         return found

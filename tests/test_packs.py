@@ -117,6 +117,14 @@ def test_a_thumbnail_off_the_community_site_is_not_shown(tmp_path: Path) -> None
     assert "thumb" not in load_catalogue(path)["hair09"].assets[0]
 
 
+@pytest.mark.parametrize(
+    "page", ["javascript:alert(1)", "https://evil.example/hair09.html", "http://static.makehumancommunity.org/x"]
+)
+def test_a_pack_page_off_the_community_site_is_not_linked(tmp_path: Path, page: str) -> None:
+    path = write_catalogue(tmp_path / "c.json", pack_zip(), page=page)
+    assert load_catalogue(path)["hair09"].page == ""
+
+
 def test_a_pack_without_a_hash_or_with_another_licence_is_not_installable(tmp_path: Path) -> None:
     data = pack_zip()
     assert load_catalogue(write_catalogue(tmp_path / "a.json", data, sha256=None))["hair09"].why_not()
@@ -194,6 +202,15 @@ def test_an_installed_file_is_never_replaced(tmp_path: Path, data_dir: Path) -> 
         unpack(zip_file(tmp_path, pack_zip()), data_dir, "hair09")
     assert mine.read_bytes() == b"my own material\n"
     assert files_under(data_dir) == {"hair/neat_bun/neat_bun.mhmat"}
+
+
+def test_a_link_where_a_file_would_go_is_never_replaced(tmp_path: Path, data_dir: Path) -> None:
+    link = data_dir / "hair" / "neat_bun" / "neat_bun.mhmat"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(data_dir / "elsewhere.mhmat")  # dangling, but inside the data directory
+    with pytest.raises(PackError, match="replace installed files"):
+        unpack(zip_file(tmp_path, pack_zip()), data_dir, "hair09")
+    assert link.is_symlink()
 
 
 def test_a_file_already_there_and_the_same_is_skipped(tmp_path: Path, data_dir: Path) -> None:

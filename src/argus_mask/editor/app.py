@@ -75,9 +75,9 @@ from argus_mask.editor.voices import (
 )
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
-from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
+from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
-from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
+from argus_mask.server.app import VIEWER_DIR, install_guards, model_response, read_body
 from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
@@ -351,11 +351,6 @@ def create_editor_app(
     @app.get("/face/{face_id}", response_model=FaceManifest)
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
-
-    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
-        return FileResponse(
-            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
-        )
 
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
@@ -663,7 +658,7 @@ def create_editor_app(
                 "screens": health.get("screens") or {},
                 "faces": rows
                 + [
-                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias", "cleared": cleared.get(face, True)}
+                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias", "cleared": cleared.get(face, False)}
                     for alias, face in (health.get("aliases") or {}).items()
                 ],
             }

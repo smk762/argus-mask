@@ -104,11 +104,12 @@ export class Stage {
   // A face's model: a .glb (format "gltf", the default) or a LAM splat head's .zip ("lam-splat").
   // Loads may overlap (a quick second click): only the latest one shows; an earlier one that finishes later is
   // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
+  // Resolves true once this face is shown, false if a later load superseded it (the caller should stop there).
   async load(modelUrl, framing = {}, format = 'gltf') {
     const gen = (this.loads = (this.loads || 0) + 1);
     if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
-    if (gen !== this.loads) { dispose(gltf.scene); return; }
+    if (gen !== this.loads) { dispose(gltf.scene); return false; }
     this.dropSplat();
     for (const child of [...this.pivot.children]) dispose(child);
     this.pivot.clear();
@@ -130,12 +131,13 @@ export class Stage {
     this.loaded = true;
     this.resize();
     this.look.focus(gltf.scene);
+    return true;
   }
 
   async loadSplat(modelUrl, framing, gen) {
     const { SplatHead, readSkin, jawCap } = await import('./splat.js');
     const skin = await readSkin(modelUrl);
-    if (gen !== this.loads) return;
+    if (gen !== this.loads) return false;
     this.dropSplat();
     for (const child of [...this.pivot.children]) dispose(child);
     this.pivot.clear();
@@ -153,10 +155,11 @@ export class Stage {
       if (gen === this.loads) this.dropSplat(); else box.remove();
       throw err;
     }
-    if (gen !== this.loads) { head.dispose(); box.remove(); return; }
+    if (gen !== this.loads) { head.dispose(); box.remove(); return false; }
     this.splat = head;
     this.motion = new Motion({ budget: skin.budget, rest: this.restWeights, life: this.restLife, cap: jawCap() });
     this.loaded = true;
+    return true;
   }
 
   dropSplat() {
