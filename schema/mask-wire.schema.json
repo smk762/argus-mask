@@ -330,7 +330,8 @@
       "type": "object"
     },
     "Provenance": {
-      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.",
+      "additionalProperties": false,
+      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.",
       "properties": {
         "cleared": {
           "description": "Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public.",
