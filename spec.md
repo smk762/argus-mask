@@ -201,7 +201,7 @@ Every JSON message carries a `type` (`header`, `frame`, `end`), so a socket and 
 
 The version lives on the header, not on every frame. A take file plus its audio replays in the viewer with no server-side model.
 
-**Config** (`ARGUS_MASK_*`): `ASSETS_DIR`, `DRIVER` (`energy` or `a2f`), `A2F_URL`, `TTS_URL` (used by `say` only; empty turns the command off), `FPS` (default 30), `CORS_ORIGINS`, `READ_ONLY`. Flags are read with cortex's `env_flag`. `ARGUS_GPU_DEVICE` (cortex's own name) selects the card `/health` probes.
+**Config** (`ARGUS_MASK_*`): `ASSETS_DIR`, `DRIVER` (`energy` or `a2f`), `A2F_URL`, `TTS_URL` (used by `say`, the server's `POST /speak` and the editor's Broadcast and Voices pages; empty turns them off), `TTS_VOICE`, `FPS` (default 30), `CORS_ORIGINS`, `READ_ONLY`. Flags are read with cortex's `env_flag`. `ARGUS_GPU_DEVICE` (cortex's own name) selects the card `/health` probes.
 
 ## Faces from curator (0.3)
 

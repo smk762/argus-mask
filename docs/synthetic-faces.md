@@ -5,7 +5,7 @@ This guide covers making a **source portrait**: one still image of a person who 
 - a Gaussian-splat head avatar built from one image ([#17](https://github.com/smk762/argus-mask/issues/17));
 - a 2D talking-head model used by `record` ([#18](https://github.com/smk762/argus-mask/issues/18)).
 
-Neither route is in argus-mask yet. Today a served face must be a `.glb` (see [README.md § Faces](../README.md#faces)). This guide is about making inputs that will work, and that you are allowed to use, once a route lands. Most of it also applies to a reference image for a new MakeHuman preset.
+The splat route has landed: a LAM head built from one portrait is served as a `.zip` beside the `.glb` heads (see [README.md § Faces](../README.md#faces)). The 2D talking-head route is still planned. This guide is about making inputs that work, and that you are allowed to use. Most of it also applies to a reference image for a new MakeHuman preset.
 
 What these models do with your image:
 - **One-shot avatar models** build a face from your image and move it by the *difference* from that face.
