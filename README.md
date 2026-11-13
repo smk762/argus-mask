@@ -2,7 +2,7 @@
 
 A talking face for the Argus suite. Audio goes in; a stream of facial animation frames comes out; a browser page renders a rigged head from those frames, in step with the audio, on any screen on the LAN.
 
-Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](spec.md).
+Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](https://github.com/smk762/argus-mask/blob/main/spec.md).
 
 ```
 audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN device)
@@ -14,7 +14,7 @@ audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN devic
 
 ## Status
 
-Built and tested: the engine, both drivers, faces, the server, the viewer's `flat` and `hld` tiers, the CLI, and the Audio2Face server in [a2f/](a2f/README.md).
+Built and tested: the engine, both drivers, faces, the server, the viewer's `flat` and `hld` tiers, the CLI, and the Audio2Face server in [a2f/](https://github.com/smk762/argus-mask/blob/main/a2f/README.md).
 
 Not built yet: the Looking Glass Go tier (0.2), and faces built from argus-curator output (0.3).
 
@@ -76,11 +76,11 @@ This is self-hosted software. What you put on your own screens at home is up to 
 
 Showing or sharing is different. A face is **cleared** (`cleared: true` in its provenance, and in `/faces`) when it is `stock`, `synthetic` or `consented`. Only cleared faces and voices go in this repo, its fixtures and examples, demos, recordings made to publish, or anything commercial. The editor marks a face that is not cleared as `personal`.
 
-To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](docs/synthetic-faces.md).
+To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md).
 
 ### The stock head
 
-The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform and carry the wet line and baked skin maps (revision 4 of `stock-01`, the first of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
+The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform and carry the wet line and baked skin maps (revision 4 of `stock-01`, the first of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md).
 
 ### Your own head
 
@@ -213,9 +213,9 @@ A build is a preview, kept in `assets/.preview/`, which the server never lists. 
 
 **Broadcast** (`/broadcast.html`, linked from both pages) is where a face speaks. It lists the faces the server serves and whether each is ready (a screen watching that can be heard), already speaking, or has no one to hear it. Pick one, and either **Say** text through the TTS service, with every option `argus-mask say` takes (voice, from the service's own list when it is a Wyoming server, or typed; pause between sentences; temperature, 0.1 to 1.5 or the service's own; seed; stream; the TTS URL; extra `-p key=value` fields), or **Push** a WAV file, as `argus-mask push` does. The editor runs the CLI's own code against the server, so the server's read-only switch and one-source-per-face rule apply as from a terminal; the page shows each step (the session, every sentence, the speech's length, done or why not) and can stop it. The matching command line is shown, to copy. The text goes to the TTS service and is never logged; the page shows its first 80 characters while it plays. **Record to file** records the broadcast as `argus-mask record` does: the recorder listens on the face first, then, once the broadcast ends, renders every frame in a headless browser (frame size 1280×720, 1920×1080 or the HLD's 1080×1920; the viewer's `high` look by default) and muxes the MP4 with the audio, its WAV and take beside it, into `ARGUS_MASK_RECORDINGS_DIR` (`--recordings-dir`, default `./recordings`). The page shows the clip to play or download, and lists recent ones. It needs the `record` extra and `playwright install chromium-headless-shell` where the editor runs; without them the checkbox says so.
 
-**Voices** (`/voices.html`) is where a voice is made. Upload one to three reference clips with their transcripts, or **generate** a synthetic candidate (the TTS service's own speaker, or a described voice on a service that designs them, reading a script you choose), and each is checked as a reference: speech length, sample rate, bandwidth, clipping, level, background noise, edges, pauses, delivery, and whether the transcript fits the audio, each with what to change. **Make the voice** sends the chosen clips and transcript to the TTS service (`/clone-voice`, Miso's contract) and keeps a record in `ARGUS_MASK_VOICES_DIR` (`--voices-dir`, default `./voices`): where the voice comes from (generated, your own, a consenting speaker's under a release, by its sha256, or personal: anyone else, for your own speakers, with a note of where the clips came from), its delivery, and the clips by hash, kept beside it. A clip with a bad check is not made into a voice. **Try a voice** speaks a line in the browser, no face involved. Voices made elsewhere show as having no record. See [docs/voices.md](docs/voices.md): what a good reference sounds like, recording your own, synthetic voices, and one voice per delivery (warm, brisk, …).
+**Voices** (`/voices.html`) is where a voice is made. Upload one to three reference clips with their transcripts, or **generate** a synthetic candidate (the TTS service's own speaker, or a described voice on a service that designs them, reading a script you choose), and each is checked as a reference: speech length, sample rate, bandwidth, clipping, level, background noise, edges, pauses, delivery, and whether the transcript fits the audio, each with what to change. **Make the voice** sends the chosen clips and transcript to the TTS service (`/clone-voice`, Miso's contract) and keeps a record in `ARGUS_MASK_VOICES_DIR` (`--voices-dir`, default `./voices`): where the voice comes from (generated, your own, a consenting speaker's under a release, by its sha256, or personal: anyone else, for your own speakers, with a note of where the clips came from), its delivery, and the clips by hash, kept beside it. A clip with a bad check is not made into a voice. **Try a voice** speaks a line in the browser, no face involved. Voices made elsewhere show as having no record. See [docs/voices.md](https://github.com/smk762/argus-mask/blob/main/docs/voices.md): what a good reference sounds like, recording your own, synthetic voices, and one voice per delivery (warm, brisk, …).
 
-It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
+It needs what [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
 
 ```bash
 argus-mask editor --assets-dir assets \
@@ -257,7 +257,7 @@ With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the dr
 | Driver | Needs | What you get |
 |---|---|---|
 | `energy` | nothing | The jaw opens with loudness and the mouth widens on hissy sounds. No lip shapes. For tests and for hosts with no NVIDIA GPU. |
-| `a2f` | the [Audio2Face server](a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
+| `a2f` | the [Audio2Face server](https://github.com/smk762/argus-mask/blob/main/a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
 
 Neither driver blinks or moves the eyes, or moves the head. Mask reads the voice itself (loudness and pitch: stressed syllables, phrase ends) and its idle layer adds the rest: nods on stresses and brows on emphasis, a settle at each phrase end, blinks in the pauses, saccades and glances with the head following, small movements of brow and mouth, and a slow sway. All from the audio and a seed, so a take replays identically.
 
@@ -270,7 +270,7 @@ Two kinds of service, told apart by the URL:
 - **`http(s)://…`**: an endpoint that takes `{"text": …}` and streams raw PCM, stating the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Miso TTS's `/synthesise/stream` is one. Extra request fields go in with `-p key=value`.
 - **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p language=…` and `-p speaker=…` pass through. Audio must be 16-bit.
 
-`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice; [docs/voices.md](docs/voices.md) covers making one. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers, and so is a name written `speaker:<name>` (Qwen3-TTS's CustomVoice names its speakers: `--voice speaker:Vivian`; a bare name would be taken for a clone). Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
+`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice; [docs/voices.md](https://github.com/smk762/argus-mask/blob/main/docs/voices.md) covers making one. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers, and so is a name written `speaker:<name>` (Qwen3-TTS's CustomVoice names its speakers: `--voice speaker:Vivian`; a bare name would be taken for a clone). Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
