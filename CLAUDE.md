@@ -80,6 +80,10 @@ Run one test: `uv run --no-sync pytest tests/test_x.py::test_name -q`.
 - **The viewer has no automated test** beyond `node --check`. After touching `viewer/`, run the server and `argus-mask push` a WAV, and watch a browser. `window.__mask` exposes its state (`.timeline`, `.weights` and `.head` as drawn), `window.__mask.look` the profile, `.lips` the measured lip budget, `.rest` the rest set. Lip shaping and idle life live in the viewer, never in takes: the engine's determinism is untouched. The look recognises parts by name (`head`, `eyes`, `hair`, `wetline`): a recipe change that renames them silently loses skin, catch-lights or soft hair.
 - Template-managed files (`Makefile`, `Dockerfile`, workflows) have local edits; `copier update` will ask about them.
 
+## Branches
+
+`dev` is the default branch and the base for every PR. Cut feature branches from `origin/dev` and bring them up to date by merging `origin/dev`, never `main`. Never open a PR against `main` or push work to it directly: `main` must never be ahead of `dev`. A release fast-forwards `main` to a `dev` commit that passed CI (`git push origin origin/dev:main`), then tags it. If `main` is protected and needs a PR, merge the release PR, then immediately merge `main` back into `dev` so the merge commit is not left on `main` alone.
+
 ## CI / release
 
 CI runs via the shared [`argus-ci`](https://github.com/smk762/argus-ci) reusable workflow. Release publishes to PyPI (OIDC trusted publishing) + GHCR on `v*` tags. Run `copier update` to pull template (CI/release/tooling) changes.
