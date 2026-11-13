@@ -118,7 +118,7 @@
           "type": "string"
         },
         "mask_version": {
-          "default": "1.1",
+          "default": "1.2",
           "title": "Mask Version",
           "type": "string"
         },
@@ -299,10 +299,21 @@
       "type": "object"
     },
     "ModelFile": {
+      "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.",
       "properties": {
         "file": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.glb$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.(glb|zip)$",
           "title": "File",
+          "type": "string"
+        },
+        "format": {
+          "default": "gltf",
+          "description": "gltf: a .glb; lam-splat: a LAM Gaussian-splat head, a .zip",
+          "enum": [
+            "gltf",
+            "lam-splat"
+          ],
+          "title": "Format",
           "type": "string"
         },
         "sha256": {
@@ -536,7 +547,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.1",
+          "default": "1.2",
           "title": "Mask Version",
           "type": "string"
         },

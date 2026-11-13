@@ -59,10 +59,10 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 
 ## Faces
 
-A face is a directory under the assets root holding a `.glb` and a `manifest.json`.
+A face is a directory under the assets root holding a model and a `manifest.json`. The model is a `.glb` (a mesh) or a LAM Gaussian-splat head's `.zip` (see [Splat heads](#splat-heads)).
 
 - **Model:** glTF 2.0 binary, with morph targets named for the 52 ARKit blendshapes (`jawOpen`, `eyeBlinkLeft`, …). Missing shapes are reported and ignored. Textures must be PNG or JPEG; the viewer loads no KTX2 or meshopt decoder.
-- **Manifest:** id, name, the model's file name and sha256, the shapes found, camera framing, and provenance.
+- **Manifest:** id, name, the model's file name, sha256 and `format` (`gltf`, the default, or `lam-splat`), the shapes found, camera framing, and provenance.
 - **Provenance is required.** A face with no provenance is not served. `kind` is one of:
   - `personal`: your own use. Needs only a `source` saying what it is. This is `inspect`'s default.
   - `stock` or `synthetic`: a published asset, or a generated face with no real person or owned character going in. Needs a `source` and a `license`.
@@ -90,6 +90,25 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
     --kind stock --source "where it came from" --license "CC0-1.0" \
     --distance 0.9 --height -0.08
 ```
+
+### Splat heads
+
+A **splat head** is a [LAM](https://github.com/aigc3d/LAM) (Large Avatar Model) avatar: a cloud of Gaussians made from one portrait, deformed by a FLAME head with the ARKit shapes. It looks like the photo it came from in a way no mesh head here does. Mask drives it like any face: the same frames, rest set, idle life and lip budget, on screens, in the editor's previews and in `record`.
+
+- **The file:** LAM's avatar archive, a `.zip` holding one folder with `skin.glb` (the FLAME mesh and its morph targets: 51 of the 52 ARKit shapes, no `tongueOut`), `offset.ply` (the splats), `animation.glb`, `vertex_order.json` and optionally `iris_occlusion.json`. Nothing else: zip the folder alone (macOS adds `__MACOSX/` and `.DS_Store`, which are refused).
+- **Checked, never unpacked to disk.** The server reads the archive in memory and refuses it, saying why in `inspect`, for: more than one top-level folder, a member it does not know or one missing, absolute paths, `..`, backslashes, duplicate names, links, encryption, more than 8 members, a member over 64 MiB or all of them over 160 MiB unpacked, a member that unpacks to over 100 times its packed size, an `offset.ply` that is not a PLY, JSON that does not parse, and a `skin.glb` whose morph targets are not ARKit shapes.
+- **Making one:** run LAM on a frontal portrait and export its "chatting avatar" (LAM's `tools/AVATAR_EXPORT_GUIDE.md`: the FBX SDK and Blender turn the result into `skin.glb`, `animation.glb` and `vertex_order.json` beside the `offset.ply`), and zip that one folder. Then:
+
+  ```bash
+  mkdir -p assets/c101-splat && cp c101.zip assets/c101-splat/
+  uv run argus-mask inspect assets/c101-splat/c101.zip --write-manifest \
+      --source "LAM head from a character-LoRA portrait; LAM weights CC BY-NC 4.0, FLAME non-commercial"
+  ```
+
+  The manifest gets `format: lam-splat` and the splat framing: LAM's heads stand at about 1.65 m, so the camera aims at `--height 1.65` from `--distance 0.7`, a tenth of the distance above its aim, with a 50 degree `--fov`.
+- **Licences: personal, never cleared.** LAM's code is Apache-2.0, but its weights are CC BY-NC 4.0 and FLAME's model is for non-commercial research. A head made with them is `personal` (whatever the portrait) until those licences change: it may be on your own screens, and in nothing published, shared or commercial. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
+- **On screens:** `display=flat` only (`hld` says it is not supported yet). `?bg=` works as for a mesh (not `transparent`); `?jaw=` moves the jaw cap's knee (default 0.35: past it, `jawOpen` and the lower lip open at 0.35 of the rate, since the inside of a splat mouth is weak; `?jaw=1` turns it off). The head turns through the rig's neck and head bones; LAM's own animation clips never play, so mask is the only thing that moves the face and a screen shows what a recording does. It needs no cross-origin isolation: it renders on a plain-http LAN page (checked in headless Chromium, GPU and software; check a real screen before relying on it). `window.__mask.renderer` says `splat` or `mesh`.
+- **Recording:** `argus-mask record` and the Broadcast page record a splat face as they do a mesh: each frame is posed, depth-sorted for the camera and drawn before its screenshot, so a frame rendered twice is byte-identical.
 
 ### Face aliases
 

@@ -31,9 +31,9 @@ def _settings() -> Settings:
 
 @app.command()
 def inspect(
-    face: Path = Argument(..., help="A face directory, or a .glb file"),
+    face: Path = Argument(..., help="A face directory, a .glb file, or a LAM splat head's .zip"),
     write_manifest: bool = Option(
-        False, "--write-manifest", help="Write manifest.json beside a .glb (needs the options below)"
+        False, "--write-manifest", help="Write manifest.json beside a .glb or .zip (needs the options below)"
     ),
     face_id: str = Option("", "--id", help="The face's id; default: its directory's name"),
     name: str = Option("", "--name", help="Display name; default: the id"),
@@ -47,15 +47,33 @@ def inspect(
     notes: str = Option("", "--notes", help="Provenance: anything else worth recording"),
     subject: str = Option("", "--subject", help="Provenance, consented: the person, as the release names them"),
     release: str = Option("", "--release-sha256", help="Provenance, consented: sha256 of the signed release"),
-    distance: float = Option(0.6, "--distance", help="Framing: camera distance from the model's origin, in metres"),
-    height: float = Option(0.0, "--height", help="Framing: camera height above the origin, in metres"),
-    fov: float = Option(30.0, "--fov", help="Framing: vertical field of view, in degrees"),
+    distance: float | None = Option(
+        None, "--distance", help="Framing: camera distance from the model's origin, in metres (default 0.6; splat 0.7)"
+    ),
+    height: float | None = Option(
+        None, "--height", help="Framing: camera height above the origin, in metres (default 0; splat 1.65)"
+    ),
+    fov: float | None = Option(
+        None, "--fov", help="Framing: vertical field of view, in degrees (default 30; splat 50)"
+    ),
     as_json: bool = Option(False, "--json", help="Print the report as JSON"),
 ) -> None:
-    """Check a face against the model contract: which of the 52 ARKit shapes it has, and its size."""
+    """Check a face against the model contract: which of the 52 ARKit shapes it has, and its size.
+
+    A LAM splat head (.zip) is checked without unpacking it: one folder of known members, sizes in bounds.
+    """
     from pydantic import ValidationError
 
-    from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb
+    from argus_mask.faces import (
+        MANIFEST_NAME,
+        SPLAT_FRAMING,
+        FaceError,
+        FaceStore,
+        SplatReport,
+        build_manifest,
+        inspect_model,
+        model_format,
+    )
     from argus_mask.models import Framing, Provenance
 
     refusal: str | None = None
@@ -63,21 +81,23 @@ def inspect(
     try:
         if face.is_dir():
             if write_manifest:
-                raise _fail("--write-manifest takes the .glb file, not the directory")
+                raise _fail("--write-manifest takes the model file (.glb or .zip), not the directory")
             try:
                 manifest, model = FaceStore(face.resolve().parent).load(face.resolve().name)
             except FaceError as exc:
                 refusal = str(exc)
-                models = sorted(face.glob("*.glb"))
+                models = sorted([*face.glob("*.glb"), *face.glob("*.zip")])
                 if len(models) != 1:
                     raise _fail(
-                        f"{face}: refused ({refusal}), and it holds {len(models)} .glb files, so none was inspected"
+                        f"{face}: refused ({refusal}), and it holds {len(models)} .glb or .zip files,"
+                        " so none was inspected"
                     ) from exc
                 model = models[0]
         else:
             model = face
-        report = inspect_glb(model)
+        report = inspect_model(model)
         if write_manifest:
+            default = SPLAT_FRAMING if model_format(model) == "lam-splat" else Framing()
             try:
                 manifest = build_manifest(
                     model,
@@ -91,7 +111,11 @@ def inspect(
                         subject=subject,
                         release_sha256=release.strip().lower() or None,
                     ),
-                    framing=Framing(distance=distance, height=height, fov=fov),
+                    framing=Framing(
+                        distance=default.distance if distance is None else distance,
+                        height=default.height if height is None else height,
+                        fov=default.fov if fov is None else fov,
+                    ),
                 )
             except ValidationError as exc:
                 raise _fail(
@@ -120,6 +144,16 @@ def inspect(
                         {"name": m.name, "triangles": m.triangles, "targets": len(m.targets)} for m in report.meshes
                     ],
                     "warnings": report.warnings,
+                    **(
+                        {
+                            "format": "lam-splat",
+                            "folder": report.folder,
+                            "members": report.members,
+                            "splats": report.splats,
+                        }
+                        if isinstance(report, SplatReport)
+                        else {"format": "gltf"}
+                    ),
                 },
                 indent=2,
             )
@@ -140,6 +174,11 @@ def inspect(
         )
         if report.missing:
             typer.echo(f"missing    {', '.join(report.missing)}")
+        if isinstance(report, SplatReport):
+            typer.echo(
+                f"splat head {report.folder}/: {', '.join(report.members)}"
+                + (f"; {report.splats} Gaussians" if report.splats is not None else "")
+            )
         typer.echo(f"meshes     {len(report.meshes)}, {report.triangles} triangles")
         sizes = ", ".join(f"{s[0]}x{s[1]}" if s else "unknown" for s in report.textures) or "none"
         typer.echo(f"textures   {sizes}")

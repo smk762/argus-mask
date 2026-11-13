@@ -304,10 +304,13 @@ export class Idle {
 const UNDER_SPEECH = (name) => (/^mouth|^jaw/.test(name) ? 0.5 : 1.0);
 
 // Composes what a face shows: frame (or relaxing) weights, the rest set, idle life when not live, then the
-// lip budget. Call `present` once per drawn frame with a Float32Array in *names* order.
+// lip budget. Call `present` once per drawn frame with a Float32Array in *names* order. `cap(weights, index)`,
+// if given, reshapes the weights in place (index: name -> position) just before the lip budget, so the budget
+// works on what will be shown: a splat head caps its jaw there (splat.js).
 export class Motion {
-  constructor({ budget = null, rest = {}, seed = 7, life = 1 } = {}) {
+  constructor({ budget = null, rest = {}, seed = 7, life = 1, cap = null } = {}) {
     this.budget = budget;
+    this.cap = cap;
     this.rest = rest;
     this.idle = new Idle({ seed, life });
     this.names = null;
@@ -343,6 +346,7 @@ export class Motion {
       }
       head = idle.head;
     }
+    if (this.cap) this.cap(out, this.index);
     this.shape(out);
     for (let i = 0; i < out.length; i += 1) out[i] = Math.min(1, Math.max(0, out[i]));
     return { weights: out, head };

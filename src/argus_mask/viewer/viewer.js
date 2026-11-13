@@ -1,5 +1,6 @@
 // The argus-mask viewer: one rigged head, driven by frames from the server and kept in step
-// with the audio by this page's own audio clock.
+// with the audio by this page's own audio clock. A LAM Gaussian-splat head (manifest.model.format
+// "lam-splat") is drawn by splat.js instead of three.js's mesh path, through the same frames and motion.
 //
 //   ?face=<id>       which face (default: the first the server lists)
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
@@ -19,6 +20,7 @@
 //   ?tone=agx        agx | aces | neutral | none, with ?exposure=1.0
 //   ?rest=<name>     the rest set to show instead of the face's own (warm, calm, neutral, ...: GET /expressions)
 //   ?life=1          how much the face moves at rest: 0 still, up to 2 (default: the rest set's own)
+//   ?jaw=0.35        splat heads: where the jaw cap's knee sits (1 turns the cap off)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -55,6 +57,7 @@ const readyEl = document.getElementById('ready');
 // What a test (or a curious operator in the console) can read.
 const state = window.__mask = {
   face: null, ready: false, connected: false, session: null, frames: 0, audioChunks: 0,
+  renderer: null,   // "mesh" (three.js) or "splat" (splat.js)
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
   look: null,   // the profile and effects in use: see look.js
   screenReady: false, kiosk: KIOSK,   // connected and heard (or, sound external, connected); a dedicated screen
@@ -83,27 +86,37 @@ state.pose = (weights, headTurn, blendshapes) => new Promise((resolve) => {
 
 // ---- scene ---------------------------------------------------------------------------------
 
-const transparent = DISPLAY === 'flat' && params.get('bg') === 'transparent';
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: transparent });
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-stageEl.appendChild(renderer.domElement);
-const scene = new THREE.Scene();
-if (DISPLAY === 'hld') {
-  scene.background = new THREE.Color(0x000000);   // the panel wants its subject on black
-  document.body.style.background = '#000';
-} else if (transparent) {
-  document.body.classList.add('transparent');
-} else {
-  const colour = params.get('bg') || '#101216';
-  try { scene.background = new THREE.Color(colour); document.body.style.background = colour; } catch { /* keep the default */ }
+// The mesh path's three.js scene, made once the face is known to be a mesh (a splat head draws its own).
+let renderer = null;
+let scene = null;
+let camera = null;
+let look = null;
+let pivot = null;
+let splat = null;          // the SplatHead (splat.js), for a splat face
+function meshScene() {
+  const transparent = DISPLAY === 'flat' && params.get('bg') === 'transparent';
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: transparent });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  stageEl.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  if (DISPLAY === 'hld') {
+    scene.background = new THREE.Color(0x000000);   // the panel wants its subject on black
+    document.body.style.background = '#000';
+  } else if (transparent) {
+    document.body.classList.add('transparent');
+  } else {
+    const colour = params.get('bg') || '#101216';
+    try { scene.background = new THREE.Color(colour); document.body.style.background = colour; } catch { /* keep the default */ }
+  }
+  camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+  // Lights, environment, tone mapping, materials and post: a recording renders offline, so it gets the most.
+  look = new Look(renderer, scene, camera, lookOptions(params, RECORD ? 'high' : 'medium'));
+  pivot = new THREE.Group();   // head rotation is applied here unless the model has a head bone
+  scene.add(pivot);
 }
-const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
-// Lights, environment, tone mapping, materials and post: a recording renders offline, so it gets the most.
-const look = new Look(renderer, scene, camera, lookOptions(params, RECORD ? 'high' : 'medium'));
-const pivot = new THREE.Group();   // head rotation is applied here unless the model has a head bone
-scene.add(pivot);
 
 function resize() {
+  if (!renderer) return;   // a splat head sizes itself to the page
   let width = window.innerWidth, height = window.innerHeight;
   if (DISPLAY === 'hld') {
     // Render at the panel's own size and scale the canvas to fit whatever window this is.
@@ -144,6 +157,10 @@ async function loadFace() {
   const reply = await fetch(`/face/${encodeURIComponent(faceId)}`);
   if (!reply.ok) throw new Error(`There is no face "${faceId}" on this server.`);
   const manifest = await reply.json();
+  if (manifest.model && manifest.model.format === 'lam-splat') return loadSplat(faceId, manifest);
+  state.renderer = 'mesh';
+  meshScene();
+  resize();
   const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model`);
   pivot.add(gltf.scene);
   look.apply(gltf.scene);
@@ -172,6 +189,55 @@ async function loadFace() {
   state.faceShown = manifest.id;   // the face itself: faceId may be an alias for it
   state.ready = true;
   return faceId;
+}
+
+// A LAM Gaussian-splat head (splat.js): the same frames, rest set, idle life and lip budget, drawn by the
+// splat renderer. The archive is fetched by its own name: the renderer wants a URL ending .zip.
+async function loadSplat(faceId, manifest) {
+  if (DISPLAY === 'hld') throw new Error('A splat face cannot be shown on display=hld yet. Use display=flat.');
+  state.renderer = 'splat';
+  const { SplatHead, readSkin, jawCap, JAW } = await import('./splat.js');
+  const url = `/face/${encodeURIComponent(faceId)}/model/${encodeURIComponent(manifest.model.file)}?v=${manifest.model.sha256}`;
+  const skin = await readSkin(url);
+  const host = document.createElement('div');
+  host.style.cssText = 'position: fixed; inset: 0;';
+  stageEl.appendChild(host);
+  let colour = params.get('bg') || '#101216';
+  if (colour === 'transparent') colour = '#101216';   // the splat renderer draws on an opaque canvas
+  try { new THREE.Color(colour); document.body.style.background = colour; } catch { colour = '#101216'; }
+  splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD });
+  let seed = 7;
+  for (const ch of manifest.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;   // each face idles its own way
+  const knee = Number.parseFloat(params.get('jaw'));
+  motion = new Motion({ budget: skin.budget, seed, life: LIFE ?? 1, cap: jawCap(Number.isFinite(knee) ? knee : JAW.knee) });
+  state.lips = motion.budget;
+  state.jaw = Number.isFinite(knee) ? knee : JAW.knee;
+  state.look = null;
+  await loadRest(faceId);
+  // The face at rest, drawn once before anyone is told it is ready.
+  const order = ARKIT;
+  const shown = motion.present(new Float32Array(order.length), order, { live: true, t: 0, dt: 0 });
+  splat.set(shown.weights, order, head);
+  await splat.exact();
+  state.weights = shown.weights;
+  if (RECORD) state.pose = splatPose;   // no draw loop: each pose is drawn when asked, and only then
+  state.face = faceId;
+  state.faceShown = manifest.id;
+  state.ready = true;
+  return faceId;
+}
+
+// Record mode on a splat head: the pose goes straight through motion.js to the splat renderer, and resolves
+// only once exactly that pose, depth-sorted for this camera, is on the canvas (splat.js exact()).
+function splatPose(weights, headTurn, blendshapes) {
+  if (blendshapes) names = blendshapes;
+  const order = names.length ? names : ARKIT;
+  current = Float32Array.from(weights);
+  Object.assign(head, headTurn);
+  const shown = motion.present(current, order, { live: true, t: 0, dt: 0 });
+  state.weights = shown.weights;
+  splat.set(shown.weights, order, head);
+  return splat.exact();
 }
 
 // The face's rest set: its own, or the page's ?rest=. A server without the route leaves the face neutral.
@@ -414,13 +480,19 @@ function draw() {
   }
   // The rest set, idle life when nothing plays, and the lip budget, over the frame's own weights.
   const shown = motion.present(current, order, { live, t: wall / 1000, dt });
-  applyWeights(shown.weights, order);
   if (!live) {
     const k = 1 - Math.exp(-RELAX_PER_S * dt);   // ease from the stream's last head to the idle's
     for (const axis of AXES) head[axis] += (shown.head[axis] - head[axis]) * k;
   }
-  applyHead();
-  look.render();
+  if (splat) {
+    state.weights = shown.weights;
+    splat.set(shown.weights, order, head);
+    splat.step();
+  } else {
+    applyWeights(shown.weights, order);
+    applyHead();
+    look.render();
+  }
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 
   drawn += 1;
@@ -436,10 +508,9 @@ function draw() {
 async function main() {
   if (DISPLAY === 'go') { fail('The Looking Glass Go tier is not built yet. Use display=flat or display=hld.'); return; }
   if (!['flat', 'hld'].includes(DISPLAY)) { fail(`Unknown display "${DISPLAY}". Use flat or hld.`); return; }
-  resize();
   let faceId;
   try { faceId = await loadFace(); } catch (error) { fail(error.message || String(error)); return; }
-  if (RECORD) { draw(); return; }   // posed from outside; no stream, no sound, no notice
+  if (RECORD) { if (!splat) draw(); return; }   // posed from outside; no stream, no sound, no notice
   connect(faceId);
   draw();
   // Browsers only start audio after a click or a key press. A kiosk can waive that

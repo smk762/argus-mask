@@ -1,7 +1,7 @@
-"""Fixtures built in code: a tiny ``.glb``, WAV files, and fake Audio2Face and TTS services.
+"""Fixtures built in code: a tiny ``.glb``, a tiny LAM splat archive, WAV files, and fake Audio2Face and TTS services.
 
 Only cleared material is in the repo: no real person's face or voice, no owned character. The model is one triangle with
-named morph targets; the audio is a tone.
+named morph targets (the splat archive's skin.glb is the same, its splats three points); the audio is a tone.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import struct
 import threading
 import time
 import wave
+import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -106,6 +107,58 @@ def make_face(
     if provenance is None:
         del manifest["provenance"]
     (directory / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    return directory
+
+
+SPLAT_SHAPES = ("eyeBlinkLeft", "eyeBlinkRight", "jawOpen", "mouthClose", "mouthFunnel", "mouthPucker")
+
+
+def make_ply(points: int = 3) -> bytes:
+    """A tiny binary PLY of Gaussians: positions, colour, opacity, scales, rotation (the fields LAM writes)."""
+    fields = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2", "opacity", "scale_0", "scale_1", "scale_2"]
+    fields += ["rot_0", "rot_1", "rot_2", "rot_3"]
+    header = "ply\nformat binary_little_endian 1.0\n" + f"element vertex {points}\n"
+    header += "".join(f"property float {f}\n" for f in fields) + "end_header\n"
+    body = np.zeros((points, len(fields)), dtype="<f4")
+    body[:, 0] = np.arange(points) * 0.01
+    body[:, 10] = 1.0
+    return header.encode() + body.tobytes()
+
+
+def splat_members(targets: tuple[str, ...] | list[str] = SPLAT_SHAPES) -> dict[str, bytes]:
+    """The members of a LAM head archive, by name in its folder."""
+    return {
+        "skin.glb": make_glb(targets),
+        "offset.ply": make_ply(),
+        "animation.glb": make_glb(()),
+        "vertex_order.json": json.dumps([0, 1, 2]).encode(),
+    }
+
+
+def make_splat_zip(
+    path: Path,
+    members: dict[str, bytes] | None = None,
+    *,
+    folder: str = "avatar",
+    entries: list[tuple[zipfile.ZipInfo | str, bytes]] | None = None,
+) -> Path:
+    """A LAM splat archive: *folder*/ and its *members* (default: a valid head), then any raw *entries* as given."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(zipfile.ZipInfo(f"{folder}/"), b"")
+        for name, data in (splat_members() if members is None else members).items():
+            archive.writestr(f"{folder}/{name}", data)
+        for info, data in entries or []:
+            archive.writestr(info, data)
+    return path
+
+
+def make_splat_face(root: Path, face_id: str = "splat-head", *, provenance: Provenance | None = STOCK) -> Path:
+    """A splat face directory under *root*: the archive and its manifest."""
+    directory = root / face_id
+    directory.mkdir(parents=True)
+    model = make_splat_zip(directory / "head.zip")
+    manifest = build_manifest(model, face_id=face_id, name="Splat head", provenance=provenance or STOCK)
+    (directory / MANIFEST_NAME).write_text(manifest.model_dump_json(), encoding="utf-8")
     return directory
 
 

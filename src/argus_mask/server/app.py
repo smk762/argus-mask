@@ -5,7 +5,8 @@
 ``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
 ``GET /face/{id}/rest``               the rest set it shows (``?set=`` another); ``GET /expressions`` lists them
-``GET /face/{id}/model``              its ``.glb``
+``GET /face/{id}/model``              its model: a ``.glb``, or a LAM splat head's ``.zip``
+``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``)
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
 ``POST /push?face=…``                 audio in over HTTP (a WAV, or PCM with format headers), played as a source
@@ -46,7 +47,7 @@ from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
-from argus_mask.faces import Aliases, FaceError, FaceStore
+from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
     DriverHealth,
@@ -329,11 +330,23 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face(face_id: str) -> FaceManifest:
         return face_or_404(face_id)[0]
 
+    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+        # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
+        return FileResponse(
+            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
+        )
+
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str) -> FileResponse:
+        return model_response(*face_or_404(face_id))
+
+    @app.get("/face/{face_id}/model/{file}")
+    def face_model_named(face_id: str, file: str) -> FileResponse:
+        """The model under its own name: only the manifest's file, never a path the request makes up."""
         manifest, path = face_or_404(face_id)
-        # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
-        return FileResponse(path, media_type="model/gltf-binary", headers={"ETag": f'"{manifest.model.sha256}"'})
+        if file != manifest.model.file:
+            raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
+        return model_response(manifest, path)
 
     def cross_site(ws: WebSocket) -> str | None:
         return origin_refusal({"type": "websocket", "method": "WebSocket"}, ws.headers)  # type: ignore[arg-type]

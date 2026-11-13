@@ -1,7 +1,10 @@
-"""Faces: a ``.glb`` and a ``manifest.json`` in a directory under the assets root.
+"""Faces: a model and a ``manifest.json`` in a directory under the assets root.
 
 * :func:`read_glb` and :func:`inspect_glb` check a model against the contract:
   glTF 2.0 binary, morph targets named for the ARKit blendshapes.
+* :func:`inspect_splat` checks a LAM Gaussian-splat head (a ``.zip``) without
+  unpacking it to disk: one folder of known members, bounded in count and size,
+  no path tricks, and a ``skin.glb`` whose morph targets are ARKit shapes.
 * :class:`FaceStore` lists the faces the server may serve. A face whose manifest
   has no provenance, names another id, points outside its directory or no longer
   matches its model's sha256 is refused, with the reason kept for ``inspect``.
@@ -17,13 +20,14 @@ import json
 import re
 import struct
 import threading
+import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
-from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, ModelFile, Provenance
+from argus_mask.models import FACE_ID_PATTERN, MODEL_SUFFIXES, FaceManifest, Framing, ModelFile, Provenance
 
 MANIFEST_NAME = "manifest.json"
 # The stock head's budget: a Raspberry Pi renders it once a frame, a Looking Glass Go 66 times.
@@ -84,7 +88,11 @@ class GlbReport:
 
 def read_glb(path: str | Path) -> tuple[dict, bytes]:
     """The JSON chunk and the binary chunk of a glTF 2.0 binary file."""
-    data = Path(path).read_bytes()
+    return parse_glb(Path(path).read_bytes(), str(path))
+
+
+def parse_glb(data: bytes, path: str = "model") -> tuple[dict, bytes]:
+    """:func:`read_glb` of bytes already in memory (*path* names them in errors)."""
     if len(data) < 20:
         raise FaceError(f"{path}: too short to be a .glb")
     magic, version, length = struct.unpack_from("<III", data, 0)
@@ -140,7 +148,11 @@ def _target_names(mesh: dict, count: int) -> list[str]:
 
 def inspect_glb(path: str | Path) -> GlbReport:
     """What a model has, against the contract."""
-    doc, binary = read_glb(path)
+    return glb_report(*read_glb(path))
+
+
+def glb_report(doc: dict, binary: bytes) -> GlbReport:
+    """:func:`inspect_glb` of a parsed glTF binary."""
     accessors = doc.get("accessors") or []
     views = doc.get("bufferViews") or []
     report = GlbReport()
@@ -183,6 +195,205 @@ def inspect_glb(path: str | Path) -> GlbReport:
     return report
 
 
+# ── LAM Gaussian-splat heads ──────────────────────────────────────────────────
+
+# A LAM avatar archive: one folder, these members and nothing else. The browser unpacks it (JSZip, in the
+# renderer), so the server refuses anything a careless unpacker could be hurt by before serving it.
+SPLAT_REQUIRED = ("skin.glb", "offset.ply", "animation.glb", "vertex_order.json")
+SPLAT_OPTIONAL = ("iris_occlusion.json",)
+SPLAT_MAX_MEMBERS = 8  # the folder and five files, with room to spare
+SPLAT_MAX_MEMBER = 64 << 20  # bytes unpacked, each (C101's largest, skin.glb, is 3.6 MB)
+SPLAT_MAX_TOTAL = 160 << 20  # bytes unpacked, all together; also the cap on the archive itself
+SPLAT_MAX_RATIO = 100  # unpacked to packed, for members over SPLAT_RATIO_FROM bytes: a zip bomb's tell
+SPLAT_RATIO_FROM = 64 << 10
+_SPLAT_FOLDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$")
+_S_IFMT, _S_IFREG, _S_IFDIR = 0o170000, 0o100000, 0o040000
+
+
+@dataclass
+class SplatReport:
+    """What a LAM splat archive holds. Its ARKit shapes are its ``skin.glb``'s morph targets."""
+
+    folder: str
+    members: dict[str, int]  # member name (in the folder) -> unpacked bytes
+    splats: int | None  # offset.ply's vertex count: the number of Gaussians
+    skin: GlbReport
+
+    @property
+    def present(self) -> list[str]:
+        return self.skin.present
+
+    @property
+    def missing(self) -> list[str]:
+        return self.skin.missing
+
+    @property
+    def extra(self) -> list[str]:
+        return self.skin.extra
+
+    @property
+    def meshes(self) -> list[MeshReport]:
+        return self.skin.meshes
+
+    @property
+    def textures(self) -> list[tuple[int, int] | None]:
+        return self.skin.textures
+
+    @property
+    def triangles(self) -> int:
+        return self.skin.triangles
+
+    @property
+    def warnings(self) -> list[str]:
+        # The triangle budget is a mesh face's: a splat head's cost is its Gaussians, and LAM's are fixed.
+        if self.missing:
+            return [f"{len(self.missing)} of the 52 ARKit shapes are missing; they will be ignored"]
+        return []
+
+
+def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, path: str) -> bytes:
+    """A member's bytes, counted as they unpack: the sizes in a zip's headers are the archive's own claim."""
+    out = bytearray()
+    try:
+        with archive.open(info) as handle:
+            while block := handle.read(1 << 20):
+                out += block
+                if len(out) > min(info.file_size, SPLAT_MAX_MEMBER):
+                    raise FaceError(f"{path}: {info.filename} unpacks to more than it says")
+    except (zipfile.BadZipFile, OSError, EOFError, RuntimeError, ValueError) as exc:  # a bad CRC, a bad stream
+        raise FaceError(f"{path}: {info.filename} does not unpack: {exc}") from exc
+    return bytes(out)
+
+
+def _member_name(name: str, path: str) -> PurePosixPath:
+    if not name or "\\" in name or "\x00" in name:
+        raise FaceError(f"{path}: the member name {name!r} has a backslash or a NUL")
+    if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+        raise FaceError(f"{path}: the member name {name!r} is an absolute path")
+    parts = name.rstrip("/").split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise FaceError(f"{path}: the member name {name!r} climbs out of its folder or has an empty part")
+    return PurePosixPath(*parts)
+
+
+def inspect_splat(path: str | Path) -> SplatReport:
+    """Check a LAM splat archive against the contract, reading it in memory, never unpacking it to disk.
+
+    Refused (:class:`FaceError`, saying why): not a zip; more than one top-level folder, or files outside
+    it; a member the format does not have, or one missing; a duplicate name, an absolute path, ``..``, a
+    backslash; a symlink or anything but a plain file or folder; an encrypted member, or one compressed
+    other than stored or deflated; a member over ``SPLAT_MAX_MEMBER`` unpacked, all of them over
+    ``SPLAT_MAX_TOTAL``, or one that unpacks over a hundred times its packed size; an ``offset.ply`` that is
+    not a PLY; JSON that does not parse; a ``skin.glb`` that is not a glTF binary, or whose morph targets
+    are not ARKit shapes.
+    """
+    label = str(path)
+    path = Path(path)
+    if path.stat().st_size > SPLAT_MAX_TOTAL:
+        raise FaceError(f"{label}: the archive is over {SPLAT_MAX_TOTAL >> 20} MiB")
+    try:
+        archive = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise FaceError(f"{label}: not a zip archive ({exc})") from exc
+    with archive:
+        infos = archive.infolist()
+        if len(infos) > SPLAT_MAX_MEMBERS:
+            raise FaceError(
+                f"{label}: {len(infos)} members; a LAM head has at most {SPLAT_MAX_MEMBERS}"
+                " (zip the folder alone, without extras such as __MACOSX/ or .DS_Store)"
+            )
+        names = [i.filename for i in infos]
+        if len(set(names)) != len(names):
+            raise FaceError(f"{label}: a member name appears twice")
+        folders: set[str] = set()
+        files: dict[str, zipfile.ZipInfo] = {}
+        total = 0
+        for info in infos:
+            name = _member_name(info.filename, label)
+            if info.flag_bits & 0x1:
+                raise FaceError(f"{label}: {info.filename} is encrypted")
+            if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                raise FaceError(f"{label}: {info.filename} is compressed in a way this reader does not take")
+            mode = info.external_attr >> 16
+            kind = mode & _S_IFMT
+            is_dir = info.is_dir()
+            if kind and kind != (_S_IFDIR if is_dir else _S_IFREG):
+                raise FaceError(f"{label}: {info.filename} is a link or a special file, not a plain file")
+            folders.add(name.parts[0])
+            if is_dir:
+                if len(name.parts) != 1:
+                    raise FaceError(f"{label}: {info.filename} is a folder inside the head's folder")
+                continue
+            if len(name.parts) != 2:
+                raise FaceError(f"{label}: {info.filename} is not a file directly in the head's folder")
+            member = name.parts[1]
+            if member not in SPLAT_REQUIRED + SPLAT_OPTIONAL:
+                raise FaceError(f"{label}: {info.filename} is not part of a LAM head")
+            if info.file_size > SPLAT_MAX_MEMBER:
+                raise FaceError(f"{label}: {info.filename} unpacks to over {SPLAT_MAX_MEMBER >> 20} MiB")
+            if info.file_size > SPLAT_RATIO_FROM and info.file_size > SPLAT_MAX_RATIO * max(1, info.compress_size):
+                raise FaceError(f"{label}: {info.filename} unpacks to over {SPLAT_MAX_RATIO} times its packed size")
+            total += info.file_size
+            if total > SPLAT_MAX_TOTAL:
+                raise FaceError(f"{label}: the members unpack to over {SPLAT_MAX_TOTAL >> 20} MiB together")
+            files[member] = info
+        if len(folders) != 1:
+            raise FaceError(f"{label}: {len(folders)} top-level entries; a LAM head is one folder")
+        folder = folders.pop()
+        if not _SPLAT_FOLDER.match(folder):
+            raise FaceError(f"{label}: the folder name {folder!r} is not a plain name")
+        if missing := [m for m in SPLAT_REQUIRED if m not in files]:
+            raise FaceError(f"{label}: missing {', '.join(missing)}")
+
+        # Every member is unpacked once, in memory, counting what really comes out.
+        data = {member: _read_member(archive, info, label) for member, info in files.items()}
+
+    ply = data["offset.ply"]
+    if not re.match(rb"^ply\r?\n", ply) or b"end_header" not in ply[: 64 << 10]:
+        raise FaceError(f"{label}: offset.ply is not a PLY file")
+    count = re.search(rb"\nelement vertex (\d+)", ply[: 64 << 10])
+    for member in ("vertex_order.json", *SPLAT_OPTIONAL):
+        if member in data:
+            try:
+                json.loads(data[member])
+            except ValueError as exc:
+                raise FaceError(f"{label}: {member} is not JSON: {exc}") from exc
+    parse_glb(data["animation.glb"], f"{label}: animation.glb")
+    skin = glb_report(*parse_glb(data["skin.glb"], f"{label}: skin.glb"))
+    if skin.extra:
+        raise FaceError(f"{label}: skin.glb has morph targets that are not ARKit shapes: {', '.join(skin.extra)}")
+    if not skin.present:
+        raise FaceError(f"{label}: skin.glb has no ARKit morph targets")
+    return SplatReport(
+        folder=folder,
+        members={m: len(b) for m, b in sorted(data.items())},
+        splats=int(count.group(1)) if count else None,
+        skin=skin,
+    )
+
+
+def model_format(path: str | Path) -> str:
+    """The format a model file is in, by its suffix: ``gltf`` (.glb) or ``lam-splat`` (.zip)."""
+    suffix = Path(path).suffix.lower()
+    for fmt, ending in MODEL_SUFFIXES.items():
+        if suffix == ending:
+            return fmt
+    raise FaceError(f"{path}: a model is a .glb (glTF binary) or a .zip (LAM splat head)")
+
+
+def inspect_model(path: str | Path) -> GlbReport | SplatReport:
+    """:func:`inspect_glb` or :func:`inspect_splat`, by the file's suffix."""
+    return inspect_splat(path) if model_format(path) == "lam-splat" else inspect_glb(path)
+
+
+# What a face's model is served as, by its format.
+MEDIA_TYPES: dict[str, str] = {"gltf": "model/gltf-binary", "lam-splat": "application/zip"}
+
+# Where the camera sits for a LAM head when the manifest does not say: LAM's heads stand at about 1.65 m
+# (FLAME's origin is at the feet). The viewer aims at ``height`` from a tenth of the distance above it.
+SPLAT_FRAMING = Framing(distance=0.7, height=1.65, fov=50.0)
+
+
 def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -194,14 +405,15 @@ def sha256_file(path: str | Path) -> str:
 def build_manifest(
     model: str | Path, *, face_id: str, name: str, provenance: Provenance, framing: Framing | None = None
 ) -> FaceManifest:
-    """A manifest for *model*, with its sha256 and the ARKit shapes it actually has."""
+    """A manifest for *model* (a .glb or a LAM .zip), with its sha256 and the ARKit shapes it actually has."""
     model = Path(model)
+    fmt = model_format(model)
     return FaceManifest(
         id=face_id,
         name=name,
-        model=ModelFile(file=model.name, sha256=sha256_file(model)),
-        blendshapes=inspect_glb(model).present,
-        framing=framing or Framing(),
+        model=ModelFile(file=model.name, sha256=sha256_file(model), format=fmt),  # type: ignore[arg-type]
+        blendshapes=inspect_model(model).present,
+        framing=framing or (SPLAT_FRAMING if fmt == "lam-splat" else Framing()),
         provenance=provenance,
     )
 
@@ -222,6 +434,7 @@ class FaceStore:
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
         self._hashes: dict[tuple[str, int, int], str] = {}  # (path, mtime_ns, size) -> sha256
+        self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
 
     def _sha256(self, path: Path) -> str:
         stat = path.stat()
@@ -254,7 +467,25 @@ class FaceStore:
             raise FaceError(f"the model {manifest.model.file} is not in the face's directory")
         if self._sha256(model) != manifest.model.sha256:
             raise FaceError("the model's sha256 does not match the manifest")
+        if manifest.model.format == "lam-splat":
+            report = self._splat(model)
+            if unknown := [n for n in manifest.blendshapes if n not in report.present]:
+                raise FaceError(f"the manifest names shapes the head's skin.glb does not have: {', '.join(unknown)}")
         return manifest, model
+
+    def _splat(self, path: Path) -> SplatReport:
+        """The archive's report, checked once per version of the file; :class:`FaceError` if it is refused."""
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        if key not in self._splats:
+            try:
+                self._splats[key] = inspect_splat(path)
+            except FaceError as exc:
+                self._splats[key] = str(exc).replace(f"{path}: ", "", 1)
+        found = self._splats[key]
+        if isinstance(found, str):
+            raise FaceError(found)
+        return found
 
     def scan(self) -> tuple[list[FaceManifest], dict[str, str]]:
         """Every face that may be served, and for each directory that may not, the reason."""
