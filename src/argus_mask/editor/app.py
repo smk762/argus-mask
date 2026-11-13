@@ -20,12 +20,17 @@
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
 ``GET  /broadcast/{job}``, ``POST /broadcast/{job}/stop``  a broadcast's progress; stop it
 ``GET  /broadcast.html``                the Broadcast page
+``GET  /packs``                         the community asset packs in the catalogue, and which are installed
+``POST /packs/{id}/install``            install a catalogued pack into MPFB's data (a job); ``GET /packs/jobs/{job}``
+``GET  /packs.html``                    the Asset packs page
 ``GET  /``                              the editor page
 
 ``POST /build`` starts Blender, so it is behind the same origin and read-only
 guards as the server's writes. A preset names assets by reference, and every
 reference is looked up in the installed library: no path from the request
 reaches the file system or Blender's command line except through that lookup.
+A pack is installed by its catalogue id alone: the URL, the hash and where it
+unpacks come from the catalogue and the configured data directory, never the request.
 """
 
 from __future__ import annotations
@@ -55,6 +60,8 @@ from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_rea
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
+from argus_mask.editor.packs import Busy as Installing
+from argus_mask.editor.packs import Installs, PackError, load_catalogue
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.editor.voices import (
     DELIVERIES,
@@ -66,8 +73,10 @@ from argus_mask.editor.voices import (
     provenance,
     wav_bytes,
 )
-from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
-from argus_mask.models import FACE_ID_PATTERN, FaceManifest
+from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
+from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
+from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
+from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
@@ -99,6 +108,18 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
 
 
 MAX_TEXT = 5000  # characters a broadcast may say: a long paragraph or two
+
+
+def face_row(face: dict) -> dict:
+    """A served face as the Broadcast page lists it. A server that predates ``cleared`` is read by its kind."""
+    prov = face.get("provenance") or {}
+    cleared = prov.get("cleared")
+    return {
+        "id": face["id"],
+        "name": face.get("name") or face["id"],
+        "kind": prov.get("kind"),
+        "cleared": cleared if isinstance(cleared, bool) else prov.get("kind") in CLEARED_KINDS,
+    }
 
 
 def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
@@ -166,7 +187,9 @@ class VoiceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     delivery: Literal[DELIVERIES] = "neutral"  # type: ignore[valid-type]
     clips: list[VoiceClip] = Field(..., min_length=1, max_length=5)
-    source: dict = Field(..., description="kind (generated, own, consented), and what made it or the release")
+    source: dict = Field(
+        ..., description="kind (generated, own, consented, personal), and what made it, the release, or where from"
+    )
     tts_url: str = Field("", max_length=500)
 
 
@@ -177,6 +200,17 @@ class VoiceTry(BaseModel):
     temperature: float | None = Field(None, ge=0.1, le=1.5)
     tidy: bool = True
     tts_url: str = Field("", max_length=500)
+
+
+class RestChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    set: str | None = Field(None, max_length=64, description="a rest set's name; null: the default")
+
+
+class RestDefine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    weights: dict[str, float] = Field(default_factory=dict, max_length=52)
+    life: float = 1.0
 
 
 class AliasTarget(BaseModel):
@@ -194,7 +228,11 @@ PAGE_DIR = Path(__file__).resolve().parent / "page"
 
 
 def create_editor_app(
-    settings: Settings | None = None, editor: EditorSettings | None = None, *, builder: Builder | None = None
+    settings: Settings | None = None,
+    editor: EditorSettings | None = None,
+    *,
+    builder: Builder | None = None,
+    packs: Installs | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -209,17 +247,20 @@ def create_editor_app(
     )
     store = FaceStore(cfg.assets_dir)
     aliases = Aliases(store)
+    expressions = Expressions(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
     generations = Generations(voice_store)
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
+    packs = packs or Installs(ed.data_dir, load_catalogue())
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await broadcasts.stop_all()
         await generations.stop_all()
+        await packs.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -246,6 +287,35 @@ def create_editor_app(
         if asset is None or asset.thumb is None:
             raise HTTPException(404, "no thumbnail")
         return FileResponse(asset.thumb, media_type="image/png")
+
+    # ---- asset packs: the community's packs, from the checked-in catalogue, installed by id ------------
+
+    @app.get("/packs")
+    def pack_list() -> dict:
+        return {
+            "data_dir": str(packs.data_dir) if packs.data_dir else None,
+            "ready": packs.ready,
+            "packs": packs.listing(),
+            "jobs": [j.public() for j in packs.jobs.values() if j.running],
+        }
+
+    @app.post("/packs/{pack_id}/install")
+    async def pack_install(pack_id: str) -> dict:
+        try:
+            job = packs.start(pack_id)
+        except Installing as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except PackError as exc:
+            raise HTTPException(404 if pack_id not in packs.catalogue else 422, str(exc)) from exc
+        log.info("pack_install", pack=pack_id)
+        return job.public()
+
+    @app.get("/packs/jobs/{job_id}")
+    def pack_job(job_id: str) -> dict:
+        job = packs.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such install")
+        return job.public()
 
     @app.get("/modifiers")
     def modifiers() -> dict:
@@ -282,10 +352,22 @@ def create_editor_app(
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
 
+    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+        return FileResponse(
+            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
+        )
+
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
+        return model_response(*find_face(face_id, where))
+
+    @app.get("/face/{face_id}/model/{file}")
+    def face_model_named(face_id: str, file: str, where: str | None = Query(None, alias="from")) -> FileResponse:
+        # The model under its own name, for the splat renderer (it wants a URL ending .zip): only the manifest's file.
         manifest, path = find_face(face_id, where)
-        return FileResponse(path, media_type="model/gltf-binary", headers={"ETag": f'"{manifest.model.sha256}"'})
+        if file != manifest.model.file:
+            raise HTTPException(404, f"face {face_id!r} has no file {file!r}")
+        return model_response(manifest, path)
 
     @app.post("/build")
     async def build(preset: Preset) -> dict:
@@ -378,6 +460,12 @@ def create_editor_app(
                 raise HTTPException(
                     500, f"renamed to {new_id!r}, but {aliases.path.name} was not updated: {exc}"
                 ) from exc
+            try:
+                expressions.repoint(face_id, new_id)  # and so does its rest set
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"renamed to {new_id!r}, but {expressions.path.name} was not updated: {exc}"
+                ) from exc
         return {"id": new_id}
 
     @app.delete("/saved/{face_id}")
@@ -397,7 +485,55 @@ def create_editor_app(
             raise HTTPException(409, str(exc)) from exc
         except OSError as exc:
             raise HTTPException(500, f"delete failed: {exc}") from exc
+        if where in (None, "export"):
+            with contextlib.suppress(OSError):  # the face is gone; a stale choice is ignored anyway
+                expressions.repoint(face_id, None)
         return {"trash": str(trash)}
+
+    # ---- rest sets: the baseline expression each face holds at rest, kept in the assets' expressions.json --
+
+    @app.get("/expressions")
+    def expression_list() -> dict:
+        return {
+            "sets": {n: s.model_dump() for n, s in expressions.sets().items()},
+            "builtin": sorted(EXPRESSION_BUILTIN),
+            "faces": expressions.choices(),
+            "default": DEFAULT_SET,
+            "problems": expressions.problems(),
+        }
+
+    @app.put("/expressions/faces/{face_id}")
+    def expression_choose(face_id: str, choice: RestChoice) -> dict:
+        """Which rest set a face shows. Screens pick it up when they next load the face."""
+        if not _FACE_ID.match(face_id):
+            raise HTTPException(404, f"no face {face_id!r}")
+        try:
+            expressions.choose(face_id, choice.set)
+        except ExpressionError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {expressions.path.name}: {exc}") from exc
+        log.info("rest_chosen", face=face_id, set=choice.set)
+        return {"face": face_id, "set": choice.set or DEFAULT_SET}
+
+    @app.put("/expressions/sets/{name}")
+    def expression_define(name: str, body: RestDefine) -> dict:
+        try:
+            rest = check_set(name, body.weights, body.life)
+            expressions.define(rest)
+        except ExpressionError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {expressions.path.name}: {exc}") from exc
+        log.info("rest_set_defined", set=name)
+        return rest.model_dump()
+
+    @app.delete("/expressions/sets/{name}")
+    def expression_remove(name: str) -> dict:
+        if not expressions.remove(name):
+            raise HTTPException(404, f"no rest set {name!r} of your own (built-in sets cannot be removed)")
+        log.info("rest_set_removed", set=name)
+        return {"removed": name}
 
     # ---- aliases: stable names for faces (a persona's "holly"), kept in the assets' aliases.json -------
 
@@ -518,18 +654,16 @@ def create_editor_app(
         }
         if status == 200 and isinstance(health, dict):
             _, faces, _ = await asyncio.to_thread(server_get, ed.server_url, "/faces")
+            rows = [face_row(f) for f in (faces or []) if isinstance(f, dict) and f.get("id")]
+            cleared = {r["id"]: r["cleared"] for r in rows}  # an alias is as cleared as the face it names
             out |= {
                 "read_only": bool(health.get("read_only")),
                 "driver": health.get("driver") or {},
                 "live": health.get("live") or [],
                 "screens": health.get("screens") or {},
-                "faces": [
-                    {"id": f["id"], "name": f.get("name") or f["id"], "kind": (f.get("provenance") or {}).get("kind")}
-                    for f in (faces or [])
-                    if isinstance(f, dict) and f.get("id")
-                ]
+                "faces": rows
                 + [
-                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias"}
+                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias", "cleared": cleared.get(face, True)}
                     for alias, face in (health.get("aliases") or {}).items()
                 ],
             }
@@ -844,6 +978,16 @@ def create_editor_app(
         if not broadcasts.stop(job_id):
             raise HTTPException(404, "no such broadcast running")
         return {"stopping": job_id}
+
+    @app.get("/motion.js")
+    def motion() -> FileResponse:
+        # The lip budget, rest sets and idle life, shared with the viewer.
+        return FileResponse(VIEWER_DIR / "motion.js", media_type="text/javascript")
+
+    @app.get("/splat.js")
+    def splat() -> FileResponse:
+        # LAM Gaussian-splat heads, driven as the viewer drives them: the previews of a splat face use it.
+        return FileResponse(VIEWER_DIR / "splat.js", media_type="text/javascript")
 
     @app.get("/look.js")
     def look() -> FileResponse:

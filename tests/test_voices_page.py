@@ -86,10 +86,20 @@ def test_making_a_voice_needs_its_provenance(voices_page) -> None:
             ({"kind": "generated", "confirmed": True}, "names what made it"),
             ({"kind": "consented", "confirmed": True, "speaker": "A. Person"}, "sha256"),
             ({"kind": "consented", "confirmed": True, "release_sha256": RELEASE}, "name the consenting speaker"),
+            ({"kind": "personal"}, "where the clips come from"),
         ]:
             refused = c.post("/voice/create", json=make_body(sha, source=source))
             assert refused.status_code == 422 and why in refused.json()["detail"], (source, refused.text)
         assert not [s for s in seen if "clone" in s]  # nothing reached the TTS service
+
+
+def test_a_personal_voice_records_where_it_came_from_and_is_not_cleared(voices_page) -> None:
+    clones = {"clones": []}
+    with fake_tts(speechlike(1.0, 24000), 24000, voices={"clones": clones}) as (tts, _), voices_page(tts) as c:
+        sha = check(c, speechlike())["sha"]
+        made = c.post("/voice/create", json=make_body(sha, source={"kind": "personal", "origin": "a game character"}))
+        assert made.status_code == 200, made.text
+        assert made.json()["source"] == {"kind": "personal", "origin": "a game character", "cleared": False}
 
 
 def test_a_voice_is_made_recorded_tried_and_deleted(voices_page, tmp_path) -> None:
@@ -105,6 +115,7 @@ def test_a_voice_is_made_recorded_tried_and_deleted(voices_page, tmp_path) -> No
             "release_sha256": RELEASE,
             "speaker": "A. Person",
             "confirmed": True,
+            "cleared": True,
         }
         assert (
             record["clips"][0]["sha256"] == sha

@@ -118,7 +118,7 @@
           "type": "string"
         },
         "mask_version": {
-          "default": "1.0",
+          "default": "1.2",
           "title": "Mask Version",
           "type": "string"
         },
@@ -299,10 +299,21 @@
       "type": "object"
     },
     "ModelFile": {
+      "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.",
       "properties": {
         "file": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.glb$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.(glb|zip)$",
           "title": "File",
+          "type": "string"
+        },
+        "format": {
+          "default": "gltf",
+          "description": "gltf: a .glb; lam-splat: a LAM Gaussian-splat head, a .zip",
+          "enum": [
+            "gltf",
+            "lam-splat"
+          ],
+          "title": "Format",
           "type": "string"
         },
         "sha256": {
@@ -319,19 +330,28 @@
       "type": "object"
     },
     "Provenance": {
-      "description": "Where a face came from. Required: a face without it is not served.",
+      "additionalProperties": false,
+      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.",
       "properties": {
+        "cleared": {
+          "description": "Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public.",
+          "readOnly": true,
+          "title": "Cleared",
+          "type": "boolean"
+        },
         "kind": {
           "enum": [
+            "personal",
             "stock",
             "synthetic",
+            "consented",
             "curated"
           ],
           "title": "Kind",
           "type": "string"
         },
         "license": {
-          "minLength": 1,
+          "default": "",
           "title": "License",
           "type": "string"
         },
@@ -340,18 +360,66 @@
           "title": "Notes",
           "type": "string"
         },
+        "release_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Sha256"
+        },
         "source": {
           "minLength": 1,
           "title": "Source",
+          "type": "string"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
           "type": "string"
         }
       },
       "required": [
         "kind",
         "source",
-        "license"
+        "cleared"
       ],
       "title": "Provenance",
+      "type": "object"
+    },
+    "RestSet": {
+      "description": "A named baseline expression: what a face holds at rest and speaks from (``GET /face/{id}/rest``).\n\nThe viewer adds ``weights`` to every frame (the mouth's at half while speaking, so the mouth stays the\ndriver's) and, at rest, moves the face by ``life``: 0 still, 1 the default, up to 2.",
+      "properties": {
+        "life": {
+          "default": 1.0,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Life",
+          "type": "number"
+        },
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "weights": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "ARKit blendshape name -> weight, 0 to 1",
+          "title": "Weights",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RestSet",
       "type": "object"
     },
     "Screen": {
@@ -480,7 +548,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.0",
+          "default": "1.2",
           "title": "Mask Version",
           "type": "string"
         },

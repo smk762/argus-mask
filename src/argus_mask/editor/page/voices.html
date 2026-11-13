@@ -69,6 +69,7 @@
   <a class="nav" href="./">Editor</a>
   <a class="nav" href="./faces.html">Saved faces</a>
   <a class="nav" href="./broadcast.html">Broadcast</a>
+  <a class="nav" href="./packs.html">Asset packs</a>
   <a class="nav" href="https://github.com/smk762/argus-mask/blob/dev/docs/voices.md" target="_blank" rel="noopener">Guide</a>
   <span id="tts">Asking…</span>
 </header>
@@ -130,13 +131,15 @@
             <option value="generated">Generated: a TTS's own or described voice, no real person</option>
             <option value="own">My own voice</option>
             <option value="consented">A consenting speaker, under a signed release</option>
+            <option value="personal">Personal use: anyone else, on my own speakers only</option>
           </select></label>
+        <label id="v-origin-wrap" hidden title="Kept in voice.json so you know later what this voice is">Where the clips come from <input type="text" id="v-origin" maxlength="300" placeholder="a game character, an audiobook narrator"></label>
         <label id="v-generator-wrap">What made it <input type="text" id="v-generator" maxlength="300" placeholder="Miso speaker 1, temperature 0.8"></label>
         <div class="grid" id="v-consent-wrap" hidden>
           <label>Speaker, as the release names them <input type="text" id="v-speaker" maxlength="120"></label>
           <label title="sha256sum release.pdf: the hash binds the voice to the document without keeping it here">Release sha256 <input type="text" id="v-release" maxlength="64" placeholder="64 hex characters"></label>
         </div>
-        <label class="check consent"><input type="checkbox" id="v-confirm"> <span>These clips are not of anyone who has not agreed to it: not taken from a film, show, game, video, podcast or call, and not of someone imitated.</span></label>
+        <label class="check consent" id="v-confirm-wrap"><input type="checkbox" id="v-confirm"> <span>These clips are not of anyone who has not agreed to it: not taken from a film, show, game, video, podcast or call, and not of someone imitated.</span></label>
         <div class="row"><button type="button" class="primary" id="v-make" disabled>Make the voice</button><span class="hint" id="v-note"></span></div>
       </div>
     </section>

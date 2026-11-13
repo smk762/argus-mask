@@ -14,10 +14,12 @@ from __future__ import annotations
 from typing import Literal
 
 from argus_cortex.wire import make_versioned_base, render_schema
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 # 1.0: initial contract.
-MASK_VERSION = "1.0"
+# 1.1: provenance kinds personal and consented, consent fields, and the derived ``cleared``.
+# 1.2: ``ModelFile.format``: a face is a glTF binary (``.glb``) or a LAM Gaussian-splat head (``.zip``).
+MASK_VERSION = "1.2"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -87,18 +89,93 @@ class StreamEnd(BaseModel):
     duration_ms: int = Field(..., ge=0)
 
 
-class Provenance(BaseModel):
-    """Where a face came from. Required: a face without it is not served."""
+ProvenanceKind = Literal["personal", "stock", "synthetic", "consented", "curated"]
+# The kinds the project may ship, show or demo. ``personal`` is served on the user's own screens and is
+# never cleared: a cartoon, a character from a film, a character LoRA. Legal for private use is the floor;
+# what argus-darkroom refuses (its illegal rules) is not a face here either.
+CLEARED_KINDS: frozenset[str] = frozenset({"stock", "synthetic", "consented"})
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
-    kind: Literal["stock", "synthetic", "curated"]
+
+class Provenance(BaseModel):
+    """Where a face came from. Required: a face without it is not served.
+
+    - ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not
+      cleared to show or share.
+    - ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or
+      owned character going in.
+    - ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the
+      release's sha256 (never the document) and the subject as the release names them.
+    - ``curated``: refused until 0.3 defines what a curated face must prove.
+
+    Unknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for
+    ``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: ProvenanceKind
     source: str = Field(..., min_length=1)
-    license: str = Field(..., min_length=1)
+    license: str = ""
     notes: str = ""
+    subject: str = ""
+    release_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        data = {k: v for k, v in data.items() if k != "cleared"}
+        if "licence" in data:
+            licence = data.pop("licence")
+            if "license" in data and data["license"] != licence:
+                raise ValueError("give the licence once: `license` and `licence` disagree")
+            data["license"] = licence
+        return data
+
+    @model_validator(mode="after")
+    def _complete(self) -> Provenance:
+        if not self.source.strip():
+            raise ValueError("a face states its source: where it came from")
+        if self.kind != "personal" and not self.license.strip():
+            raise ValueError(f"a {self.kind} face states its licence")
+        if self.kind == "consented" and not (self.release_sha256 and self.subject.strip()):
+            raise ValueError("a consented face names its subject and the sha256 of the signed release")
+        return self
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cleared(self) -> bool:
+        """Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public."""
+        return self.kind in CLEARED_KINDS
+
+
+ModelFormat = Literal["gltf", "lam-splat"]
+# The file each format comes in: a manifest whose file and format disagree is refused.
+MODEL_SUFFIXES: dict[str, str] = {"gltf": ".glb", "lam-splat": ".zip"}
 
 
 class ModelFile(BaseModel):
-    file: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.glb$")
+    """A face's model, in its directory: its file name, sha256 and format.
+
+    - ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a
+      manifest from before 1.2 reads as it did.
+    - ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and
+      its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally
+      ``iris_occlusion.json``.
+    """
+
+    file: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(glb|zip)$")
     sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    format: ModelFormat = Field("gltf", description="gltf: a .glb; lam-splat: a LAM Gaussian-splat head, a .zip")
+
+    @model_validator(mode="after")
+    def _agrees(self) -> ModelFile:
+        suffix = MODEL_SUFFIXES[self.format]
+        if not self.file.endswith(suffix):
+            raise ValueError(f"a {self.format} model is a {suffix} file, not {self.file}")
+        return self
 
 
 class Framing(BaseModel):
@@ -177,8 +254,20 @@ class Health(BaseModel):
     )
 
 
+class RestSet(BaseModel):
+    """A named baseline expression: what a face holds at rest and speaks from (``GET /face/{id}/rest``).
+
+    The viewer adds ``weights`` to every frame (the mouth's at half while speaking, so the mouth stays the
+    driver's) and, at rest, moves the face by ``life``: 0 still, 1 the default, up to 2.
+    """
+
+    name: str = Field(..., pattern=FACE_ID_PATTERN)
+    weights: dict[str, float] = Field(default_factory=dict, description="ARKit blendshape name -> weight, 0 to 1")
+    life: float = Field(1.0, ge=0.0, le=2.0)
+
+
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
     return render_schema(
-        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus], title=WIRE_TITLE
+        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus, RestSet], title=WIRE_TITLE
     )

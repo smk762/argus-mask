@@ -5,7 +5,7 @@ This guide covers making a **source portrait**: one still image of a person who 
 - a Gaussian-splat head avatar built from one image ([#17](https://github.com/smk762/argus-mask/issues/17));
 - a 2D talking-head model used by `record` ([#18](https://github.com/smk762/argus-mask/issues/18)).
 
-Neither route is in argus-mask yet. Today a served face must be a `.glb` (see [README.md § Faces](../README.md#faces)). This guide is about making inputs that will work, and that you are allowed to use, once a route lands. Most of it also applies to a reference image for a new MakeHuman preset.
+The splat route has landed: a LAM head built from one portrait is served as a `.zip` beside the `.glb` heads (see [README.md § Faces](../README.md#faces)). The 2D talking-head route is still planned. This guide is about making inputs that work, and that you are allowed to use. Most of it also applies to a reference image for a new MakeHuman preset.
 
 What these models do with your image:
 - **One-shot avatar models** build a face from your image and move it by the *difference* from that face.
@@ -13,16 +13,21 @@ What these models do with your image:
 
 Either way, whatever is in the image (a smile, a shadow, a strand of hair over an eye) becomes part of the face for good. A careful input saves more time than any later fix.
 
-## The rule: a person who does not exist
+## Personal or synthetic
 
-The rule is **no real person's face without consent**. A synthetic face involves no consent, so it has to be synthetic all the way through:
+There are two tiers ([README.md § Personal and cleared](../README.md#personal-and-cleared)):
+
+- **Personal:** a portrait for your own screens at home. Use whatever you may lawfully use privately: a character LoRA, a film still, a fan-art style. Record the inputs anyway (see [Recording provenance](#recording-provenance)) and build the face as `kind: personal`. Generate through [argus-darkroom](https://github.com/smk762/argus-darkroom), so the same legal floor applies as for any other image: what darkroom refuses is not a face either.
+- **Synthetic, and so cleared:** a face you may show, share, demo or ship. It is a person who does not exist, so it involves no consent, and it has to be synthetic all the way through. The rest of this section is the bar for it.
+
+The rule for showing a face is **no real person's face, and no owned character, without a release**. A synthetic face must meet all of these:
 
 - **Inputs:**
-  - Don't name real people, characters played by real actors, or "in the style of" a real person in the prompt.
+  - Don't name real people, named characters, or "in the style of" a real person in the prompt.
   - No img2img, inpainting base, IP-Adapter, InstantID, PhotoMaker, or face-swap from a photo of a real person.
-  - No LoRA or fine-tune trained on a real person's face.
+  - No LoRA or fine-tune trained on a real person's face or on a specific character. A character LoRA reproduces the character: the output is derived from it, however far the prompt pushes.
   
-  A real person's face as an input makes the output *their* likeness. That needs their documented consent (see [#19](https://github.com/smk762/argus-mask/issues/19)), and it is a different kind of face, not a synthetic one.
+  A real person's face as an input makes the output *their* likeness, and a character as input makes it that character. Either can still be cleared, as `consented`, under a release (see [#19](https://github.com/smk762/argus-mask/issues/19)). Without one it is `personal`, never `synthetic`.
 - **Look-alike check:** image models sometimes reproduce famous faces anyway. Before using a portrait, run a reverse image search and look at it honestly. If it looks like someone you could name, throw it away and change the seed. This is a best-effort check. The real guarantee is that nothing real went in.
 - **18 and over.** Write the age into the prompt ("a woman in her twenties", "a man in his forties"), and put "child, minor" in the negative prompt. Discard anything that reads as under 18. This is the same floor the head recipe uses ([spec.md § The stock head](../spec.md#the-stock-head)).
 - **The generator's license:**
@@ -124,11 +129,19 @@ argus-mask inspect assets/<face-id>/head.glb --write-manifest \
     --notes "A generated character, not a real person. No real-person inputs. Look-alike check: <what, when>."
 ```
 
+A personal face needs only its source; the licence is optional:
+
+```bash
+argus-mask inspect assets/<face-id>/head.glb --write-manifest --id <face-id> --name "…" \
+    --source "AureaNuance_XL (sha256 …) + a character LoRA (sha256 …), seed …; see generation.json"
+```
+
 [#19](https://github.com/smk762/argus-mask/issues/19) will add a dedicated provenance kind for generated faces, which carries the model, license, seed and prompt as fields. Until then they go in `source` and `notes` as above.
 
 ## Checklist
 
-- [ ] No real person in the prompt, the image inputs, or the LoRAs.
+- [ ] Personal or synthetic decided, and `kind` set to match.
+- [ ] For synthetic: no real person or named character in the prompt, the image inputs, or the LoRAs.
 - [ ] The person reads as 18 or over.
 - [ ] Look-alike check done and recorded.
 - [ ] Frontal, level, neutral, lips closed, eyes open to the lens.

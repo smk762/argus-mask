@@ -6,7 +6,9 @@ twice. Making a voice sends the chosen clips and their transcript to the TTS ser
 ``/clone-voice`` (Miso's contract) and writes ``<voices>/<id>/voice.json``: where the voice
 came from, the clips by hash, the delivery, and the check's verdict. The clips are kept beside
 it. Like a face, a voice carries its provenance: generated (no real person), the user's own,
-or a consenting speaker's under a release (by the release's hash, never the document).
+a consenting speaker's under a release (by the release's hash, never the document), or personal:
+anything else for the user's own use, which records where it came from and is never cleared to
+show or share.
 
 A generated candidate is a TTS service's own speaker (or a described voice, on a service that
 designs them) reading a script: a voice no real person owns, with a transcript known exactly.
@@ -39,7 +41,10 @@ from argus_mask.voice import analyse
 log = structlog.get_logger(__name__)
 
 VOICE_ID = r"^[a-z0-9][a-z0-9-]{0,62}$"
-SOURCES = ("generated", "own", "consented")
+SOURCES = ("generated", "own", "consented", "personal")
+# The sources that may be used beyond the user's own speakers. ``personal`` (a character, an actor, anything
+# lawful to use privately) is not cleared to show or share.
+CLEARED_SOURCES = frozenset({"generated", "own", "consented"})
 DELIVERIES = ("neutral", "warm", "bright", "calm", "brisk", "serious", "playful", "other")
 STAGED_KEEP = 60  # checked clips kept for the page to use; the oldest go first
 JOBS_KEEP = 20
@@ -138,7 +143,8 @@ class VoiceStore:
 
 
 def provenance(source: dict) -> dict:
-    """The source of a voice, checked: generated (by what), the user's own, or a consenting speaker's (under what)."""
+    """The source of a voice, checked: generated (by what), the user's own, a consenting speaker's (under what), or
+    personal (from where)."""
     kind = str(source.get("kind") or "")
     if kind not in SOURCES:
         raise VoiceError(f"say where the voice comes from: one of {', '.join(SOURCES)}")
@@ -155,9 +161,15 @@ def provenance(source: dict) -> dict:
         out["speaker"] = str(source.get("speaker") or "").strip()[:120]
         if not out["speaker"]:
             raise VoiceError("name the consenting speaker, as the release does")
-    if not source.get("confirmed"):
-        raise VoiceError("confirm the recording is not of anyone who has not agreed to it")
-    out["confirmed"] = True
+    elif kind == "personal":
+        out["origin"] = str(source.get("origin") or "").strip()[:300]
+        if not out["origin"]:
+            raise VoiceError("say where the clips come from, for your own record")
+    if kind != "personal":  # personal records where the clips come from instead
+        if not source.get("confirmed"):
+            raise VoiceError("confirm the recording is not of anyone who has not agreed to it")
+        out["confirmed"] = True
+    out["cleared"] = kind in CLEARED_SOURCES
     return out
 
 

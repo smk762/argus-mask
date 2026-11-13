@@ -1,7 +1,7 @@
 // The face editor: panels that write a preset, POST /build, and a preview of the face it made.
 // Everything the server sends is put on the page as text, never as HTML.
 
-import { Stage } from './stage.js';
+import { Stage, modelUrl } from './stage.js';
 import { openScreen } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
@@ -487,7 +487,7 @@ function meta() {
 async function showFace(faceId) {
   const from = made.get(faceId)?.previewed === false ? 'export' : 'preview';
   const manifest = await json(`/face/${encodeURIComponent(faceId)}?from=${from}`);
-  await stage.load(`/face/${encodeURIComponent(faceId)}/model?from=${from}&v=${manifest.model.sha256}`, manifest.framing || {});
+  await stage.load(modelUrl(faceId, manifest, `from=${from}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
   shown = manifest;
   if (!stage.host) stage.attach($('thumb'));
   $('empty').hidden = true;

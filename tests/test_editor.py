@@ -1056,6 +1056,17 @@ def test_a_wyoming_speaker_goes_with_the_voice_not_instead_of_it() -> None:
     }
 
 
+def test_a_named_speaker_is_sent_as_a_speaker() -> None:
+    from argus_mask.client import voiced  # noqa: PLC0415
+
+    # Qwen3-TTS CustomVoice names its speakers; a bare name would be taken for a clone
+    assert voiced({}, "speaker:Vivian", "http://h/tts") == {"speaker": "Vivian"}
+    assert voiced({}, "Vivian", "http://h/tts") == {"voice_clone_id": "Vivian"}
+    assert voiced({"voice_clone_id": "x"}, "speaker:Vivian", "http://h/tts") == {"voice_clone_id": "x"}
+    assert voiced({}, "speaker:2", "wyoming://h:1") == {"speaker": "2"}
+    assert voiced({"speaker": "3"}, "speaker:2", "wyoming://h:1") == {"speaker": "3"}  # the request's wins
+
+
 @pytest.mark.parametrize("kind", ["wyoming", "http"])
 def test_a_temperature_reaches_the_tts_service(broadcasting, kind) -> None:
     from tests.helpers import fake_tts, fake_wyoming  # noqa: PLC0415
@@ -1211,3 +1222,11 @@ def test_only_recordings_are_served_from_the_recordings_directory(recording_rig,
         assert c.get("/recordings/kept.mp4").content == b"clip"
         for bad in ["../secret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "nothere.mp4"]:
             assert c.get(f"/recordings/{bad}").status_code == 404, bad
+
+
+def test_a_broadcast_face_row_reads_cleared_or_falls_back_on_its_kind() -> None:
+    from argus_mask.editor.app import face_row
+
+    assert face_row({"id": "a", "provenance": {"kind": "personal", "cleared": False}})["cleared"] is False
+    assert face_row({"id": "b", "provenance": {"kind": "stock", "license": "CC0-1.0"}})["cleared"] is True
+    assert face_row({"id": "c", "provenance": {"kind": "personal"}})["cleared"] is False

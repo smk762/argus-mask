@@ -39,7 +39,7 @@ Do not rebuild these.
 
 1. **Connect.** A source opens the audio socket for a face and states its sample rate. One source per face at a time; a second is refused.
 2. **Drive.** Mask resamples to 16 kHz and hands the audio to the driver, which returns 52 ARKit blendshape weights per animation frame (30 fps by default).
-3. **Layer.** Mask adds the idle layer: blinks, small eye movement and a slow head sway, generated from a seed so a take replays identically. The result is one frame: weights plus a head rotation.
+3. **Layer.** Mask reads speech cues from the same audio (stresses, phrase starts and ends) and adds the idle layer: nods and brow raises on the cues, blinks timed to pauses, saccades, micro-motion and a slow head sway, from the audio and a seed so a take replays identically. The result is one frame: weights plus a head rotation.
 4. **Stamp.** Every frame carries its time on the audio timeline, in milliseconds from the start of the session.
 5. **Send.** Each viewer of that face receives the audio and the frames on one socket. A driver answers late, so an audio chunk is sent only once frames reach its end: the mouth for a sound always arrives before the sound.
 6. **Render.** The viewer plays the audio through WebAudio and applies each frame when the audio clock reaches its timestamp, interpolating between frames up to the screen's refresh rate. Lip sync is the viewer's audio clock, not arrival time, so network jitter costs latency and never sync.
@@ -85,8 +85,8 @@ A face is a directory under the assets root: a `.glb` and a `manifest.json`.
 
 - **Model contract.** glTF 2.0 binary with morph targets named for the 52 ARKit blendshapes. `argus-mask inspect` lists which of the 52 are present, which are missing, and any extras. A face missing shapes still loads; the missing ones are reported and ignored.
 - **Manifest** (versioned, wire schema committed): `id`, `name`, `model` (file name and sha256), `blendshapes` (the names found), `framing` (camera distance and height for the head), and `provenance`.
-- **Provenance is required.** `kind` is `stock`, `synthetic` or `curated`; with it go `source`, `license` and `notes`. The server refuses to list a face whose manifest has no provenance. `curated` is refused until 0.3 defines what a curated face must prove.
-- **No real person's likeness in 0.1 or 0.2.** The repo, its fixtures and its examples hold stock or synthetic heads only.
+- **Provenance is required.** `kind` is `personal`, `stock`, `synthetic`, `consented` or `curated`; with it go `source`, `license` (not needed for `personal`) and `notes`, and for `consented` the `subject` and the release's sha256. The server refuses to list a face whose manifest has no provenance. `curated` is refused until 0.3 defines what a curated face must prove.
+- **Personal and cleared.** `personal` is the user's own use, anything lawful in private (a cartoon, a film character), and is never `cleared`; `stock`, `synthetic` and `consented` are. The floor is the law: what argus-darkroom refuses is not a face here either. Only cleared faces and voices go in the repo, its fixtures, its examples, demos or anything commercial.
 
 ### The stock head
 
@@ -201,7 +201,7 @@ Every JSON message carries a `type` (`header`, `frame`, `end`), so a socket and 
 
 The version lives on the header, not on every frame. A take file plus its audio replays in the viewer with no server-side model.
 
-**Config** (`ARGUS_MASK_*`): `ASSETS_DIR`, `DRIVER` (`energy` or `a2f`), `A2F_URL`, `TTS_URL` (used by `say` only; empty turns the command off), `FPS` (default 30), `CORS_ORIGINS`, `READ_ONLY`. Flags are read with cortex's `env_flag`. `ARGUS_GPU_DEVICE` (cortex's own name) selects the card `/health` probes.
+**Config** (`ARGUS_MASK_*`): `ASSETS_DIR`, `DRIVER` (`energy` or `a2f`), `A2F_URL`, `TTS_URL` (used by `say`, the server's `POST /speak` and the editor's Broadcast and Voices pages; empty turns them off), `TTS_VOICE`, `FPS` (default 30), `CORS_ORIGINS`, `READ_ONLY`. Flags are read with cortex's `env_flag`. `ARGUS_GPU_DEVICE` (cortex's own name) selects the card `/health` probes.
 
 ## Faces from curator (0.3)
 
@@ -216,7 +216,7 @@ The demo UI for that preset belongs in argus-cull, once curator's side has a sha
 
 ## Testing
 
-No real person's face goes in the repo or the tests.
+Only cleared faces go in the repo or the tests: stock or synthetic, never a real person's.
 
 - A fake Audio2Face service, in the pattern of cortex's `_Fake`.
 - The `energy` driver is deterministic: one WAV gives the same take file sha256 on every run.

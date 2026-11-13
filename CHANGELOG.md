@@ -7,8 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-13
+
 ### Added
 
+- **Splat heads**: a LAM Gaussian-splat avatar (a `.zip`: `skin.glb`, `offset.ply`, `animation.glb`,
+  `vertex_order.json`) is a face like any other: served (`GET /face/{id}/model`, and `/face/{id}/model/{file}` by its
+  own name), shown by the viewer and the editor's Saved faces previews, driven by mask's frames, rest sets, idle life
+  and lip budget (measured from the archive's `skin.glb`, with a jaw cap for the weak splat mouth: `?jaw=`), and
+  recorded frame-exact by `record` and the Broadcast page. The manifest's model gains `format` (`gltf`, the default,
+  or `lam-splat`); the wire contract is 1.2, and older manifests read as before. The archive is checked in memory,
+  never unpacked to disk: one folder of known members, size, count and compression-ratio caps, no path tricks or
+  links, ARKit morph targets only. `inspect` takes a `.zip` (and `--write-manifest` for it, with the splat framing).
+  The viewer draws one with Myned AI's gsplat-flame-avatar-renderer 1.4.0 (MIT) and JSZip 3.10.1 (MIT), vendored
+  with three.js r187's `OrbitControls.js`; `window.__mask.renderer` says `splat` or `mesh`. LAM's weights (CC BY-NC
+  4.0) and FLAME are non-commercial, so a LAM head is `personal`, never cleared. `display=hld` refuses a splat face
+  for now.
+- **Personal and cleared faces and voices** (#19). Provenance gains `personal` (your own use, anything lawful in
+  private, such as a cartoon or a character LoRA; needs only a `source`) and `consented` (a real person or owned
+  character under a release: `subject` and `release_sha256`). Every provenance carries a derived `cleared`: true for
+  `stock`, `synthetic` and `consented`. `/faces`, the Saved faces page and the Broadcast page show it.
+  `inspect --write-manifest` defaults to `personal`; `stock` and `synthetic` still need a licence. The Voices page has a
+  **Personal use** source that records where the clips came from and is never cleared. The wire contract is 1.1.
+- **The face follows the voice** (#14, #15). A new `prosody.py` reads each frame's loudness and pitch from the audio
+  and marks stressed syllables, phrase ends and phrase starts. In takes:
+  - **Nods and brows.** The head nods on stressed syllables (up to about 2.5 degrees), settles with a small tilt at
+    each phrase end (alternating sides), and the brows rise on emphasis, about once a phrase, added to the driver's own.
+  - **Blinks in pauses.** Most blinks come just as a phrase ends; none starts while a word is sounding unless the last
+    was more than 8 s ago. About 18 a minute, sometimes doubled.
+  - **Saccades.** The eyes jump and hold for 0.2-0.6 s with a slight drift. A phrase start or a pause sometimes takes
+    them away (to the side, or up, as people look away to think), and the head turns a little with them.
+  - **Micro-motion.** Slow, small changes of brow tension, and of mouth tension while not speaking.
+
+  It is all a function of the audio and the seed, so takes stay byte-identical. On five synthetic voices: 1.8 to 2.0
+  stresses a second of speech, brows raised in 7-20% of frames, and every blink starting in a pause or between words.
+  Analysis costs about 0.3% of real time.
+- **Rest sets and idle life**: a face at rest shows a named baseline expression, `warm` by default (also `neutral`,
+  `calm`, `bright`, `attentive`, and your own in the assets' `expressions.json`), chosen per face on Saved faces and
+  served as `GET /face/{id}/rest`; a screen may override it (`?rest=`). While speaking, the set's brows, eyes and cheeks
+  hold and its mouth weights go at half. At rest the face blinks (some doubled), glances with the head following,
+  breathes, and shifts expression now and then (`?life=0` to `2`). Viewer-side only: takes are unchanged.
+- **Lip budget**: the viewer measures how each mouth shape moves the gap between the lips, from the face's own mesh,
+  and scales the lip-closing shapes so the lips never pass through each other (1 mm allowed for pressing), with
+  `mouthShrugLower` and the rolls at 0.7. On ginger-3, lips overlapping by more than 3 mm went from 12% of frames to
+  none, and the lower lip no longer rides up over the upper. Screens, `record` and the editor's previews alike.
+- **Smooth playback between frames** (#13): screens and the editor's `speak` preview draw a cubic through the
+  frames on either side instead of a straight line between two, so 30 fps motion has no corners (the speed jump at
+  each frame, up to 0.44 of a weight per frame on Audio2Face output, is now none). Weights use a monotone cubic, so a
+  mouth never overshoots a closure; the head turns as Catmull-Rom. The curve passes through every frame at its own
+  time: lip timing is unchanged, and `record` (which renders at the frame times) shows exactly the frames, as before.
+- **The editor's previews speak**: the `speak` pose (now the default) loops 12 s of real Audio2Face motion, with the
+  lip budget, rest set and idle life a screen shows, instead of a sine-wave mouth; a `rest:` picker previews each set.
+
+- **Named TTS speakers and delivery instructions**: a voice written `speaker:<name>` (`--voice`, `ARGUS_MASK_TTS_VOICE`,
+  `/speak`'s `voice`) is sent as the service's own speaker, not as a clone, for services that name their speakers, such
+  as Qwen3-TTS's CustomVoice (`speaker:Vivian`). `POST /speak` takes an optional `instruction`, how to say it, passed
+  to a service that reads one; like the text, it is never logged.
 - **Face aliases** (#41): a stable name for a face, such as `holly` for a persona, that the agent speaking and the
   kiosk showing it use for good while the face behind it is chosen in the editor (Saved faces → Aliases: add,
   repoint, remove, open on a screen). Kept in the assets' `aliases.json`, written by the editor and read by the server
@@ -139,6 +193,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A provenance says what it means** (#64). An unknown field is refused, not dropped in silence, and `licence` is
+  read as `license` (a provenance with both, disagreeing, is refused). A `source` of only whitespace is refused like a
+  missing one. A dumped record's `cleared` still reads back, and is recomputed.
+- **A source that sends faster than real time is slowed, not cut off** (#2). The `a2f` driver lets up to 2 s of audio
+  wait on frames, then holds the source until the model catches up; a burst of a 15 s clip used to end the stream with
+  "fell more than 10s behind". A model that sends no frame for 10 s while the source is held still ends it.
+- **The Audio2Face server reports a dead worker at once** (#4), not on the client's next message: a worker that crashed
+  during a pause in speech left the face frozen with no error.
+- **`POST /speak` in Docker**: `compose.yaml` passes `TTS_URL` and `TTS_VOICE` from `.env` to the server as
+  `ARGUS_MASK_TTS_URL` and `ARGUS_MASK_TTS_VOICE`; without them `/speak` always answered `422`.
 - A Broadcast recording that caught another source's session on the face is discarded, not kept as this broadcast's,
   and a failed or stopped render no longer leaves its frames behind (#35).
 - `say` (without `--stream`), `/speak` and the Voices page's Try buffered a TTS reply without limit: they now refuse
@@ -152,3 +216,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audio no longer runs ahead of the mouth with a slow driver.** Audio2Face answers about 0.3 s behind the audio it
   is given. The server now holds each audio chunk until frames reach its end, and ends a stream whose driver falls
   more than 10 s behind.
+
+[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/smk762/argus-mask/releases/tag/v0.1.0

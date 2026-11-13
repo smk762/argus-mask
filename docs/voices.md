@@ -8,17 +8,18 @@ What the model does with your clip:
 
 A careful 15 seconds saves more time than any later fix.
 
-## The rule: no real person's voice without consent
+## Where a voice comes from
 
-A voice is a likeness, like a face ([#19](https://github.com/smk762/argus-mask/issues/19)). A voice made here comes from one of three sources, and the Voices page records which:
+A voice is a likeness, like a face ([#19](https://github.com/smk762/argus-mask/issues/19)), and the same two tiers apply ([README.md § Personal and cleared](../README.md#personal-and-cleared)). For your own speakers at home, any voice you may lawfully use privately is fine: pick **Personal use** and note where the clips came from. A voice you will show or share must be **cleared**: one of the first three sources below. The Voices page records which:
 
 | Source | What it is | What the record keeps |
 |---|---|---|
 | **Generated** | A TTS service's own voice, or a voice designed from a description: no real person | What made it: the service, the speaker or description, the temperature |
 | **Your own** | You, recorded by you | That it is yours |
 | **A consenting speaker** | Someone paid and released for this use ([#26](https://github.com/smk762/argus-mask/issues/26)) | Their name as the release gives it, and the release's sha256 (never the document) |
+| **Personal use** | Anyone else, for your own speakers only: a game character, a narrator. Never cleared | Where the clips came from, in your words |
 
-Never a clip of anyone who hasn't agreed to it: not taken from a film, show, game, video, podcast, audiobook or call, and not someone doing an impression of a real person. The page asks you to confirm this before it makes a voice. A clip cut from a recording is also usually a bad reference anyway, with music, effects and room sound under the voice (the checks below catch it).
+A cleared voice is never a clip of anyone who hasn't agreed to it: not taken from a film, show, game, video, podcast, audiobook or call, and not someone doing an impression of a real person. The page asks you to confirm this before it makes a cleared voice. A clip cut from a recording is also usually a bad reference anyway, with music, effects and room sound under the voice (the checks below catch it).
 
 ## What a good reference looks like
 
@@ -102,6 +103,6 @@ What the Voices page measures, per clip and for the set. A clip with a bad check
 
 ## What a good reference doesn't fix
 
-- **Tone drift between sentences.** `say` sends one sentence at a time, and each is generated with only the reference as context, so neighbouring sentences can land in slightly different moods. `say` already evens their loudness and softens their edges. The real fix is to give each sentence the previous one as context, which needs a change to Miso.
+- **Tone drift between sentences.** `say` sends one sentence at a time, and each is generated with only the reference as context, so neighbouring sentences can land in slightly different moods. `say` already evens their loudness and softens their edges. `say --context` (and the Broadcast page's checkbox) sends the previous sentence's text and levelled audio as context, and a service that refuses it is retried without; it is experimental and off by default, because with a cloned voice on Miso it can make the tone drift rather than hold.
 - **Runaway generation.** Now and then the model keeps talking after the text ends. Miso caps a request at 30 s; a cap scaled to the text's length would stop it sooner, which also needs a change to Miso.
 - **Numbers.** `say` writes numbers and times as words before sending them (`--as-is` turns it off), because the model guesses at digits.

@@ -1,21 +1,60 @@
 // A face on a three.js stage: load a model, pose it, show it in any box, or take a still of it.
-// Shared by the editor (index.html) and the saved-faces page (faces.html).
+// Shared by the editor (index.html) and the saved-faces page (faces.html). A LAM Gaussian-splat head
+// (format "lam-splat") is drawn by the viewer's splat.js instead, live, through the same poses and motion.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
+import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
+// Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
+// face is judged speaking as it will on a screen: the same lip budget, rest set and idle life (motion.js).
+const TALK_GAP_S = 1.5;
+let talk = null;
+const talkReady = fetch('talk.json').then((r) => (r.ok ? r.json() : null)).then((data) => {
+  if (!data) return;
+  const at = data.names.map((n) => ARKIT.indexOf(n));
+  talk = { fps: data.fps, frames: data.frames.map((f) => { const w = new Float32Array(ARKIT.length); f.forEach((v, i) => { if (at[i] >= 0) w[at[i]] = v; }); return w; }) };
+}).catch(() => {});
+
+const NONE = new Float32Array(ARKIT.length);
+const talkOut = new Float32Array(ARKIT.length);
+const fixed = (weights) => { const w = new Float32Array(ARKIT.length); for (const [n, v] of Object.entries(weights)) w[ARKIT.indexOf(n)] = v; return () => ({ weights: w, live: true }); };
+
+// Each pose gives the frame weights (ARKit order) at t seconds, and whether it is speech (no idle life).
 export const POSES = {
-  rest: () => ({}),
-  open: () => ({ jawOpen: 0.6, mouthFunnel: 0.1 }),
-  smile: () => ({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),
-  // A rough syllable rhythm, to judge the mouth in motion. The real motion comes from Audio2Face.
-  talk: (t) => {
-    const s = Math.max(0, Math.sin(t * 9.0)) * (0.55 + 0.45 * Math.sin(t * 2.3));
-    return { jawOpen: 0.45 * s, mouthFunnel: 0.25 * Math.max(0, Math.sin(t * 4.1)), mouthClose: 0.1 * (1 - s),
-             mouthPucker: 0.3 * Math.max(0, Math.sin(t * 3.3 + 1)), mouthStretchLeft: 0.2 * s, mouthStretchRight: 0.2 * s };
+  rest: () => ({ weights: NONE, live: false }),
+  speak: (t) => {
+    if (!talk) return { weights: NONE, live: false };
+    const loop = talk.frames.length / talk.fps + TALK_GAP_S;
+    const at = (t % loop) * talk.fps;
+    const i = Math.floor(at);
+    const f = talk.frames;
+    if (i >= f.length) return { weights: NONE, live: false };
+    if (i + 1 >= f.length) return { weights: f[i], live: true };
+    // Between frames as a screen plays them (motion.js `blend`): smooth, through every frame.
+    blend(f[Math.max(0, i - 1)], f[i], f[i + 1], f[Math.min(f.length - 1, i + 2)], at - i, talkOut);
+    return { weights: talkOut, live: true };
   },
+  open: fixed({ jawOpen: 0.6, mouthFunnel: 0.1 }),
+  smile: fixed({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),
 };
+export { talkReady };
+
+// Where a face's model is fetched from: a splat head by its own file name (the splat renderer wants a URL
+// ending .zip). *query*: the page's own (from=, v=).
+export function modelUrl(faceId, manifest, query = '') {
+  const splat = manifest.model && manifest.model.format === 'lam-splat';
+  const path = `/face/${encodeURIComponent(faceId)}/model${splat ? `/${encodeURIComponent(manifest.model.file)}` : ''}`;
+  return query ? `${path}?${query}` : path;
+}
+
+// The rest sets and each face's choice (GET /expressions), fetched once per page; fresh() after a change.
+let setsCache = null;
+export function restSets(fresh = false) {
+  if (!setsCache || fresh) setsCache = fetch('/expressions').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return setsCache;
+}
 
 function dispose(root) {
   root.traverse((node) => {
@@ -41,10 +80,20 @@ export class Stage {
     this.pivot = new THREE.Group();
     this.scene.add(this.pivot);
     this.targets = new Map();
-    this.pose = 'rest';
+    this.pose = 'speak';
     this.turn = false;
+    this.motion = new Motion();
+    this.restWeights = {};
+    this.restLife = 1;
+    this.restName = null;
+    this.headTurn = { yaw: 0, pitch: 0, roll: 0 };
+    this.spin = 0;
+    this.shown = new Float32Array(ARKIT.length);
+    this.lastT = null;
     this.loaded = false;
     this.host = null;
+    this.splat = null;       // a SplatHead (splat.js) while a splat face is loaded
+    this.splatBox = null;    // the element it draws in
     window.addEventListener('resize', () => this.resize());
     if (animate) {
       const tick = (now) => { requestAnimationFrame(tick); if (this.loaded && this.host) this.frame(now / 1000); };
@@ -52,8 +101,15 @@ export class Stage {
     }
   }
 
-  async load(modelUrl, framing = {}) {
+  // A face's model: a .glb (format "gltf", the default) or a LAM splat head's .zip ("lam-splat").
+  // Loads may overlap (a quick second click): only the latest one shows; an earlier one that finishes later is
+  // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
+  async load(modelUrl, framing = {}, format = 'gltf') {
+    const gen = (this.loads = (this.loads || 0) + 1);
+    if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
+    if (gen !== this.loads) { dispose(gltf.scene); return; }
+    this.dropSplat();
     for (const child of [...this.pivot.children]) dispose(child);
     this.pivot.clear();
     this.targets = new Map();
@@ -67,6 +123,7 @@ export class Stage {
         }
       }
     });
+    this.motion = new Motion({ budget: lipBudget(gltf.scene), rest: this.restWeights, life: this.restLife });
     this.camera.fov = framing.fov || 30;
     this.camera.position.set(0, framing.height || 0, framing.distance || 0.6);
     this.camera.lookAt(0, framing.height || 0, 0);
@@ -75,9 +132,48 @@ export class Stage {
     this.look.focus(gltf.scene);
   }
 
+  async loadSplat(modelUrl, framing, gen) {
+    const { SplatHead, readSkin, jawCap } = await import('./splat.js');
+    const skin = await readSkin(modelUrl);
+    if (gen !== this.loads) return;
+    this.dropSplat();
+    for (const child of [...this.pivot.children]) dispose(child);
+    this.pivot.clear();
+    this.targets = new Map();
+    // In its host, in the flow like the canvas it replaces; a stage with no host (stills) draws off screen.
+    const box = document.createElement('div');
+    box.style.cssText = this.host ? 'width: 100%; height: 100%;' : 'position: fixed; left: -10000px; top: 0; width: 240px; height: 288px;';
+    (this.host || document.body).prepend(box);
+    this.renderer.domElement.style.display = 'none';
+    this.splatBox = box;
+    let head;
+    try {
+      head = await SplatHead.create(box, { url: modelUrl, framing, skin, instant: true });
+    } catch (err) {
+      if (gen === this.loads) this.dropSplat(); else box.remove();
+      throw err;
+    }
+    if (gen !== this.loads) { head.dispose(); box.remove(); return; }
+    this.splat = head;
+    this.motion = new Motion({ budget: skin.budget, rest: this.restWeights, life: this.restLife, cap: jawCap() });
+    this.loaded = true;
+  }
+
+  dropSplat() {
+    if (this.splat) this.splat.dispose();
+    if (this.splatBox) this.splatBox.remove();
+    this.splat = null;
+    this.splatBox = null;
+    this.renderer.domElement.style.display = '';
+  }
+
   attach(host) {
     this.host = host;
     host.prepend(this.renderer.domElement);
+    if (this.splatBox) {
+      this.splatBox.style.cssText = 'width: 100%; height: 100%;';
+      host.prepend(this.splatBox);
+    }
     this.resize();
   }
 
@@ -96,32 +192,77 @@ export class Stage {
     for (const { influences, index } of this.targets.get(name) || []) influences[index] = value;
   }
 
+  // The rest set this stage shows (a set's weights and life, from GET /expressions).
+  setRest(set) {
+    this.restWeights = (set && set.weights) || {};
+    this.restLife = set && Number.isFinite(set.life) ? set.life : 1;
+    this.motion.setRest(this.restWeights);
+    this.motion.idle.life = this.restLife;
+  }
+
   frame(t) {
-    const weights = POSES[this.pose](t);
-    const blink = (t % 4.2) < 0.12 ? 1 : 0;
-    for (const name of this.targets.keys()) this.weigh(name, weights[name] ?? 0);
-    this.weigh('eyeBlinkLeft', blink);
-    this.weigh('eyeBlinkRight', blink);
-    this.pivot.rotation.y += ((this.turn ? 0.6 : 0) - this.pivot.rotation.y) * 0.08;
+    const dt = this.lastT === null ? 0 : Math.min(0.1, t - this.lastT);
+    this.lastT = t;
+    const pose = POSES[this.pose](t);
+    // Relax towards the frame's weights (a cut between speech and rest would snap the mouth).
+    const k = 1 - Math.exp(-14 * dt);
+    for (let i = 0; i < this.shown.length; i += 1) this.shown[i] += (pose.weights[i] - this.shown[i]) * (pose.live ? 1 : k);
+    const { weights, head } = this.motion.present(this.shown, ARKIT, { live: pose.live, t, dt });
+    const rad = Math.PI / 180;
+    const idle = head || { yaw: 0, pitch: 0, roll: 0 };
+    for (const axis of AXES) this.headTurn[axis] += (idle[axis] - this.headTurn[axis]) * (1 - Math.exp(-6 * dt));
+    this.spin += ((this.turn ? 0.6 : 0) - this.spin) * 0.08;
+    if (this.splat) {   // the turn button turns the head itself: a splat head has nothing to stand on
+      this.splat.set(weights, ARKIT, { ...this.headTurn, yaw: this.headTurn.yaw + this.spin / rad });
+      this.splat.step();
+      return;
+    }
+    for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
+    this.pivot.rotation.set(this.headTurn.pitch * rad, this.spin + this.headTurn.yaw * rad, this.headTurn.roll * rad);
     this.look.render();
   }
 
   // A still of the loaded face at rest, as a data URL: for a card, without a live canvas per card.
+  // A promise of one for a splat head (its drawing waits on a depth sort); await either.
   snapshot(width = 240, height = 288) {
+    if (this.splat) return this.splatSnapshot(width, height);
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    for (const name of this.targets.keys()) this.weigh(name, 0);
-    this.pivot.rotation.y = 0;
+    for (const name of this.targets.keys()) this.weigh(name, this.restWeights[name] ?? 0);   // at rest, in its rest set
+    this.pivot.rotation.set(0, 0, 0);
     this.look.setSize(width, height);
     this.look.render();
     return this.renderer.domElement.toDataURL('image/jpeg', 0.85);
   }
 
-  // Pose buttons for this stage, and for any linked ones: a comparison moves both faces together.
-  poseButtons(bar, linked = []) {
+  async splatSnapshot(width, height) {
+    if (!this.host) Object.assign(this.splatBox.style, { width: `${width}px`, height: `${height}px` });
+    this.splat.set(ARKIT.map((n) => this.restWeights[n] ?? 0), ARKIT, null);   // at rest, in its rest set
+    await this.splat.exact();
+    return this.splat.canvas.toDataURL('image/jpeg', 0.85);   // in the same frame as the draw, before it is presented
+  }
+
+  // Pose buttons for this stage, and for any linked ones: a comparison moves both faces together. With
+  // *faceId*, a rest-set picker too, starting at that face's own set; *onRest(name)* is told of a change
+  // (the saved-faces page keeps it; elsewhere the choice only previews).
+  poseButtons(bar, linked = [], { faceId = null, onRest = null } = {}) {
     const all = [this, ...linked];
+    const call = Symbol('poseButtons');
+    bar.poseCall = call;   // a later call on this bar supersedes this one's picker
+    restSets().then((sets) => {
+      if (!sets || !bar.isConnected || bar.poseCall !== call) return;
+      const pick = Object.assign(document.createElement('select'), { title: 'Rest set: the expression the face holds at rest and speaks from' });
+      for (const name of Object.keys(sets.sets)) pick.append(new Option(`rest: ${name}`, name));
+      // A face's own set; with no face, the one this stage was last shown (a modal opened and closed keeps it).
+      const start = faceId ? sets.faces[faceId] : this.restName;
+      pick.value = start && start in sets.sets ? start : sets.default;
+      const show = () => { for (const st of all) { st.setRest(sets.sets[pick.value]); st.restName = pick.value; } };
+      pick.onchange = () => { show(); if (onRest) onRest(pick.value); };
+      show();
+      bar.append(pick);
+    });
     bar.replaceChildren();
     for (const name of Object.keys(POSES)) {
       const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });

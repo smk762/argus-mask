@@ -122,7 +122,7 @@
   @media (hover: none) { #peek { display: none !important; } }
 </style>
 <script src="./qr/qrcode.js"></script>  <!-- qrcode-generator 1.4.4, MIT: QR codes for screen links -->
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/examples/jsm/": "./vendor/", "jszip": "./vendor/jszip.js" } }</script>
 </head>
 <body>
 <form id="form" autocomplete="off">
@@ -131,6 +131,7 @@
     <a class="nav" href="./faces.html">Saved faces →</a>
     <a class="nav" href="./broadcast.html">Broadcast →</a>
     <a class="nav" href="./voices.html">Voices →</a>
+    <a class="nav" href="./packs.html">Asset packs →</a>
     <label class="grow">Start from<select id="start"></select></label>
     <label class="grow">Id<input type="text" id="id" pattern="[a-z0-9][a-z0-9_\-]{0,63}" required></label>
     <label class="grow">Name<input type="text" id="name" maxlength="80" required></label>

@@ -4,7 +4,9 @@
 ``GET /faces``                        the faces that may be served
 ``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
-``GET /face/{id}/model``              its ``.glb``
+``GET /face/{id}/rest``               the rest set it shows (``?set=`` another); ``GET /expressions`` lists them
+``GET /face/{id}/model``              its model: a ``.glb``, or a LAM splat head's ``.zip``
+``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``)
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
 ``POST /push?face=…``                 audio in over HTTP (a WAV, or PCM with format headers), played as a source
@@ -44,12 +46,14 @@ from argus_mask import __version__, client
 from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
 from argus_mask.drivers import Driver, DriverError, build_driver
-from argus_mask.faces import Aliases, FaceError, FaceStore
+from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
+from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
     DriverHealth,
     FaceManifest,
     Health,
+    RestSet,
     Screen,
     SourceHello,
     StreamHeader,
@@ -73,8 +77,6 @@ VIEWER_QUEUE = 2048
 AUDIO_SLACK_FRAMES = 2
 # A viewer's status message is a few fields; anything longer is not one.
 MAX_STATUS_BYTES = 1024
-# A driver this far behind the audio is not going to catch up: the stream is ended.
-MAX_DRIVER_LAG_MS = 10_000.0
 # POST /push: the most audio one request may carry (minutes of 48 kHz 16-bit), and how far ahead of real time
 # it is fed to the face, as a client source runs ahead.
 MAX_PUSH_BYTES = 25 * 1024 * 1024
@@ -149,7 +151,14 @@ class Speak(BaseModel):
     model_config = ConfigDict(extra="forbid")
     face: str = Field(..., pattern=FACE_ID_PATTERN)
     text: str = Field(..., min_length=1, max_length=5000)
-    voice: str = Field("", max_length=200, description="default: ARGUS_MASK_TTS_VOICE")
+    voice: str = Field(
+        "",
+        max_length=200,
+        description="default: ARGUS_MASK_TTS_VOICE; a clone's name, a speaker number, or speaker:<name>",
+    )
+    instruction: str = Field(
+        "", max_length=500, description="how to say it, for a service that takes one (Qwen3-TTS CustomVoice)"
+    )
     seed: int = Field(0, ge=0, le=2**31 - 1)
     temperature: float | None = Field(None, ge=0.1, le=1.5)
     tidy: bool = Field(True, description="numbers as words, short sentences joined, soft edges, even loudness")
@@ -251,6 +260,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
     store = FaceStore(cfg.assets_dir)
     aliases = Aliases(store)
+    expressions = Expressions(cfg.assets_dir)
     stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
     app = FastAPI(
         title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
@@ -294,6 +304,24 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         """Stable names for faces (alias -> face id), as the editor set them in the assets' aliases.json."""
         return aliases.all()
 
+    @app.get("/expressions")
+    def expression_list() -> dict:
+        """The rest sets (built in, and the assets' expressions.json), and which one each face chose."""
+        return {
+            "sets": {n: s.model_dump() for n, s in expressions.sets().items()},
+            "faces": expressions.choices(),
+            "default": DEFAULT_SET,
+        }
+
+    @app.get("/face/{face_id}/rest", response_model=RestSet)
+    def face_rest(face_id: str, set: str | None = Query(None, max_length=64)) -> RestSet:  # noqa: A002
+        """The rest set a face shows: its own choice, or ``?set=`` (a screen's ``?rest=``)."""
+        manifest, _ = face_or_404(face_id)
+        try:
+            return expressions.for_face(manifest.id, set)
+        except ExpressionError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @app.get("/faces", response_model=list[FaceManifest])
     def faces() -> list[FaceManifest]:
         return store.scan()[0]
@@ -302,11 +330,23 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face(face_id: str) -> FaceManifest:
         return face_or_404(face_id)[0]
 
+    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+        # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
+        return FileResponse(
+            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
+        )
+
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str) -> FileResponse:
+        return model_response(*face_or_404(face_id))
+
+    @app.get("/face/{face_id}/model/{file}")
+    def face_model_named(face_id: str, file: str) -> FileResponse:
+        """The model under its own name: only the manifest's file, never a path the request makes up."""
         manifest, path = face_or_404(face_id)
-        # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
-        return FileResponse(path, media_type="model/gltf-binary", headers={"ETag": f'"{manifest.model.sha256}"'})
+        if file != manifest.model.file:
+            raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
+        return model_response(manifest, path)
 
     def cross_site(ws: WebSocket) -> str | None:
         return origin_refusal({"type": "websocket", "method": "WebSocket"}, ws.headers)  # type: ignore[arg-type]
@@ -382,12 +422,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     for frame in await performer.feed(mono):
                         stage.send(line(frame))
                         covered_ms = frame.t_ms + 1000.0 / cfg.fps
+                    # A driver that falls behind holds feed() until it catches up (the source is not
+                    # read meanwhile), and raises DriverError if it stops: no lag check here.
                     release()
-                    if end_ms - covered_ms > MAX_DRIVER_LAG_MS:
-                        failure = (
-                            f"the {driver.name} driver fell more than {MAX_DRIVER_LAG_MS / 1000:g}s behind the audio"
-                        )
-                        break
             except DriverError as exc:
                 failure = str(exc)
                 probe.forget()
@@ -570,6 +607,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         body: dict = {"text": req.text}
         if req.temperature is not None:
             body["temperature"] = req.temperature
+        if req.instruction:
+            body["instruction"] = req.instruction
         body = client.voiced(body, req.voice or cfg.tts_voice, tts_url)
         log.info("speak", face=req.face, chars=len(req.text))  # never the text itself
         try:

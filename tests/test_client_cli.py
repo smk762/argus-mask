@@ -79,6 +79,17 @@ def test_inspect_writes_a_manifest_and_reports_a_refused_face(tmp_path) -> None:
     assert changed.exit_code == 1 and "sha256 does not match" in changed.output
 
 
+def test_inspect_defaults_to_a_personal_face(tmp_path) -> None:
+    directory = tmp_path / "cartoon"
+    directory.mkdir()
+    (directory / "head.glb").write_bytes(make_glb(["jawOpen"]))
+    written = runner.invoke(app, ["inspect", str(directory / "head.glb"), "--write-manifest", "--source", "a cartoon"])
+    assert written.exit_code == 0, written.output
+    assert "provenance personal: a cartoon (personal use: not cleared to show or share)" in written.output
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provenance"]["kind"] == "personal" and manifest["provenance"]["cleared"] is False
+
+
 def test_push_plays_a_file_into_a_running_server(server, tmp_path) -> None:
     wav = write_wav(tmp_path / "hello.wav", tone(1.0))
     result = runner.invoke(app, ["push", str(wav), "--face", "test-head", "--url", server])

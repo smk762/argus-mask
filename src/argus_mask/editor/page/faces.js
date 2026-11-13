@@ -2,7 +2,7 @@
 // Rename and delete touch only faces the editor made; the server says so if not.
 // Everything the server sends is put on the page as text, never as HTML.
 
-import { Stage } from './stage.js';
+import { Stage, modelUrl, restSets } from './stage.js';
 import { openScreen, screensText } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
@@ -46,8 +46,8 @@ function thumbnail(row, img, wait) {
       const manifest = await json(`/face/${enc(row.id)}?from=${place}`);
       const key = `${place}/${row.id}/${manifest.model.sha256}`;
       if (!shotCache.has(key)) {
-        await shots.load(`/face/${enc(row.id)}/model?from=${place}&v=${manifest.model.sha256}`, manifest.framing || {});
-        shotCache.set(key, shots.snapshot());
+        await shots.load(modelUrl(row.id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
+        shotCache.set(key, await shots.snapshot());
       }
       img.src = shotCache.get(key);
       wait.remove();
@@ -85,7 +85,10 @@ function card(row) {
   if (row.preview && row.export && row.preview.sha256 !== row.export.sha256) {
     badges.append(el('span', { className: 'badge preview', textContent: 'unexported changes', title: `assets/.preview/${row.id} differs from the export` }));
   }
-  if (copy) badges.append(el('span', { className: 'badge', textContent: copy.kind }), el('span', { className: 'badge', textContent: copy.license }));
+  if (copy) {
+    badges.append(el('span', { className: 'badge', textContent: copy.kind, title: copy.cleared ? 'Cleared to show or share' : 'Personal use: not cleared to show or share' }));
+    if (copy.license) badges.append(el('span', { className: 'badge', textContent: copy.license }));
+  }
   for (const [name, face] of Object.entries(aliases)) {
     if (face === row.id) badges.append(el('span', { className: 'badge alias', textContent: `as ${name}`, title: `The alias ${name} points here` }));
   }
@@ -190,8 +193,16 @@ async function openReview(row, place = main(row)) {
   if (!manifest) return;
   $('modal').hidden = false;
   stage.attach($('stage'));
-  await stage.load(`/face/${enc(row.id)}/model?from=${place}&v=${manifest.model.sha256}`, manifest.framing || {});
-  stage.poseButtons($('m-poses'));
+  await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
+  // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
+  const keep = place === 'export' ? async (name) => {
+    try {
+      await json(`/expressions/faces/${enc(row.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ set: name }) });
+      restSets(true);
+      status(`${row.id} rests ${name} on screens from their next load.`);
+    } catch (err) { status(err.message, true); }
+  } : null;
+  stage.poseButtons($('m-poses'), [], { faceId: row.id, onRest: keep });
   $('m-name').textContent = `${manifest.name} (${manifest.id})`;
   const which = $('m-which');
   which.replaceChildren();
@@ -205,11 +216,12 @@ async function openReview(row, place = main(row)) {
   const prov = manifest.provenance;
   $('m-side').replaceChildren(
     el('h2', { textContent: 'Where' }), el('p', { textContent: place === 'export' ? `assets/${row.id}: on the server's /faces` : `assets/.preview/${row.id}: the editor's preview` }),
-    el('h2', { textContent: 'Licence' }), el('p', { textContent: prov.license }),
-    el('h2', { textContent: 'Kind' }), el('p', { textContent: prov.kind }),
+    el('h2', { textContent: 'Licence' }), el('p', { textContent: prov.license || '—' }),
+    el('h2', { textContent: 'Kind' }), el('p', { textContent: prov.cleared ? prov.kind : `${prov.kind}: your own screens only, not cleared to show or share` }),
+    ...(prov.release_sha256 ? [el('h2', { textContent: 'Release' }), el('p', { textContent: `${prov.subject || 'subject not named'}, release sha256 ${prov.release_sha256}` })] : []),
     el('h2', { textContent: 'Source' }), el('p', { textContent: prov.source }),
     el('h2', { textContent: 'Credits and notes' }), el('p', { textContent: prov.notes || '—' }),
-    el('h2', { textContent: 'Model' }), el('p', { textContent: `${manifest.model.file}, ${manifest.blendshapes.length} of 52 shapes\nsha256 ${manifest.model.sha256}` }),
+    el('h2', { textContent: 'Model' }), el('p', { textContent: `${manifest.model.file}${manifest.model.format === 'lam-splat' ? ' (LAM splat head)' : ''}, ${manifest.blendshapes.length} of 52 shapes\nsha256 ${manifest.model.sha256}` }),
   );
   $('m-close').focus();
 }

@@ -2,7 +2,7 @@
 
 A talking face for the Argus suite. Audio goes in; a stream of facial animation frames comes out; a browser page renders a rigged head from those frames, in step with the audio, on any screen on the LAN.
 
-Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](spec.md).
+Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](https://github.com/smk762/argus-mask/blob/main/spec.md).
 
 ```
 audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN device)
@@ -14,7 +14,7 @@ audio source ──▶ argus-mask :8109 ──▶ viewer (browser, any LAN devic
 
 ## Status
 
-Built and tested: the engine, both drivers, faces, the server, the viewer's `flat` and `hld` tiers, the CLI, and the Audio2Face server in [a2f/](a2f/README.md).
+Built and tested: the engine, both drivers, faces, the server, the viewer's `flat` and `hld` tiers, the CLI, and the Audio2Face server in [a2f/](https://github.com/smk762/argus-mask/blob/main/a2f/README.md).
 
 Not built yet: the Looking Glass Go tier (0.2), and faces built from argus-curator output (0.3).
 
@@ -48,7 +48,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 
 | Command | What it does |
 |---|---|
-| `argus-mask inspect <face>` | Checks a face directory or a `.glb`: which of the 52 ARKit shapes it has, triangles, texture sizes. `--write-manifest` writes `manifest.json` beside a `.glb`; it needs `--kind`, `--source` and `--license`, and takes `--distance`, `--height` and `--fov` for the camera framing. |
+| `argus-mask inspect <face>` | Checks a face directory or a `.glb`: which of the 52 ARKit shapes it has, triangles, texture sizes. `--write-manifest` writes `manifest.json` beside a `.glb` or a splat `.zip`; it needs `--source`, and `--license` too for any `--kind` but the default `personal` (`consented` also needs `--subject` and `--release-sha256`). It and takes `--distance`, `--height` and `--fov` for the camera framing. |
 | `argus-mask drive <audio.wav> --out take.ndjson` | Audio to a take file, offline. The same audio, driver and seed give the same file. |
 | `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
@@ -59,20 +59,28 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 
 ## Faces
 
-A face is a directory under the assets root holding a `.glb` and a `manifest.json`.
+A face is a directory under the assets root holding a model and a `manifest.json`. The model is a `.glb` (a mesh) or a LAM Gaussian-splat head's `.zip` (see [Splat heads](#splat-heads)).
 
 - **Model:** glTF 2.0 binary, with morph targets named for the 52 ARKit blendshapes (`jawOpen`, `eyeBlinkLeft`, …). Missing shapes are reported and ignored. Textures must be PNG or JPEG; the viewer loads no KTX2 or meshopt decoder.
-- **Manifest:** id, name, the model's file name and sha256, the shapes found, camera framing, and provenance.
-- **Provenance is required.** `kind` is `stock` or `synthetic`, with a `source` and a `license`. A face with no provenance is not served. `curated` is refused until faces from curator are designed.
+- **Manifest:** id, name, the model's file name, sha256 and `format` (`gltf`, the default, or `lam-splat`), the shapes found, camera framing, and provenance.
+- **Provenance is required.** A face with no provenance is not served. `kind` is one of:
+  - `personal`: your own use. Needs only a `source` saying what it is. This is `inspect`'s default.
+  - `stock` or `synthetic`: a published asset, or a generated face with no real person or owned character going in. Needs a `source` and a `license`.
+  - `consented`: a real person's likeness, or an owned character, under a signed release. Also needs the `subject` as the release names them and the release's sha256 (never the document).
+  - `curated` is refused until faces from curator are designed.
 - A face is also refused when its manifest id differs from its directory name, or its model no longer matches the recorded sha256. `inspect` says why.
 
-No real person's likeness belongs in this repo, its fixtures or its examples.
+### Personal and cleared
 
-To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](docs/synthetic-faces.md).
+This is self-hosted software. What you put on your own screens at home is up to you: a cartoon character, a character from a film, a face from a character LoRA. Mask records what it is and serves it as `personal`. The floor is the law: anything illegal to make or hold is not a face here either, and nothing that [argus-darkroom](https://github.com/smk762/argus-darkroom) refuses (its illegal rules, in SFW and NSFW alike) becomes acceptable because it is a face.
+
+Showing or sharing is different. A face is **cleared** (`cleared: true` in its provenance, and in `/faces`) when it is `stock`, `synthetic` or `consented`. Only cleared faces and voices go in this repo, its fixtures and examples, demos, recordings made to publish, or anything commercial. The editor marks a face that is not cleared as `personal`.
+
+To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md).
 
 ### The stock head
 
-The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform and carry the wet line and baked skin maps (revision 4 of `stock-01`, the first of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](scripts/README.md).
+The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform and carry the wet line and baked skin maps (revision 4 of `stock-01`, the first of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md).
 
 ### Your own head
 
@@ -82,6 +90,25 @@ uv run argus-mask inspect assets/my-head/head.glb --write-manifest \
     --kind stock --source "where it came from" --license "CC0-1.0" \
     --distance 0.9 --height -0.08
 ```
+
+### Splat heads
+
+A **splat head** is a [LAM](https://github.com/aigc3d/LAM) (Large Avatar Model) avatar: a cloud of Gaussians made from one portrait, deformed by a FLAME head with the ARKit shapes. It looks like the photo it came from in a way no mesh head here does. Mask drives it like any face: the same frames, rest set, idle life and lip budget, on screens, in the editor's previews and in `record`.
+
+- **The file:** LAM's avatar archive, a `.zip` holding one folder with `skin.glb` (the FLAME mesh and its morph targets: 51 of the 52 ARKit shapes, no `tongueOut`), `offset.ply` (the splats), `animation.glb`, `vertex_order.json` and optionally `iris_occlusion.json`. Nothing else: zip the folder alone (macOS adds `__MACOSX/` and `.DS_Store`, which are refused).
+- **Checked, never unpacked to disk.** The server reads the archive in memory and refuses it, saying why in `inspect`, for: more than one top-level folder, a member it does not know or one missing, absolute paths, `..`, backslashes, duplicate names, links, encryption, more than 8 members, a member over 64 MiB or all of them over 160 MiB unpacked, a member that unpacks to over 100 times its packed size, an `offset.ply` that is not a PLY, JSON that does not parse, and a `skin.glb` whose morph targets are not ARKit shapes.
+- **Making one:** run LAM on a frontal portrait and export its "chatting avatar" (LAM's `tools/AVATAR_EXPORT_GUIDE.md`: the FBX SDK and Blender turn the result into `skin.glb`, `animation.glb` and `vertex_order.json` beside the `offset.ply`), and zip that one folder. Then:
+
+  ```bash
+  mkdir -p assets/c101-splat && cp c101.zip assets/c101-splat/
+  uv run argus-mask inspect assets/c101-splat/c101.zip --write-manifest \
+      --source "LAM head from a character-LoRA portrait; LAM weights CC BY-NC 4.0, FLAME non-commercial"
+  ```
+
+  The manifest gets `format: lam-splat` and the splat framing: LAM's heads stand at about 1.65 m, so the camera aims at `--height 1.65` from `--distance 0.7`, a tenth of the distance above its aim, with a 50 degree `--fov`.
+- **Licences: personal, never cleared.** LAM's code is Apache-2.0, but its weights are CC BY-NC 4.0 and FLAME's model is for non-commercial research. A head made with them is `personal` (whatever the portrait) until those licences change: it may be on your own screens, and in nothing published, shared or commercial. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
+- **On screens:** `display=flat` only (`hld` says it is not supported yet). `?bg=` works as for a mesh (not `transparent`); `?jaw=` moves the jaw cap's knee (default 0.35: past it, `jawOpen` and the lower lip open at 0.35 of the rate, since the inside of a splat mouth is weak; `?jaw=1` turns it off). The head turns through the rig's neck and head bones; LAM's own animation clips never play, so mask is the only thing that moves the face and a screen shows what a recording does. It needs no cross-origin isolation: it renders on a plain-http LAN page (checked in headless Chromium, GPU and software; check a real screen before relying on it). `window.__mask.renderer` says `splat` or `mesh`.
+- **Recording:** `argus-mask record` and the Broadcast page record a splat face as they do a mesh: each frame is posed, depth-sorted for the camera and drawn before its screenshot, so a frame rendered twice is byte-identical.
 
 ### Face aliases
 
@@ -93,11 +120,25 @@ An alias is a stable name for a face: `holly` for a persona's face, used by the 
 - **Repointing:** new connections get the new face at once. A screen already watching `holly` switches on the next thing said: each stream's header names the face itself, and a viewer that loaded another face reloads, with its URL, and joins the stream where it has got to.
 - **Rules:** an alias is a face id that isn't a face's directory (it never hides a face), it points at a face the server serves, and never at another alias. An entry that breaks a rule is ignored (the editor shows why). Renaming a face in the editor carries its aliases along; deleting one an alias points at is refused until the alias points elsewhere.
 
-A kiosk for a persona, with the sound on the house speakers (see [House audio](#house-audio-snapcast)):
+A kiosk for a persona, with the sound on the house speakers (see [House audio](#house-audio-snapcast)). `<GPU_HOST>` and `<LAN_HOST>` below are placeholders; the real host/IP is in the local `.env` (see `.env.example`), so check it there:
 
 ```
-http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
+http://<GPU_HOST>:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=750
 ```
+
+### Rest sets and idle life
+
+A face at rest shows a **rest set**: a named baseline expression it holds between broadcasts and speaks from. With every weight at zero, most heads look stern (the mouth's corners sit low), so the default is `warm`.
+
+- **Built in:** `neutral`, `calm`, `warm` (the default), `bright`, `attentive`. Each is a few ARKit weights and a `life`, how much the face moves at rest (0 still, 1 the default, up to 2).
+- **Choosing:** Saved faces → open a face → the `rest:` picker beside the poses. An exported face keeps the choice; screens pick it up when they next load the face (the server serves it as `GET /face/<id>/rest`). A screen can override it with `?rest=calm`, and `?life=0.5` calms the movement.
+- **Your own sets:** `expressions.json` in the assets directory, written by the editor (`PUT /expressions/sets/{name}`) or by hand: `{"sets": {"cheery": {"weights": {"mouthSmileLeft": 0.5, "mouthSmileRight": 0.5}, "life": 1.2}}, "faces": {"ginger-3": "cheery"}}`. A set of the file's own may replace a built-in one. Bad entries are ignored, and `GET /expressions` on the editor says why. The server only reads it, like `aliases.json`.
+- **While speaking:** the brows, eyes and cheeks of the set hold fully, its mouth weights at half, so a face speaks from its mood while the mouth stays the driver's.
+- **Idle life**, while nothing plays: blinks 2 to 5 s apart (some doubled), glances with the head following part of the way, now and then a longer look away, breathing, and small expression shifts that come and go (a lifted brow, a passing smile, a thoughtful press). It is the page's own: never in a take, never in a recording.
+
+### Lips
+
+Audio2Face's weights are tuned for its own character. On another head, the shapes that close the lips (`mouthClose`, `mouthShrugLower`, the rolls, pucker, press) can push the lower lip up through the upper one. The viewer measures, once per face as it loads, how far each mouth shape moves the gap between the lips (`window.__mask.lips`), and on every frame scales the closing shapes down so they never close the lips further than the opening ones (`jawOpen`, funnel, ...) leave room for, plus 1 mm for lips pressing together. `mouthShrugLower` and the rolls also go at 0.7. On ginger-3, over three takes it was not tuned on, lips overlapping by more than 1 mm fell from 24% of frames to 3%, by more than 3 mm from 12% to none; lips still meet for m, b and p. It needs no setting, works for any face with the ARKit mouth shapes, and applies to screens, `record` and the editor's previews alike (`viewer/motion.js`).
 
 ## Viewer
 
@@ -118,6 +159,8 @@ http://192.168.1.39:8109/?face=holly&display=hld&kiosk=1&audio=external&delay=75
 | `hair` | `blend` (default: an opaque core, then the fringe blended over it, so wisps fade), `a2c`, `hash`, or `cutout` |
 | `pores` | `0` drops the generated pore detail over a head's baked skin maps (for comparing) |
 | `tone`, `exposure` | tone mapping: `neutral` (default), `agx`, `aces` or `none`; exposure, default `1.0` |
+| `rest` | a rest set to show instead of the face's own (see [Rest sets](#rest-sets-and-idle-life)) |
+| `life` | how much the face moves at rest: `0` still, `1` (default), up to `2` |
 
 The look (`viewer/look.js`, shared with the face editor's previews) lights the head with a three-point rig (warm key, cool fill, cool rims that lift it off a dark background), image-based light from a neutral room, and PBR Neutral tone mapping. On the profiles:
 
@@ -168,11 +211,13 @@ A build is a preview, kept in `assets/.preview/`, which the server never lists. 
 
 **On screen…** (beside Export, and on each exported face's card) takes a face to a screen. The editor checks that the server is up and lists the face, and says plainly if it does not (the usual cause: the server and the editor were started on different assets directories). It builds the viewer link at the screens' origin, with display, quality, kiosk, status line and background, to open, copy, or show as a QR code for a tablet or panel to scan. It shows which screens are watching and whether they can be heard ("1 screen ready", "1 screen, no sound yet: tap it"), plays a test chime through the server's own source socket (refused, like any source, by a read-only server), and gives the `argus-mask say … --face <id>` command to speak from a terminal. The editor reaches the server at `ARGUS_MASK_SERVER_URL` (`--server-url`, default `http://127.0.0.1:8109`) and hands out links at `ARGUS_MASK_VIEWER_URL` (`--viewer-url`: the TLS proxy on a LAN; default, the server's).
 
-**Broadcast** (`/broadcast.html`, linked from both pages) is where a face speaks. It lists the faces the server serves and whether each is ready (a screen watching that can be heard), already speaking, or has no one to hear it. Pick one, and either **Say** text through the TTS service, with every option `argus-mask say` takes (voice, from the service's own list when it is a Wyoming server, or typed; pause between sentences; temperature, 0.1 to 1.5 or the service's own; seed; stream; the TTS URL; extra `-p key=value` fields), or **Push** a WAV file, as `argus-mask push` does. The editor runs the CLI's own code against the server, so the server's read-only switch and one-source-per-face rule apply as from a terminal; the page shows each step (the session, every sentence, the speech's length, done or why not) and can stop it. The matching command line is shown, to copy. The text goes to the TTS service and is never logged; the page shows its first 80 characters while it plays. **Record to file** records the broadcast as `argus-mask record` does: the recorder listens on the face first, then, once the broadcast ends, renders every frame in a headless browser (frame size 1280×720, 1920×1080 or the HLD's 1080×1920; the viewer's `high` look by default) and muxes the MP4 with the audio, its WAV and take beside it, into `ARGUS_MASK_RECORDINGS_DIR` (`--recordings-dir`, default `./recordings`). The page shows the clip to play or download, and lists recent ones. It needs the `record` extra and `playwright install chromium-headless-shell` where the editor runs; without them the checkbox says so.
+**Broadcast** (`/broadcast.html`, linked from both pages) is where a face speaks. It lists the faces the server serves and whether each is ready (a screen watching that can be heard), already speaking, or has no one to hear it. Pick one, and either **Say** text through the TTS service, with every option `argus-mask say` takes (voice, from the service's own list when it is a Wyoming server or a Miso-style HTTP service (its speakers and clones), or typed; pause between sentences; temperature, 0.1 to 1.5 or the service's own; seed; stream; the TTS URL; extra `-p key=value` fields), or **Push** a WAV file, as `argus-mask push` does. The editor runs the CLI's own code against the server, so the server's read-only switch and one-source-per-face rule apply as from a terminal; the page shows each step (the session, every sentence, the speech's length, done or why not) and can stop it. The matching command line is shown, to copy. The text goes to the TTS service and is never logged; the page shows its first 80 characters while it plays. **Record to file** records the broadcast as `argus-mask record` does: the recorder listens on the face first, then, once the broadcast ends, renders every frame in a headless browser (frame size 854×480, 1280×720, 1920×1080 or the HLD's 1080×1920; the viewer's `high` look by default) and muxes the MP4 with the audio, its WAV and take beside it, into `ARGUS_MASK_RECORDINGS_DIR` (`--recordings-dir`, default `./recordings`). The page shows the clip to play or download, and lists recent ones. It needs the `record` extra and `playwright install chromium-headless-shell` where the editor runs; without them the checkbox says so.
 
-**Voices** (`/voices.html`) is where a voice is made. Upload one to three reference clips with their transcripts, or **generate** a synthetic candidate (the TTS service's own speaker, or a described voice on a service that designs them, reading a script you choose), and each is checked as a reference: speech length, sample rate, bandwidth, clipping, level, background noise, edges, pauses, delivery, and whether the transcript fits the audio, each with what to change. **Make the voice** sends the chosen clips and transcript to the TTS service (`/clone-voice`, Miso's contract) and keeps a record in `ARGUS_MASK_VOICES_DIR` (`--voices-dir`, default `./voices`): where the voice comes from (generated, your own, or a consenting speaker's under a release, by its sha256), its delivery, and the clips by hash, kept beside it. A clip with a bad check is not made into a voice. **Try a voice** speaks a line in the browser, no face involved. Voices made elsewhere show as having no record. See [docs/voices.md](docs/voices.md): what a good reference sounds like, recording your own, synthetic voices, and one voice per delivery (warm, brisk, …).
+**Voices** (`/voices.html`) is where a voice is made. Upload one to three reference clips with their transcripts, or **generate** a synthetic candidate (the TTS service's own speaker, or a described voice on a service that designs them, reading a script you choose), and each is checked as a reference: speech length, sample rate, bandwidth, clipping, level, background noise, edges, pauses, delivery, and whether the transcript fits the audio, each with what to change. **Make the voice** sends the chosen clips and transcript to the TTS service (`/clone-voice`, Miso's contract) and keeps a record in `ARGUS_MASK_VOICES_DIR` (`--voices-dir`, default `./voices`): where the voice comes from (generated, your own, a consenting speaker's under a release, by its sha256, or personal: anyone else, for your own speakers, with a note of where the clips came from), its delivery, and the clips by hash, kept beside it. A clip with a bad check is not made into a voice. **Try a voice** speaks a line in the browser, no face involved. Voices made elsewhere show as having no record. See [docs/voices.md](https://github.com/smk762/argus-mask/blob/main/docs/voices.md): what a good reference sounds like, recording your own, synthetic voices, and one voice per delivery (warm, brisk, …).
 
-It needs what [scripts/README.md](scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
+It needs what [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md) sets up, on the machine that runs it: Blender 4.2 or later, the MPFB extension, and the MakeHuman asset packs (`makehuman_system_assets` and `faceunits01`). None of it ships with argus-mask; the server never needs it.
+
+**Asset packs** (`/packs.html`) browses the MakeHuman community's asset packs (hair, eyebrows, clothes and more) from a catalogue checked into the repo, `asset_catalogue.json` (refreshed by `scripts/make_asset_catalogue.py`, as a reviewed commit). Only CC0 and CC-BY packs are listed. A pack is installed by its catalogue id alone, one at a time: the zip comes from the catalogued URL, is refused unless its sha256 matches, is unpacked under MPFB's data directory and never overwrites an installed file. Its assets then show in the editor with their licences. Like every change, an install is refused when the editor is read-only.
 
 ```bash
 argus-mask editor --assets-dir assets \
@@ -180,7 +225,7 @@ argus-mask editor --assets-dir assets \
 ```
 
 - **Only licensed assets.** The editor offers the assets that an installed pack lists with a licence, and writes each part's licence and author into the face's provenance (`kind: synthetic`). An asset from a CC-BY pack shows up in the licence line.
-- **Adults only.** Age starts at 25 (MakeHuman's 0.5); the recipe refuses less.
+- **Adults only.** Age defaults to about 25 (MakeHuman's 0.5); the slider stops at 18 (0.3542), and the preset model and the recipe refuse anything younger.
 - **It only replaces its own faces.** Each face it builds keeps its `preset.json` beside the model; a directory without one (a stock head, a face added by hand) is never overwritten.
 - **Builds and exports go one at a time.** A failed one leaves nothing behind, and the face that was there stays.
 - **Keep it local.** A build starts Blender. The editor binds `127.0.0.1`, and `/build` and `/export` are behind the same origin and read-only guards as the server's writes.
@@ -193,7 +238,7 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
 | `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
 | `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say`, the editor and the server's `POST /speak` |
-| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` and `/speak` ask for: a stored clone's name, or a speaker number |
+| `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` and `/speak` ask for: a stored clone's name, a speaker number, or `speaker:<name>` |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
 | `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect. The editor refuses builds. |
@@ -214,9 +259,9 @@ With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the dr
 | Driver | Needs | What you get |
 |---|---|---|
 | `energy` | nothing | The jaw opens with loudness and the mouth widens on hissy sounds. No lip shapes. For tests and for hosts with no NVIDIA GPU. |
-| `a2f` | the [Audio2Face server](a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
+| `a2f` | the [Audio2Face server](https://github.com/smk762/argus-mask/blob/main/a2f/README.md) | Real mouth shapes from NVIDIA's Audio2Face-3D, at 30 fps, about 0.3 s behind the audio it is given. |
 
-Neither driver blinks or moves the eyes. Mask's idle layer adds blinks, glances and a slow head sway, from a seed, so a take replays identically.
+Neither driver blinks or moves the eyes, or moves the head. Mask reads the voice itself (loudness and pitch: stressed syllables, phrase ends) and its idle layer adds the rest: nods on stresses and brows on emphasis, a settle at each phrase end, blinks in the pauses, saccades and glances with the head following, small movements of brow and mouth, and a slow sway. All from the audio and a seed, so a take replays identically.
 
 ## Speech from a TTS service
 
@@ -227,14 +272,14 @@ Two kinds of service, told apart by the URL:
 - **`http(s)://…`**: an endpoint that takes `{"text": …}` and streams raw PCM, stating the format in `X-Sample-Rate`, `X-Audio-Format` (`pcm_f32le` or `pcm_s16le`) and `X-Channels` headers. Miso TTS's `/synthesise/stream` is one. Extra request fields go in with `-p key=value`.
 - **`wyoming://host:port`**: a [Wyoming](https://github.com/OHF-Voice/wyoming) TTS server, the protocol Home Assistant's voice pipeline uses; agent-composer's XTTS and Miso bridges speak it. `-p language=…` and `-p speaker=…` pass through. Audio must be 16-bit.
 
-`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice; [docs/voices.md](docs/voices.md) covers making one. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers. Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
+`--voice` (default `ARGUS_MASK_TTS_VOICE`) picks the voice; [docs/voices.md](https://github.com/smk762/argus-mask/blob/main/docs/voices.md) covers making one. A name is a stored clone (`voice_clone_id` on the HTTP contract, the voice's name on Wyoming, where agent-composer's `clone:` prefix is also understood); a number is one of the service's own speakers, and so is a name written `speaker:<name>` (Qwen3-TTS's CustomVoice names its speakers: `--voice speaker:Vivian`; a bare name would be taken for a clone). Any `-p speaker=…`, `voice_clone_id=…` or `voice=…` you give wins over it.
 
 ```bash
 export ARGUS_MASK_TTS_URL=http://127.0.0.1:8034/synthesise/stream
 export ARGUS_MASK_TTS_VOICE=inara-nobility
 argus-mask say "Hello from the other side of the room." --face stock-01
 
-argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://192.168.1.20:10200 --voice "Claribel Dervla"
+argus-mask say "Or through a Wyoming server." --face stock-01 --tts-url wyoming://<LAN_HOST>:10200 --voice "Claribel Dervla"
 ```
 
 `say` sends the text one sentence at a time and leaves `--pause` ms of silence between sentences (default 300; twice that between paragraphs, which are blank lines in the text). TTS models run sentences into each other, and a short request wanders less than a long one. `--pause 0` sends the text whole. By default `say` also tidies the speech (`argus_mask.speech`): numbers, times, dates and symbols go as words ("9:30am" as "nine thirty a m"), since a model guesses at digits; a sentence of one to three words goes with the next, since a lone "Greetings." comes back furthest from the rest in pitch and level; and each sentence is faded in and out (5 ms, 30 ms) and brought to the same speech level (-20 dBFS, within 9 dB), since a model often stops while the last sound is still at full level, and sentences generated apart differ in loudness. With `--stream` there are fades but no levelling. `--as-is` (the Broadcast page's **Tidy speech** checkbox) sends the text as written and plays the audio as it came. `--context` (experimental, off by default; the Broadcast page's **Previous sentence as context**) sends each sentence to an HTTP service with the one before it, its text and levelled audio, for a CSM-style model like Miso to carry on from; a service that refuses the field is asked again without it. With a cloned voice it can make the tone drift rather than hold. `say` also puts 150 ms of silence before the utterance and 300 ms after it: TTS models start speaking on their first sample, and an output device that has to wake up would otherwise eat the first syllable.
@@ -285,7 +330,7 @@ curl -X POST "http://127.0.0.1:8109/push?face=stock-01" \
 
 To play the same speech in the house (Snapcast) and on the face, synthesise once and send the same audio to both.
 
-**`POST /speak`** takes text, as `argus-mask say` does, through the server's own TTS service (`ARGUS_MASK_TTS_URL`; `422` if none is set). The text goes to that service and is never logged. JSON body: `face`, `text`, and optionally `voice` (default `ARGUS_MASK_TTS_VOICE`), `temperature`, `seed`, `pause` (ms between sentences, default 300), `tidy` (default `true`: numbers as words, short sentences joined, even loudness, soft edges), `require_screen`. The speech is fetched whole before the face is claimed, so a slow TTS delays the start, never the mouth.
+**`POST /speak`** takes text, as `argus-mask say` does, through the server's own TTS service (`ARGUS_MASK_TTS_URL`; `422` if none is set). The text goes to that service and is never logged. JSON body: `face`, `text`, and optionally `voice` (default `ARGUS_MASK_TTS_VOICE`; a clone, a speaker number or `speaker:<name>`), `instruction` (how to say it, for a service that takes one, as Qwen3-TTS's CustomVoice does: "calm, low and measured"; never logged), `temperature`, `seed`, `pause` (ms between sentences, default 300), `tidy` (default `true`: numbers as words, short sentences joined, even loudness, soft edges), `require_screen`. The speech is fetched whole before the face is claimed, so a slow TTS delays the start, never the mouth.
 
 ```bash
 curl -X POST http://127.0.0.1:8109/speak -H "Content-Type: application/json" \

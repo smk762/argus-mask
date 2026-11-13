@@ -454,22 +454,22 @@ class Server:
         worker = await self.worker_for(fps)
         await ws.send(json.dumps({"blendshapes": worker.names}))
         self.streams += 1
+        # The client's messages and the worker's frames are watched together, so a worker that dies
+        # while the client is quiet (a pause in speech) is reported at once, not on the next write.
         pump = asyncio.create_task(self._pump(worker, ws))
+        receive = asyncio.create_task(self._receive(ws, worker))
         try:
-            async for message in ws:
-                if isinstance(message, bytes):
-                    if len(message) % 4:
-                        raise ValueError("audio must be whole float32 samples")
-                    if message:
-                        await worker.write(b"A", message)
-                    continue
-                body = json.loads(message)
-                if isinstance(body, dict) and body.get("end"):
-                    break
-                raise ValueError('a text message must be {"end": true}')
-        except ValueError as exc:
-            await self._refuse(ws, str(exc))
+            done, _ = await asyncio.wait({pump, receive}, return_when=asyncio.FIRST_COMPLETED)
+            if receive in done:
+                try:
+                    receive.result()
+                except ValueError as exc:
+                    await self._refuse(ws, str(exc))
+            # Otherwise the pump ended first: the worker failed, and the flush below reports it.
         finally:
+            if not receive.done():
+                receive.cancel()
+                await asyncio.gather(receive, return_exceptions=True)
             # Whether the client finished, vanished or sent nonsense, the worker's stream is
             # ended and drained, so the next stream starts from a reset model.
             failure = None
@@ -488,6 +488,21 @@ class Server:
                 await worker.stop()
                 self._recover(failure)
                 raise WorkerDied(failure)
+
+    @staticmethod
+    async def _receive(ws: ServerConnection, worker: Worker) -> None:
+        """Pass the client's audio to the worker until it sends ``{"end": true}`` or goes away."""
+        async for message in ws:
+            if isinstance(message, bytes):
+                if len(message) % 4:
+                    raise ValueError("audio must be whole float32 samples")
+                if message:
+                    await worker.write(b"A", message)
+                continue
+            body = json.loads(message)
+            if isinstance(body, dict) and body.get("end"):
+                return
+            raise ValueError('a text message must be {"end": true}')
 
     async def _pump(self, worker: Worker, ws: ServerConnection) -> None:
         """Forward the worker's frames until it reports the stream flushed.
