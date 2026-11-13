@@ -75,7 +75,7 @@ from argus_mask.editor.voices import (
 )
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
-from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
+from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
 from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
 from argus_mask.voice import analyse, assess
@@ -352,10 +352,22 @@ def create_editor_app(
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
 
+    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+        return FileResponse(
+            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
+        )
+
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
+        return model_response(*find_face(face_id, where))
+
+    @app.get("/face/{face_id}/model/{file}")
+    def face_model_named(face_id: str, file: str, where: str | None = Query(None, alias="from")) -> FileResponse:
+        # The model under its own name, for the splat renderer (it wants a URL ending .zip): only the manifest's file.
         manifest, path = find_face(face_id, where)
-        return FileResponse(path, media_type="model/gltf-binary", headers={"ETag": f'"{manifest.model.sha256}"'})
+        if file != manifest.model.file:
+            raise HTTPException(404, f"face {face_id!r} has no file {file!r}")
+        return model_response(manifest, path)
 
     @app.post("/build")
     async def build(preset: Preset) -> dict:
@@ -971,6 +983,11 @@ def create_editor_app(
     def motion() -> FileResponse:
         # The lip budget, rest sets and idle life, shared with the viewer.
         return FileResponse(VIEWER_DIR / "motion.js", media_type="text/javascript")
+
+    @app.get("/splat.js")
+    def splat() -> FileResponse:
+        # LAM Gaussian-splat heads, driven as the viewer drives them: the previews of a splat face use it.
+        return FileResponse(VIEWER_DIR / "splat.js", media_type="text/javascript")
 
     @app.get("/look.js")
     def look() -> FileResponse:

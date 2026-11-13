@@ -18,7 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 # 1.0: initial contract.
 # 1.1: provenance kinds personal and consented, consent fields, and the derived ``cleared``.
-MASK_VERSION = "1.1"
+# 1.2: ``ModelFile.format``: a face is a glTF binary (``.glb``) or a LAM Gaussian-splat head (``.zip``).
+MASK_VERSION = "1.2"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -130,9 +131,31 @@ class Provenance(BaseModel):
         return self.kind in CLEARED_KINDS
 
 
+ModelFormat = Literal["gltf", "lam-splat"]
+# The file each format comes in: a manifest whose file and format disagree is refused.
+MODEL_SUFFIXES: dict[str, str] = {"gltf": ".glb", "lam-splat": ".zip"}
+
+
 class ModelFile(BaseModel):
-    file: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.glb$")
+    """A face's model, in its directory: its file name, sha256 and format.
+
+    - ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a
+      manifest from before 1.2 reads as it did.
+    - ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and
+      its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally
+      ``iris_occlusion.json``.
+    """
+
+    file: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(glb|zip)$")
     sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    format: ModelFormat = Field("gltf", description="gltf: a .glb; lam-splat: a LAM Gaussian-splat head, a .zip")
+
+    @model_validator(mode="after")
+    def _agrees(self) -> ModelFile:
+        suffix = MODEL_SUFFIXES[self.format]
+        if not self.file.endswith(suffix):
+            raise ValueError(f"a {self.format} model is a {suffix} file, not {self.file}")
+        return self
 
 
 class Framing(BaseModel):

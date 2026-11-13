@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Splat heads**: a LAM Gaussian-splat avatar (a `.zip`: `skin.glb`, `offset.ply`, `animation.glb`,
+  `vertex_order.json`) is a face like any other: served (`GET /face/{id}/model`, and `/face/{id}/model/{file}` by its
+  own name), shown by the viewer and the editor's Saved faces previews, driven by mask's frames, rest sets, idle life
+  and lip budget (measured from the archive's `skin.glb`, with a jaw cap for the weak splat mouth: `?jaw=`), and
+  recorded frame-exact by `record` and the Broadcast page. The manifest's model gains `format` (`gltf`, the default,
+  or `lam-splat`); the wire contract is 1.2, and older manifests read as before. The archive is checked in memory,
+  never unpacked to disk: one folder of known members, size, count and compression-ratio caps, no path tricks or
+  links, ARKit morph targets only. `inspect` takes a `.zip` (and `--write-manifest` for it, with the splat framing).
+  The viewer draws one with Myned AI's gsplat-flame-avatar-renderer 1.4.0 (MIT) and JSZip 3.10.1 (MIT), vendored
+  with three.js r187's `OrbitControls.js`; `window.__mask.renderer` says `splat` or `mesh`. LAM's weights (CC BY-NC
+  4.0) and FLAME are non-commercial, so a LAM head is `personal`, never cleared. `display=hld` refuses a splat face
+  for now.
 - **Personal and cleared faces and voices** (#19). Provenance gains `personal` (your own use, anything lawful in
   private, such as a cartoon or a character LoRA; needs only a `source`) and `consented` (a real person or owned
   character under a release: `subject` and `release_sha256`). Every provenance carries a derived `cleared`: true for

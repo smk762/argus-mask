@@ -1,5 +1,6 @@
 // A face on a three.js stage: load a model, pose it, show it in any box, or take a still of it.
-// Shared by the editor (index.html) and the saved-faces page (faces.html).
+// Shared by the editor (index.html) and the saved-faces page (faces.html). A LAM Gaussian-splat head
+// (format "lam-splat") is drawn by the viewer's splat.js instead, live, through the same poses and motion.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
@@ -39,6 +40,14 @@ export const POSES = {
   smile: fixed({ mouthSmileLeft: 0.7, mouthSmileRight: 0.7, jawOpen: 0.12 }),
 };
 export { talkReady };
+
+// Where a face's model is fetched from: a splat head by its own file name (the splat renderer wants a URL
+// ending .zip). *query*: the page's own (from=, v=).
+export function modelUrl(faceId, manifest, query = '') {
+  const splat = manifest.model && manifest.model.format === 'lam-splat';
+  const path = `/face/${encodeURIComponent(faceId)}/model${splat ? `/${encodeURIComponent(manifest.model.file)}` : ''}`;
+  return query ? `${path}?${query}` : path;
+}
 
 // The rest sets and each face's choice (GET /expressions), fetched once per page; fresh() after a change.
 let setsCache = null;
@@ -83,6 +92,8 @@ export class Stage {
     this.lastT = null;
     this.loaded = false;
     this.host = null;
+    this.splat = null;       // a SplatHead (splat.js) while a splat face is loaded
+    this.splatBox = null;    // the element it draws in
     window.addEventListener('resize', () => this.resize());
     if (animate) {
       const tick = (now) => { requestAnimationFrame(tick); if (this.loaded && this.host) this.frame(now / 1000); };
@@ -90,8 +101,15 @@ export class Stage {
     }
   }
 
-  async load(modelUrl, framing = {}) {
+  // A face's model: a .glb (format "gltf", the default) or a LAM splat head's .zip ("lam-splat").
+  // Loads may overlap (a quick second click): only the latest one shows; an earlier one that finishes later is
+  // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
+  async load(modelUrl, framing = {}, format = 'gltf') {
+    const gen = (this.loads = (this.loads || 0) + 1);
+    if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
+    if (gen !== this.loads) { dispose(gltf.scene); return; }
+    this.dropSplat();
     for (const child of [...this.pivot.children]) dispose(child);
     this.pivot.clear();
     this.targets = new Map();
@@ -114,9 +132,48 @@ export class Stage {
     this.look.focus(gltf.scene);
   }
 
+  async loadSplat(modelUrl, framing, gen) {
+    const { SplatHead, readSkin, jawCap } = await import('./splat.js');
+    const skin = await readSkin(modelUrl);
+    if (gen !== this.loads) return;
+    this.dropSplat();
+    for (const child of [...this.pivot.children]) dispose(child);
+    this.pivot.clear();
+    this.targets = new Map();
+    // In its host, in the flow like the canvas it replaces; a stage with no host (stills) draws off screen.
+    const box = document.createElement('div');
+    box.style.cssText = this.host ? 'width: 100%; height: 100%;' : 'position: fixed; left: -10000px; top: 0; width: 240px; height: 288px;';
+    (this.host || document.body).prepend(box);
+    this.renderer.domElement.style.display = 'none';
+    this.splatBox = box;
+    let head;
+    try {
+      head = await SplatHead.create(box, { url: modelUrl, framing, skin, instant: true });
+    } catch (err) {
+      if (gen === this.loads) this.dropSplat(); else box.remove();
+      throw err;
+    }
+    if (gen !== this.loads) { head.dispose(); box.remove(); return; }
+    this.splat = head;
+    this.motion = new Motion({ budget: skin.budget, rest: this.restWeights, life: this.restLife, cap: jawCap() });
+    this.loaded = true;
+  }
+
+  dropSplat() {
+    if (this.splat) this.splat.dispose();
+    if (this.splatBox) this.splatBox.remove();
+    this.splat = null;
+    this.splatBox = null;
+    this.renderer.domElement.style.display = '';
+  }
+
   attach(host) {
     this.host = host;
     host.prepend(this.renderer.domElement);
+    if (this.splatBox) {
+      this.splatBox.style.cssText = 'width: 100%; height: 100%;';
+      host.prepend(this.splatBox);
+    }
     this.resize();
   }
 
@@ -151,17 +208,24 @@ export class Stage {
     const k = 1 - Math.exp(-14 * dt);
     for (let i = 0; i < this.shown.length; i += 1) this.shown[i] += (pose.weights[i] - this.shown[i]) * (pose.live ? 1 : k);
     const { weights, head } = this.motion.present(this.shown, ARKIT, { live: pose.live, t, dt });
-    for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
     const rad = Math.PI / 180;
     const idle = head || { yaw: 0, pitch: 0, roll: 0 };
     for (const axis of AXES) this.headTurn[axis] += (idle[axis] - this.headTurn[axis]) * (1 - Math.exp(-6 * dt));
     this.spin += ((this.turn ? 0.6 : 0) - this.spin) * 0.08;
+    if (this.splat) {   // the turn button turns the head itself: a splat head has nothing to stand on
+      this.splat.set(weights, ARKIT, { ...this.headTurn, yaw: this.headTurn.yaw + this.spin / rad });
+      this.splat.step();
+      return;
+    }
+    for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
     this.pivot.rotation.set(this.headTurn.pitch * rad, this.spin + this.headTurn.yaw * rad, this.headTurn.roll * rad);
     this.look.render();
   }
 
   // A still of the loaded face at rest, as a data URL: for a card, without a live canvas per card.
+  // A promise of one for a splat head (its drawing waits on a depth sort); await either.
   snapshot(width = 240, height = 288) {
+    if (this.splat) return this.splatSnapshot(width, height);
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
@@ -171,6 +235,13 @@ export class Stage {
     this.look.setSize(width, height);
     this.look.render();
     return this.renderer.domElement.toDataURL('image/jpeg', 0.85);
+  }
+
+  async splatSnapshot(width, height) {
+    if (!this.host) Object.assign(this.splatBox.style, { width: `${width}px`, height: `${height}px` });
+    this.splat.set(ARKIT.map((n) => this.restWeights[n] ?? 0), ARKIT, null);   // at rest, in its rest set
+    await this.splat.exact();
+    return this.splat.canvas.toDataURL('image/jpeg', 0.85);   // in the same frame as the draw, before it is presented
   }
 
   // Pose buttons for this stage, and for any linked ones: a comparison moves both faces together. With
