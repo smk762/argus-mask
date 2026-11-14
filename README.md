@@ -25,6 +25,29 @@ Not built yet: the Looking Glass Go tier (0.2), and faces built from argus-curat
 
 Not yet seen by a person: the stock head speaking on a real screen with sound. Its mouth was tuned from still frames of real Audio2Face output.
 
+## Two ways to a face
+
+**A mesh head**, built in the [face editor](#face-editor) (MakeHuman and MPFB in headless Blender), or one of the stock heads. It is a rigged `.glb` driven by the 52 ARKit shapes, and it can be cleared to show anywhere. Here are the two stock heads in front of backdrops (plates) generated through [argus-darkroom](https://github.com/smk762/argus-darkroom):
+
+| `stock-01`, Highland pine forest | `stock-02`, underground bunker |
+|---|---|
+| ![stock-01 in front of a misty pine forest](https://raw.githubusercontent.com/smk762/argus-mask/dev/docs/media/mesh-stock-01-highland-forest.jpg) | ![stock-02 in front of a dim concrete bunker](https://raw.githubusercontent.com/smk762/argus-mask/dev/docs/media/mesh-stock-02-bunker.jpg) |
+
+Each backdrop is one command, then any screen shows it as `?scene=<name>`, or as the face's own backdrop chosen on Saved faces ([docs/backgrounds.md](https://github.com/smk762/argus-mask/blob/main/docs/backgrounds.md)):
+
+```bash
+argus-mask plate generate assets/backgrounds/highland-forest --title "Highland pine forest" \
+  --prompt "an old Caledonian pine forest in the Scottish Highlands, ferns in the foreground at the edges, misty morning light, a calm open clearing in the middle" \
+  --drift 0.6 --sway 0.4 --dapple 0.35
+```
+
+**A photoreal splat head**, made from one portrait. A synthetic portrait comes from darkroom ([docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md): frontal, neutral, even light, hair over the temples). LAM turns it into a Gaussian head ([Splat heads](#splat-heads)), and mask drives it like a mesh, in front of the same backdrops. A splat face over a backdrop is framed head and shoulders, since LAM's heads fade out below the collarbone. Two characters made this way:
+
+- **Callum MacRae**, a Highland man of about 25, red-bearded, with optional blue woad: SDXL photoreal portrait, LAM head, Highland forest backdrop.
+- **Nadia Volkova**, a blonde operative of about 25 in a black tactical jacket: SDXL photoreal portrait, LAM head, bunker backdrop.
+
+They have no pictures here: a LAM head is never cleared (LAM's weights are CC BY-NC 4.0 and FLAME is non-commercial), so splat heads stay on your own screens. See [Personal and cleared](#personal-and-cleared).
+
 ## Quick start
 
 ```bash
