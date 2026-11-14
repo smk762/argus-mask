@@ -5,6 +5,8 @@
 //   ?face=<id>       which face (default: the first the server lists)
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
 //   ?bg=<css colour> background for the flat tier, or "transparent"
+//   ?scene=ftl       a backdrop with a little life in it, flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
+//                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
 //   ?hud=0           hide the status line (never the disclosure label a real person's face or voice carries)
 //   ?disclosure=…    a label to show from the start (`argus-mask record` passes a consented voice's)
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
@@ -29,9 +31,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
+import { Backdrop } from './backdrop.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
+const SCENE = params.get('scene') || '';
 const RECORD = params.get('record') === '1';
 const KIOSK = params.get('kiosk') === '1';
 const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
@@ -62,6 +66,7 @@ const state = window.__mask = {
   renderer: null,   // "mesh" (three.js) or "splat" (splat.js)
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
   look: null,   // the profile and effects in use: see look.js
+  scene: null,  // the backdrop on show (backdrop.js), or null for a plain background
   screenReady: false, kiosk: KIOSK,   // connected and heard (or, sound external, connected); a dedicated screen
   sound: EXTERNAL ? 'external' : 'local', delayMs: DELAY_S * 1000,
 };
@@ -80,9 +85,10 @@ function fail(text) { state.error = text; notice(text); }
 // resolves once it has been drawn, so a screenshot taken then is exactly that frame.
 let posed = null;
 let posedResolve = null;
-state.pose = (weights, headTurn, blendshapes) => new Promise((resolve) => {
+// tMs, the frame's own time on the take, sets the backdrop's clock: a recording never reads the wall clock.
+state.pose = (weights, headTurn, blendshapes, tMs) => new Promise((resolve) => {
   if (blendshapes) names = blendshapes;   // the stream's order, from its header
-  posed = { weights: Float32Array.from(weights), head: headTurn };
+  posed = { weights: Float32Array.from(weights), head: headTurn, t: Number.isFinite(tMs) ? tMs / 1000 : 0 };
   posedResolve = resolve;
 });
 
@@ -95,7 +101,8 @@ let camera = null;
 let look = null;
 let pivot = null;
 let splat = null;          // the SplatHead (splat.js), for a splat face
-function meshScene() {
+let backdrop = null;       // the Backdrop (backdrop.js), for ?scene=
+async function meshScene() {
   const transparent = DISPLAY === 'flat' && params.get('bg') === 'transparent';
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: transparent });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -115,6 +122,15 @@ function meshScene() {
   look = new Look(renderer, scene, camera, lookOptions(params, RECORD ? 'high' : 'medium'));
   pivot = new THREE.Group();   // head rotation is applied here unless the model has a head bone
   scene.add(pivot);
+  // HLD keeps its subject on black and a transparent page shows what is behind it: neither takes a scene.
+  if (SCENE && DISPLAY === 'flat' && !transparent) {
+    const options = {};
+    for (const key of ['speed', 'density']) if (params.has(`scene.${key}`)) options[key] = Number.parseFloat(params.get(`scene.${key}`));
+    if (params.has('scene.tint')) options.tint = params.get('scene.tint');
+    backdrop = await Backdrop.create(THREE, renderer, SCENE, { quality: look.summary.quality, options });
+    scene.background = backdrop.texture;
+    look.tintRims(options.tint || backdrop.meta.tint);
+  }
 }
 
 function resize() {
@@ -134,9 +150,11 @@ function resize() {
     renderer.setSize(width, height);
     camera.aspect = width / Math.max(1, height);
     look.setSize(width, height);
+    backdrop?.setSize(renderer.domElement.width, renderer.domElement.height);
   }
   camera.updateProjectionMatrix();
   state.look = look.summary;
+  state.scene = backdrop ? backdrop.summary : null;
 }
 window.addEventListener('resize', resize);
 
@@ -163,7 +181,7 @@ async function loadFace() {
   showDisclosure();
   if (manifest.model && manifest.model.format === 'lam-splat') return loadSplat(faceId, manifest);
   state.renderer = 'mesh';
-  meshScene();
+  await meshScene();
   resize();
   const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model`);
   pivot.add(gltf.scene);
@@ -204,6 +222,7 @@ function faceSeed(id) {
 // splat renderer. The archive is fetched by its own name: the renderer wants a URL ending .zip.
 async function loadSplat(faceId, manifest) {
   if (DISPLAY === 'hld') throw new Error('A splat face cannot be shown on display=hld yet. Use display=flat.');
+  if (SCENE) throw new Error('A splat face cannot show a scene yet: it draws its own background. Leave out ?scene=.');
   state.renderer = 'splat';
   const { SplatHead, readSkin, jawCap, JAW } = await import('./splat.js');
   const url = `/face/${encodeURIComponent(faceId)}/model/${encodeURIComponent(manifest.model.file)}?v=${manifest.model.sha256}`;
@@ -506,6 +525,10 @@ function draw() {
   } else {
     applyWeights(shown.weights, order);
     applyHead();
+    if (backdrop) {
+      if (posed) backdrop.update(posed.t, { exact: true });
+      else backdrop.update(wall / 1000);
+    }
     look.render();
   }
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
