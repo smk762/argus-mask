@@ -1,4 +1,9 @@
-# argus-mask
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/smk762/argus-cortex/dev/brand/packages/mask/argus-mask-lockup-dark.svg">
+    <img alt="argus-mask" src="https://raw.githubusercontent.com/smk762/argus-cortex/dev/brand/packages/mask/argus-mask-lockup-light.svg" height="52">
+  </picture>
+</h1>
 
 A talking face for the Argus suite. Audio goes in; a stream of facial animation frames comes out; a browser page renders a rigged head from those frames, in step with the audio, on any screen on the LAN.
 
