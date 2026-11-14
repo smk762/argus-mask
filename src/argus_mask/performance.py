@@ -68,7 +68,14 @@ class Performer:
 
 
 def make_header(
-    *, face_id: str, session_id: str, fps: int, seed: int, sample_rate: int, driver: Driver
+    *,
+    face_id: str,
+    session_id: str,
+    fps: int,
+    seed: int,
+    sample_rate: int,
+    driver: Driver,
+    disclosure: str | None = None,
 ) -> StreamHeader:
     return StreamHeader(
         face_id=face_id,
@@ -79,6 +86,7 @@ def make_header(
         # What a viewer is sent, whatever the source sent: mono float32 at the source's rate.
         audio=AudioFormat(sample_rate=sample_rate, channels=1, format="f32le"),
         driver=DriverInfo(name=driver.name, model=driver.model),
+        disclosure=disclosure,
     )
 
 

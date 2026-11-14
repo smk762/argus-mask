@@ -45,11 +45,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, PcmDecoder, decode_wav
 from argus_mask.config import Settings
+from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, voice_refusal
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
 from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
+    VOICE_DISCLOSURE,
     DriverHealth,
     FaceManifest,
     Health,
@@ -336,6 +338,20 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
         )
 
+    @app.get("/face/{face_id}/consent", response_model=ConsentVerdict)
+    def face_consent(
+        face_id: str, use: str = Query(..., pattern="^(" + "|".join(CONSENT_USES) + ")$")
+    ) -> ConsentVerdict:
+        """Whether a face may be used for *use* (``record`` asks for ``video``): a verdict, never the record.
+
+        A face that is not a real person's needs no consent: ok. One that is not served at all is a 404.
+        """
+        manifest, _ = face_or_404(face_id)
+        if manifest.provenance.kind != "consented":
+            return ConsentVerdict(ok=True)
+        found = store.consents.check_face(manifest.provenance, use=use, at=store.clock())  # type: ignore[arg-type]
+        return found if isinstance(found, ConsentVerdict) else ConsentVerdict(ok=False, detail=found)
+
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str) -> FileResponse:
         return model_response(*face_or_404(face_id))
@@ -386,6 +402,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 seed=hello.seed,
                 sample_rate=hello.sample_rate,
                 driver=driver,
+                disclosure=VOICE_DISCLOSURE if hello.disclose else None,
             )
             stage.header = header
             stage.send(line(header))
@@ -603,19 +620,22 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         tts_url = cfg.tts_url
         if not tts_url.startswith(("http://", "https://", "wyoming://")):
             raise HTTPException(422, "no TTS service is set on this server (ARGUS_MASK_TTS_URL)")
+        voice = req.voice or cfg.tts_voice
+        if why := voice_refusal(cfg.voices_dir, store.consents, voice, use="avatar", at=store.clock()):
+            raise HTTPException(403, why)
         stage = http_claim(req.face, require_screen=req.require_screen)
         body: dict = {"text": req.text}
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.instruction:
             body["instruction"] = req.instruction
-        body = client.voiced(body, req.voice or cfg.tts_voice, tts_url)
+        body = client.voiced(body, voice, tts_url)
         log.info("speak", face=req.face, chars=len(req.text))  # never the text itself
         try:
             pcm, fmt, _ = await client.synthesise(tts_url, body, pause_ms=req.pause, tidy=req.tidy)
         except client.ClientError as exc:
             raise HTTPException(502, str(exc)) from exc
-        hello = SourceHello(**fmt.model_dump(), seed=req.seed)
+        hello = SourceHello(**fmt.model_dump(), seed=req.seed, disclose=voice_disclosed(cfg.voices_dir, voice))
         pcm = client._silence(fmt, client.SAY_LEAD_MS) + pcm + client._silence(fmt, client.SAY_TAIL_MS)
         return await play_http(req.face, stage, hello, pcm)
 

@@ -17,7 +17,7 @@ from argus_mask import faces
 from argus_mask.cli import app
 from argus_mask.config import Settings
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, inspect_model, inspect_splat
-from argus_mask.models import FaceManifest, ModelFile
+from argus_mask.models import MASK_VERSION, FaceManifest, ModelFile
 from argus_mask.server.app import create_app
 from tests.helpers import SPLAT_SHAPES, make_face, make_glb, make_splat_face, make_splat_zip, splat_members
 
@@ -268,7 +268,7 @@ def test_inspect_writes_a_manifest_for_a_splat_archive(tmp_path) -> None:
         "format": "lam-splat",
     }
     assert manifest["framing"] == {"distance": 0.7, "height": 1.65, "fov": 50.0}
-    assert manifest["provenance"]["kind"] == "personal" and manifest["mask_version"] == "1.2"
+    assert manifest["provenance"]["kind"] == "personal" and manifest["mask_version"] == MASK_VERSION
     report = json.loads(runner.invoke(app, ["inspect", str(directory), "--json"]).output)
     assert report["format"] == "lam-splat" and report["refused"] is None and report["splats"] == 3
     assert report["manifest"]["id"] == "my-splat"

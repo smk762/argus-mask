@@ -31,6 +31,9 @@ class Settings:
     fps: int = DEFAULT_FPS
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
     read_only: bool = False
+    # The Voices page's voices (EditorSettings has the same), read to refuse a consented voice whose release no
+    # longer covers it, and to label what it says. A voice made elsewhere has no record here and is not checked.
+    voices_dir: Path = Path("voices")
 
     def __post_init__(self) -> None:
         if self.driver not in DRIVERS:
@@ -60,6 +63,7 @@ class Settings:
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
             read_only=read_only,
+            voices_dir=Path(_env("VOICES_DIR") or "voices"),
         )
 
 

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Consented faces and voices** (#26). A real person can be the avatar under a release written for this use:
+  `docs/likeness-release.md` (a template for a lawyer to review), `docs/consented-faces.md` (the face capture
+  protocol and reference images), `docs/voices.md` § A consenting speaker (the voice session) and `docs/consent.md`.
+  `argus-mask consent new` writes a consent record (`<assets>/.consent/<release_sha256>.json`: the release's, reference
+  images' and reference recordings' hashes, never the documents, media or ID; the face, the voice and its deliveries;
+  uses `avatar`, `video`, `speech`, `training`; dates; revocation terms), `consent list` shows them, and
+  `consent revoke` ends one: nothing under the release is served or spoken from its effective day, its voices are
+  deleted from the TTS services they were made on and moved to the trash, and its faces are moved to the trash. It can
+  be re-run if a service was down. A `consented` face is served only while its record covers it (`avatar`; `record`
+  also needs `video`, asked of the new `GET /face/{id}/consent`). The Voices page makes a consented voice only with
+  a record that covers it and its delivery. `say`, `POST /speak`, the Broadcast page and **Try** refuse one the
+  record no longer covers. The types (`ConsentRecord`, `consent_valid`, `consent_matches`) are the definition
+  argus-cortex#31 moves into cortex.
+- **The disclosure label.** A consented face's provenance carries `disclosure`, and a stream in a consenting
+  person's voice carries it in its header (`SourceHello.disclose`, set by `say` and Broadcast). The viewer shows it on
+  every screen, kiosks and `?hud=0` included, and in every recording.
+- **Generated faces say how:** `Provenance.generator` (the model, its sha256, the seed and the prompt), for
+  `synthetic` and `personal` faces only; `inspect --generator … --generator-sha256 … --generator-seed … --prompt …`.
+- Wire contract 1.3 (additive): `Provenance.generator` and `disclosure`, `SourceHello.disclose`,
+  `StreamHeader.disclosure` (left out of a take when unset, so takes are unchanged), `ConsentVerdict`.
+
 - **Hair colour** (part of #59). A preset's `hair_colour` bakes a colour into the hair's texture at build time:
   `eumelanin` (brown to black) and `pheomelanin` (red to ginger), each 0 to 1, as in a physically based hair shader,
   plus an optional `dye` mixed over them by `dye_strength`. The texture keeps its own strand variation and its alpha.

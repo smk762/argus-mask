@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.editor.app import create_editor_app
-from tests.helpers import fake_tts
+from tests.helpers import fake_tts, write_consent
 from tests.test_voice import TEXT, speechlike
 
 RELEASE = "ab" * 32
@@ -104,6 +104,7 @@ def test_a_personal_voice_records_where_it_came_from_and_is_not_cleared(voices_p
 
 def test_a_voice_is_made_recorded_tried_and_deleted(voices_page, tmp_path) -> None:
     clones = {"clones": [{"companion_id": "inara-nobility", "name": "Inara"}]}
+    write_consent(tmp_path / "assets")
     with fake_tts(speechlike(1.0, 24000), 24000, voices={"clones": clones}) as (tts, seen), voices_page(tts) as c:
         sha = check(c, speechlike())["sha"]
         source = {"kind": "consented", "confirmed": True, "speaker": "A. Person", "release_sha256": RELEASE}

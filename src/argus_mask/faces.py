@@ -7,7 +7,8 @@
   no path tricks, and a ``skin.glb`` whose morph targets are ARKit shapes.
 * :class:`FaceStore` lists the faces the server may serve. A face whose manifest
   has no provenance, names another id, points outside its directory or no longer
-  matches its model's sha256 is refused, with the reason kept for ``inspect``.
+  matches its model's sha256 is refused, with the reason kept for ``inspect``. So is a
+  ``consented`` face without a consent record that covers it (:mod:`argus_mask.consent`).
 
 Only the standard library reads the model: the JSON chunk says everything the
 contract needs, and image sizes come from the PNG and JPEG headers.
@@ -21,12 +22,15 @@ import re
 import struct
 import threading
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
+from argus_mask.consent import ConsentStore, ConsentUse, refusal
 from argus_mask.models import FACE_ID_PATTERN, MODEL_SUFFIXES, FaceManifest, Framing, ModelFile, Provenance
 
 MANIFEST_NAME = "manifest.json"
@@ -435,11 +439,21 @@ def _why(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
-class FaceStore:
-    """The faces under one assets root."""
+def local_now() -> datetime:
+    """Now, aware, in this machine's time zone: the day a consent record's dates are read in."""
+    return datetime.now().astimezone()
 
-    def __init__(self, root: str | Path) -> None:
+
+class FaceStore:
+    """The faces under one assets root.
+
+    *clock* gives the time a consented face's record is checked at (a test passes its own).
+    """
+
+    def __init__(self, root: str | Path, *, clock: Callable[[], datetime] = local_now) -> None:
         self.root = Path(root)
+        self.consents = ConsentStore(self.root)
+        self.clock = clock
         self._hashes: dict[tuple[str, int, int], str] = {}  # (path, mtime_ns, size) -> sha256
         self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
 
@@ -450,8 +464,11 @@ class FaceStore:
             self._hashes[key] = sha256_file(path)
         return self._hashes[key]
 
-    def load(self, face_id: str) -> tuple[FaceManifest, Path]:
-        """A face's manifest and model path, or :class:`FaceError` saying why it is refused."""
+    def load(self, face_id: str, *, use: ConsentUse = "avatar") -> tuple[FaceManifest, Path]:
+        """A face's manifest and model path, or :class:`FaceError` saying why it is refused.
+
+        A consented face must have a consent record that covers *use* now: served on a screen is ``avatar``.
+        """
         if not _FACE_ID.match(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
         directory = self.root / face_id
@@ -468,6 +485,10 @@ class FaceStore:
             raise FaceError(f"the manifest's id is {manifest.id!r}, the directory is {face_id!r}")
         if manifest.provenance.kind == "curated":
             raise FaceError("curated faces are not accepted yet")
+        if manifest.provenance.kind == "consented":
+            why = refusal(self.consents.check_face(manifest.provenance, use=use, at=self.clock()))
+            if why is not None:
+                raise FaceError(f"consent: {why}")
         model = directory / manifest.model.file
         # The file name is pattern-checked, so it has no separators; a symlink could still point out.
         if not model.is_file() or model.resolve().parent != directory.resolve():

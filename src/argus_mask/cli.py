@@ -47,6 +47,10 @@ def inspect(
     notes: str = Option("", "--notes", help="Provenance: anything else worth recording"),
     subject: str = Option("", "--subject", help="Provenance, consented: the person, as the release names them"),
     release: str = Option("", "--release-sha256", help="Provenance, consented: sha256 of the signed release"),
+    generator: str = Option("", "--generator", help="Provenance, synthetic: the model that generated the face"),
+    generator_sha256: str = Option("", "--generator-sha256", help="Provenance, synthetic: the model's sha256"),
+    generator_seed: int | None = Option(None, "--generator-seed", min=0, help="Provenance, synthetic: the seed"),
+    prompt: str = Option("", "--prompt", help="Provenance, synthetic: the prompt"),
     distance: float | None = Option(
         None, "--distance", help="Framing: camera distance from the model's origin, in metres (default 0.6; splat 0.7)"
     ),
@@ -74,8 +78,10 @@ def inspect(
         inspect_model,
         model_format,
     )
-    from argus_mask.models import Framing, Provenance
+    from argus_mask.models import Framing, Generator, Provenance
 
+    if not generator and (generator_sha256 or generator_seed is not None or prompt):
+        raise _fail("--generator-sha256, --generator-seed and --prompt describe a --generator: name it")
     refusal: str | None = None
     manifest = None
     try:
@@ -110,6 +116,14 @@ def inspect(
                         notes=notes,
                         subject=subject,
                         release_sha256=release.strip().lower() or None,
+                        generator=Generator(
+                            model=generator,
+                            model_sha256=generator_sha256.strip().lower() or None,
+                            seed=generator_seed,
+                            prompt=prompt,
+                        )
+                        if generator
+                        else None,
                     ),
                     framing=Framing(
                         distance=default.distance if distance is None else distance,
@@ -310,6 +324,14 @@ def say(
     body["text"] = text
     settings = _settings()
     tts_url = tts_url or settings.tts_url
+    from argus_mask.consent import ConsentStore, voice_disclosed, voice_of, voice_refusal
+    from argus_mask.faces import local_now
+
+    # A voice made on this machine's Voices page is checked against its consent record; one made elsewhere is not.
+    spoken = voice_of(body, voice or settings.tts_voice)
+    consents = ConsentStore(settings.assets_dir)
+    if why := voice_refusal(settings.voices_dir, consents, spoken, use="avatar", at=local_now()):
+        raise _fail(why)
     body = client.voiced(body, voice or settings.tts_voice, tts_url)
     try:
         _report(
@@ -320,6 +342,7 @@ def say(
                     tts_url,
                     body,
                     seed=seed,
+                    disclose=voice_disclosed(settings.voices_dir, spoken),
                     stream=stream,
                     pause_ms=pause,
                     tidy=not as_is,
@@ -500,6 +523,204 @@ def schema(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(rendered, encoding="utf-8")
     typer.echo(f"wrote {output}")
+
+
+# ── consent ───────────────────────────────────────────────────────────────────
+
+consent_app = typer.Typer(
+    help="Consent records for a real person's face or voice (docs/consent.md). A record holds hashes, never the "
+    "release, the reference media or the ID.",
+    no_args_is_help=True,
+)
+app.add_typer(consent_app, name="consent")
+
+
+def _day(value: str, flag: str):  # noqa: ANN202 - a date
+    from datetime import date
+
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise _fail(f"{flag} {value!r}: give a date as YYYY-MM-DD") from exc
+
+
+def _hash_files(paths: list[Path], flag: str) -> list[str]:
+    from argus_mask.faces import sha256_file
+
+    out = []
+    for path in paths:
+        if not path.is_file():
+            raise _fail(f"{flag} {path}: no such file")
+        out.append(sha256_file(path))
+    return out
+
+
+@consent_app.command("new")
+def consent_new(
+    release: Path = Option(..., "--release", help="The signed release (hashed here; never copied or kept)"),
+    subject: str = Option(..., "--subject", help="The person, as the release names them"),
+    collected_by: str = Option(..., "--collected-by", help="Who ran the signing session"),
+    signed_on: str = Option(..., "--signed-on", help="When the release was signed, YYYY-MM-DD"),
+    age_checked_by: str = Option(..., "--age-checked-by", help="Who checked the person's age against ID"),
+    use: list[str] = Option(..., "--use", help="A use the release covers: avatar, video, speech, training (repeat)"),
+    revocable: bool = Option(..., "--revocable/--not-revocable", help="Whether the release can be revoked"),
+    on_revoke: str = Option(
+        ..., "--on-revoke", help="Recordings already made, on revocation: delete, or keep-labelled"
+    ),
+    face: bool = Option(False, "--face", help="The release covers the face"),
+    voice: bool = Option(False, "--voice", help="The release covers the voice"),
+    delivery: list[str] = Option([], "--delivery", help="A voice delivery the release covers (repeat)"),
+    reference_image: list[Path] = Option(
+        [], "--reference-image", help="A frontal reference image from the signing session (hashed; repeat)"
+    ),
+    reference_recording: list[Path] = Option(
+        [], "--reference-recording", help="The reference clip read at the signing session (hashed; repeat)"
+    ),
+    age_checked_on: str = Option("", "--age-checked-on", help="When the age was checked; default: the signing day"),
+    expires_on: str = Option("", "--expires-on", help="The first day the release no longer holds; default: never"),
+    notice_days: int = Option(0, "--notice-days", min=0, help="The notice period for revocation, in days"),
+    exclusion: list[str] = Option([], "--exclusion", help="An exclusion beyond the template's list (repeat)"),
+    media: list[str] = Option([], "--media", help="A medium the release names (repeat)"),
+    territory: list[str] = Option([], "--territory", help="A territory the release names (repeat)"),
+    notes: str = Option("", "--notes"),
+    assets: Path | None = Option(None, "--assets", help="The assets root; default: ARGUS_MASK_ASSETS_DIR"),
+) -> None:
+    """Write the consent record for a signed release: what the person agreed to, bound by hashes."""
+    from pydantic import ValidationError
+
+    from argus_mask.consent import AgeCheck, ConsentError, ConsentRecord, ConsentStore
+
+    if not release.is_file():
+        raise _fail(f"--release {release}: no such file")
+    signed = _day(signed_on, "--signed-on")
+    try:
+        record = ConsentRecord(
+            release_sha256=_hash_files([release], "--release")[0],
+            subject=subject,
+            collected_by=collected_by,
+            signed_on=signed,
+            expires_on=_day(expires_on, "--expires-on") if expires_on else None,
+            age_check=AgeCheck(
+                checked_by=age_checked_by,
+                checked_on=_day(age_checked_on, "--age-checked-on") if age_checked_on else signed,
+            ),
+            face=face,
+            voice=voice,
+            deliveries=delivery,
+            uses=use,  # type: ignore[arg-type]
+            reference_images=_hash_files(reference_image, "--reference-image"),
+            reference_recordings=_hash_files(reference_recording, "--reference-recording"),
+            exclusions=exclusion,
+            media=media,
+            territories=territory,
+            revocable=revocable,
+            notice_days=notice_days,
+            on_revoke=on_revoke,  # type: ignore[arg-type]
+            notes=notes,
+        )
+    except ValidationError as exc:
+        raise _fail(
+            "cannot write the record: " + "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
+        ) from exc
+    store = ConsentStore(assets or _settings().assets_dir)
+    try:
+        store.create(record)
+    except (ConsentError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"wrote {store.path(record.release_sha256)}")
+    typer.echo(
+        f"release {record.release_sha256}: give this hash as the face's --release-sha256, or the voice's release"
+    )
+
+
+@consent_app.command("list")
+def consent_list(
+    assets: Path | None = Option(None, "--assets", help="The assets root; default: ARGUS_MASK_ASSETS_DIR"),
+) -> None:
+    """Every consent record, and whether it holds today."""
+    from argus_mask.consent import ConsentStore, consent_valid
+    from argus_mask.faces import local_now
+
+    records, broken = ConsentStore(assets or _settings().assets_dir).all()
+    now = local_now()
+    for r in records:
+        likeness = "face" if r.face else "voice"
+        verdict = consent_valid(r, use=None, likeness=likeness, at=now, delivery=r.deliveries[0] if r.voice else None)
+        state = "holds" if verdict.ok else verdict.reason
+        covers = " + ".join(k for k in ("face", "voice") if getattr(r, k))
+        extra = f" ({', '.join(r.deliveries)})" if r.voice else ""
+        typer.echo(
+            f"{r.release_sha256[:16]}  {r.subject}  {covers}{extra}  uses: {', '.join(r.uses)}  "
+            f"signed {r.signed_on}  {state}"
+        )
+    for name, why in broken.items():
+        typer.echo(f"{name}: unreadable: {why}", err=True)
+    if not records and not broken:
+        typer.echo("no consent records")
+
+
+@consent_app.command("revoke")
+def consent_revoke(
+    release: str = Argument(..., help="The release's sha256, or its first 8+ characters"),
+    by: str = Option(..., "--by", help="Who records the revocation"),
+    requested_on: str = Option("", "--requested-on", help="When it was asked for; default: today"),
+    effective_on: str = Option("", "--effective-on", help="When it takes effect; default: the day it was asked for"),
+    assets: Path | None = Option(None, "--assets", help="The assets root; default: ARGUS_MASK_ASSETS_DIR"),
+    voices: Path | None = Option(None, "--voices", help="The voices directory; default: ARGUS_MASK_VOICES_DIR"),
+) -> None:
+    """Revoke a release: from its effective day nothing under it is served or spoken; its voices are deleted from
+    the TTS services they were made on, and its voices and faces moved to the trash. Safe to run again."""
+    import time
+
+    from pydantic import ValidationError
+
+    from argus_mask import client
+    from argus_mask.consent import ConsentError, ConsentStore, Revocation, withdraw
+    from argus_mask.faces import local_now
+
+    settings = _settings()
+    assets_dir = assets or settings.assets_dir
+    today = local_now().date()
+    requested = _day(requested_on, "--requested-on") if requested_on else today
+    try:
+        record = ConsentStore(assets_dir).find(release)
+        revocation = Revocation(
+            requested_on=requested,
+            effective_on=_day(effective_on, "--effective-on") if effective_on else requested,
+            by=by,
+        )
+        done = withdraw(
+            assets_dir,
+            voices or settings.voices_dir,
+            record.release_sha256,
+            revocation,
+            today=today,
+            stamp=time.strftime("%Y%m%d-%H%M%S"),
+            delete_clone=client.delete_voice,
+        )
+    except ValidationError as exc:
+        raise _fail("; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())) from exc
+    except (ConsentError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    held = done.record.revocation
+    assert held is not None
+    if not done.record.revocable:
+        typer.echo("note: the release says it cannot be revoked; the revocation is recorded and enforced anyway")
+    typer.echo(f"{done.record.subject}: revoked from {held.effective_on} (recorded by {held.by})")
+    if done.pending:
+        typer.echo(f"nothing removed yet: run this again on or after {held.effective_on} to remove what was made")
+        return
+    for voice_id in done.voices_removed:
+        typer.echo(f"voice {voice_id}: deleted from its TTS service, record and clips to the trash")
+    for face_id in done.faces_trashed:
+        typer.echo(f"face {face_id}: to the trash")
+    typer.echo(
+        f"recordings already made: {done.record.on_revoke} (as the release agreed); recordings are not tracked here"
+    )
+    if done.voices_failed:
+        for voice_id, why in done.voices_failed.items():
+            typer.echo(f"voice {voice_id}: {why}", err=True)
+        raise _fail("some voices are still on their TTS service (refused here, being revoked): run this again")
 
 
 if __name__ == "__main__":
