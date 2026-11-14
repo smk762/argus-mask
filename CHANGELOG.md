@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Backdrops behind splat faces.** A LAM head now shows `?scene=`, its own default and `record --scene`: the splat
+  renderer draws the backdrop behind the head on the same canvas, so recordings stay frame-exact. Over a backdrop
+  the camera moves in to a head-and-shoulders shot that ends above LAM's fade at the collarbone, so the head does
+  not float. The editor's Saved faces previews it.
 - **Plates: backdrops from a still image** (#55). `argus-mask plate generate` asks argus-darkroom for a picture
   under its SFW policy, then for darkroom's depth map of the same record (Depth Anything V2 Small), checks
   both against darkroom's sha256, and writes `background.json` with provenance (`PlateManifest`, wire contract
@@ -30,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A splat face's review on Saved faces timed out** ("did not load in 20 s") when opened while the thumbnails
+  were still loading: two splat renderers building at once stall each other, so the page's stages now take turns.
 - **Two recordings of one take match at `high`** (#81). Film grain's noise followed the post chain's wall clock, so
   it depended on how long the browser took to draw. In record mode it now follows the posed frame's `t_ms`; live
   screens keep the clock. A test records one take twice in headless Chromium and compares the frames byte for byte.

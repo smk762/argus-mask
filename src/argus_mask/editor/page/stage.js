@@ -68,6 +68,15 @@ function dispose(root) {
   });
 }
 
+// Two splat renderers building at once stall each other (the page's thumbnails and a review opened meanwhile:
+// "did not load in 20 s"), so every stage on the page builds its splat head in turn.
+let splatQueue = Promise.resolve();
+function oneSplatAtATime(build) {
+  const turn = splatQueue.then(build);
+  splatQueue = turn.catch(() => {});
+  return turn;
+}
+
 export class Stage {
   constructor({ animate = true } = {}) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -149,7 +158,7 @@ export class Stage {
     this.splatBox = box;
     let head;
     try {
-      head = await SplatHead.create(box, { url: modelUrl, framing, skin, instant: true });
+      head = await oneSplatAtATime(() => SplatHead.create(box, { url: modelUrl, framing, skin, instant: true }));
     } catch (err) {
       if (gen === this.loads) this.dropSplat(); else box.remove();
       throw err;
@@ -191,9 +200,13 @@ export class Stage {
   }
 
   // A backdrop behind the face (backdrop.js), as a screen shows it; '' or null for the plain background.
-  // A splat head draws its own background, so it shows none. Changes may overlap: only the latest one stays.
+  // A splat head draws it itself (splat.js setScene). Changes may overlap: only the latest one stays.
   async setScene(name) {
     const gen = (this.sceneLoads = (this.sceneLoads || 0) + 1);
+    if (this.splat) {
+      await this.splat.setScene(name, { quality: this.look.summary.quality });
+      return;
+    }
     const made = name ? await Backdrop.create(THREE, this.renderer, name, { quality: this.look.summary.quality }) : null;
     if (gen !== this.sceneLoads) { made?.dispose(); return; }
     this.backdrop?.dispose();
@@ -229,7 +242,7 @@ export class Stage {
     this.spin += ((this.turn ? 0.6 : 0) - this.spin) * 0.08;
     if (this.splat) {   // the turn button turns the head itself: a splat head has nothing to stand on
       this.splat.set(weights, ARKIT, { ...this.headTurn, yaw: this.headTurn.yaw + this.spin / rad });
-      this.splat.step();
+      this.splat.step(t);
       return;
     }
     for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);

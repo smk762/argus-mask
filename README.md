@@ -165,7 +165,7 @@ Audio2Face's weights are tuned for its own character. On another head, the shape
 | `face` | a face id; default: the first one the server lists |
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
-| `scene` | a backdrop with a little life in it, drawn behind the face instead of `bg`: `ftl` (stars streaking past at warp). Flat tier and mesh faces only; `hld` stays black and a splat face refuses it. Tune it with `scene.speed` (default 1), `scene.density` (0.2 to 1) and `scene.tint` (a CSS colour). See [docs/backgrounds.md](https://github.com/smk762/argus-mask/blob/main/docs/backgrounds.md). |
+| `scene` | a backdrop with a little life in it, drawn behind the face instead of `bg`: `ftl` (stars streaking past at warp), `garden`, `lake`, or a plate of your own (`GET /scenes`); `none` for a plain background over the face's own default. Flat tier only; `hld` stays black. Tune it with `scene.speed` (default 1), `scene.density` (0.2 to 1) and `scene.tint` (a CSS colour). See [docs/backgrounds.md](https://github.com/smk762/argus-mask/blob/main/docs/backgrounds.md). |
 | `hud` | `0` hides the status line |
 | `kiosk` | `1` for a dedicated screen: no status line, no cursor, full screen on the first tap |
 | `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |

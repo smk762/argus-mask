@@ -214,7 +214,7 @@ async function openReview(row, place = main(row)) {
     }
   }
   const prov = manifest.provenance;
-  const backdrop = await backdropPicker(row, place, manifest.model.format === 'lam-splat');
+  const backdrop = await backdropPicker(row, place);
   $('m-side').replaceChildren(
     el('h2', { textContent: 'Where' }), el('p', { textContent: place === 'export' ? `assets/${row.id}: on the server's /faces` : `assets/.preview/${row.id}: the editor's preview` }),
     ...backdrop,
@@ -228,8 +228,8 @@ async function openReview(row, place = main(row)) {
   $('m-close').focus();
 }
 // The backdrop a face shows on screens that do not ask for one (scenes.json), previewed on the stage. An exported
-// face keeps the choice; a preview only previews, as for rest sets. A splat head draws its own background.
-async function backdropPicker(row, place, splat) {
+// face keeps the choice; a preview only previews, as for rest sets.
+async function backdropPicker(row, place) {
   const [scenes, chosen] = await Promise.all([json('/scenes').catch(() => []), json('/scenes/faces').catch(() => ({}))]);
   const current = place === 'export' ? chosen[row.id] || '' : '';
   const select = el('select', { id: 'm-scene', ariaLabel: 'Backdrop' },
@@ -239,7 +239,7 @@ async function backdropPicker(row, place, splat) {
       textContent: `${s.title} (${s.name}${s.built_in ? '' : ', yours'})${s.cleared ? '' : ': your own screens only'}`,
     })));
   select.value = current;
-  const show = (name) => stage.setScene(splat ? '' : name).catch((err) => status(`The backdrop could not be shown: ${err.message}`, true));
+  const show = (name) => stage.setScene(name).catch((err) => status(`The backdrop could not be shown: ${err.message}`, true));
   show(current);
   select.onchange = async () => {
     show(select.value);
@@ -249,8 +249,7 @@ async function backdropPicker(row, place, splat) {
       status(`${row.id} shows ${select.value || 'a plain background'} on screens from their next load (a screen's own ?scene= wins).`);
     } catch (err) { status(err.message, true); }
   };
-  const note = splat ? [el('p', { className: 'meta', textContent: 'A splat head draws its own background: screens show it without a backdrop.' })] : [];
-  return [el('h2', { textContent: 'Backdrop' }), select, ...note];
+  return [el('h2', { textContent: 'Backdrop' }), select];
 }
 
 function closeReview() { $('modal').hidden = true; }
