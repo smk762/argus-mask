@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two recordings of one take match at `high`** (#81). Film grain's noise followed the post chain's wall clock, so
+  it depended on how long the browser took to draw. In record mode it now follows the posed frame's `t_ms`; live
+  screens keep the clock. A test records one take twice in headless Chromium and compares the frames byte for byte.
 - **The image reports the release's version** (#88). The 0.2.0 image said `0.2.1.dev0+g8e0618f5c.d20261114` at
   `/health`: `.dockerignore` left the tracked `.github/` out of the build context while keeping `.git`, so hatch-vcs
   saw a dirty tree. `.github/` is back in the context, the release passes the tag to the build as `VERSION`, and the

@@ -529,7 +529,7 @@ function draw() {
       if (posed) backdrop.update(posed.t, { exact: true });
       else backdrop.update(wall / 1000);
     }
-    look.render();
+    look.render(posed ? posed.t : undefined);   // a recording's grain follows the frame, not the wall clock
   }
   if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
 
