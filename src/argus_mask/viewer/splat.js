@@ -46,10 +46,12 @@ export function splatFraming(framing) {
   const f = framing || {};
   return splatFraming.isDefault(framing) ? { ...SPLAT_FRAMING } : { distance: f.distance || SPLAT_FRAMING.distance, height: f.height || 0, fov: f.fov || SPLAT_FRAMING.fov };
 }
-// Whether a manifest's framing is "not set": absent, or models.Framing's defaults (a mesh head's).
+// Whether a manifest's framing is "not set": absent, models.Framing's defaults (a mesh head's), or LAM's standard
+// shot, which `inspect` writes into every splat manifest. Only a framing chosen for this face is its own.
 splatFraming.isDefault = (framing) => {
   const f = framing || {};
-  return !framing || (f.distance === MESH_DEFAULT.distance && (f.height || 0) === MESH_DEFAULT.height && f.fov === MESH_DEFAULT.fov);
+  const same = (d) => f.distance === d.distance && (f.height || 0) === d.height && f.fov === d.fov;
+  return !framing || same(MESH_DEFAULT) || same(SPLAT_FRAMING);
 };
 
 export const JAW = { knee: 0.35, slope: 0.35 };
