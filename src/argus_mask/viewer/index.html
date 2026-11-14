@@ -26,12 +26,17 @@
            transition: opacity .6s; pointer-events: none; }
   #ready.show { opacity: 1; }
   body.kiosk, body.kiosk * { cursor: none !important; }
+  /* a real person's face or voice: always labelled, in kiosk mode and in recordings too */
+  #disclosure { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; max-width: calc(100% - 32px);
+                padding: 6px 12px; border-radius: 6px; font: 13px/1.35 system-ui, sans-serif; text-align: center;
+                color: #f2f4f7; background: rgba(8, 10, 14, .68); pointer-events: none; }
 </style>
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/examples/jsm/": "./vendor/", "jszip": "./vendor/jszip.js" } }</script>
 </head>
 <body>
 <div id="stage"></div>
 <div id="hud"></div>
+<div id="disclosure" role="note" hidden></div>
 <div id="notice"><div><div id="notice-text"></div><button id="notice-button" hidden></button></div></div>
 <div id="start" role="button" tabindex="0"><div><b>Tap to start</b><span>Sound needs one tap or key press. The face then fills the screen.</span></div></div>
 <div id="ready" aria-live="polite">● Ready</div>
