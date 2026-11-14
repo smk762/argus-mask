@@ -11,6 +11,7 @@ Built in today:
 |---|---|---|
 | `ftl` | Stars streaking past a window at faster-than-light speed, from a point behind the head. Procedural. | `scene.speed` (0.1 to 4, default 1), `scene.density` (0.2 to 1, default 0.6), `scene.tint` (a CSS colour) |
 | `garden` | An overgrown glass conservatory: the camera drifts, fronds sway, light dapples. A plate from argus-darkroom (FLUX.1 schnell, Apache-2.0). | `scene.speed`, `scene.tint` |
+| `lake` | An alpine lake at dusk: the camera drifts across the water (parallax), the pines and the water stir. A plate from argus-darkroom (FLUX.1 schnell, Apache-2.0). | `scene.speed`, `scene.tint` |
 
 Where a backdrop does not apply: `display=hld` keeps its subject on black, `bg=transparent` shows what is behind
 the page, and a splat face draws its own background, so it refuses a scene rather than ignore it.
@@ -147,4 +148,4 @@ deleted.
   background rather than failing to load.
 - A splat face draws its own background, so it ignores the choice.
 
-Not built yet (#55): video loops, and a third scene.
+Not built yet (#55): video loops.

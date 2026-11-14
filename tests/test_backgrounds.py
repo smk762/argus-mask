@@ -329,6 +329,7 @@ def test_the_server_lists_built_in_scenes_then_plates(assets: Path) -> None:
     assert [(s["name"], s["kind"], s["built_in"]) for s in scenes] == [
         ("ftl", "procedural", True),
         ("garden", "plate", True),
+        ("lake", "plate", True),
         ("rain", "plate", False),
     ]
     assert all(s["cleared"] for s in scenes)
@@ -390,7 +391,7 @@ def test_record_accepts_a_plate_the_server_serves(assets: Path) -> None:
 
     with live_server(create_app(Settings(assets_dir=assets))) as url:
         assert record.scene_refusal(url, "rain") is None
-        assert "choose from ftl, garden, rain" in (record.scene_refusal(url, "warp") or "")
+        assert "choose from ftl, garden, lake, rain" in (record.scene_refusal(url, "warp") or "")
     assert "could not list" in (record.scene_refusal("http://127.0.0.1:9", "rain") or "")
 
 

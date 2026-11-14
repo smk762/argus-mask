@@ -1271,7 +1271,7 @@ def test_a_broadcast_face_row_reads_cleared_or_falls_back_on_its_kind() -> None:
 def test_a_face_keeps_its_backdrop_through_rename_and_loses_it_on_delete(client, rig) -> None:
     assert client.post("/build", json=preset()).status_code == 200
     assert client.post("/export/my-face").status_code == 200
-    assert [s["name"] for s in client.get("/scenes").json()] == ["ftl", "garden"]
+    assert [s["name"] for s in client.get("/scenes").json()] == ["ftl", "garden", "lake"]
     assert client.put("/scenes/faces/my-face", json={"scene": "warp"}).status_code == 422
     assert client.put("/scenes/faces/my-face", json={"scene": "garden"}).json() == {
         "face": "my-face",
