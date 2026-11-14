@@ -171,3 +171,19 @@ def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch) 
 
     asyncio.run(run())
     assert "scene=ftl" in urls[0]
+
+
+def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> None:
+    import io
+    import urllib.error
+
+    def fail(code: int):  # noqa: ANN202 - stands in for urlopen
+        def urlopen(url, timeout):  # noqa: ANN001, ANN202
+            raise urllib.error.HTTPError(url, code, "x", {}, io.BytesIO(b""))
+
+        return urlopen
+
+    monkeypatch.setattr(record.urllib.request, "urlopen", fail(500))
+    assert "could not check" in record.video_refusal("http://127.0.0.1:9", "someone")
+    monkeypatch.setattr(record.urllib.request, "urlopen", fail(404))
+    assert record.video_refusal("http://127.0.0.1:9", "someone") is None

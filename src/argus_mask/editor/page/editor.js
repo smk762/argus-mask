@@ -318,7 +318,8 @@ function hairColourPanel() {
   fields.set('hair_colour.parts', { label: 'Hair colour: parts', show: (v) => (v || ['hair']).join(', ') });
   entry.rows.push({ el: swatchRow, text: 'colour hair colour' }, { el: dyeRow, text: 'dye colour hair colour' });
   const paint = () => {
-    const spec = preset.hair_colour;
+    // As the build will get it: a dye strength with no dye picked yet takes the picker's colour (current()).
+    const spec = preset.hair_colour && { ...preset.hair_colour, dye: preset.hair_colour.dye || dye.value };
     swatch.style.background = spec ? hairHex(spec) : 'transparent';
     swatch.classList.toggle('none', !spec);
     swatchOut.textContent = spec ? hairHex(spec) : 'texture’s own';

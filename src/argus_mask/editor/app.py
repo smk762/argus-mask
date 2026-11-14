@@ -899,7 +899,7 @@ def create_editor_app(
         if not tts_url.startswith(("http://", "https://", "wyoming://")):
             raise HTTPException(422, "a TTS service is needed: an http(s):// or wyoming:// URL (or ARGUS_MASK_TTS_URL)")
         await served(req.face)
-        spoken = voice_of(req.params, req.voice or cfg.tts_voice)
+        spoken = voice_of(req.params, req.voice or cfg.tts_voice, wyoming=tts_url.startswith("wyoming://"))
         for use in ("avatar", "video") if req.record is not None else ("avatar",):
             if why := voice_refusal(ed.voices_dir, consents, spoken, use=use, at=store.clock()):  # type: ignore[arg-type]
                 raise HTTPException(403, why)

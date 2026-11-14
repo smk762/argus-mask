@@ -170,8 +170,9 @@ class ConsentStore:
                 out.write(text)
             return
         tmp = path.with_suffix(".part")
-        tmp.write_text(text, encoding="utf-8")
-        os.chmod(tmp, 0o600)
+        tmp.unlink(missing_ok=True)  # a crashed write's leftover: O_EXCL below keeps the file private from birth
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
+            out.write(text)
         tmp.replace(path)
 
     def create(self, record: ConsentRecord) -> None:
@@ -188,6 +189,8 @@ class ConsentStore:
             raise ConsentError(f"no consent record for release {release_sha256}")
         if record.revocation is not None:
             return record
+        if len(revocation.by) > MAX_NAME:
+            raise ConsentError(f"by: at most {MAX_NAME} characters")
         # Validated again with the revocation, so cortex's checks run (model_copy would skip them).
         try:
             revoked = ConsentRecord.model_validate(record.model_dump() | {"revocation": revocation.model_dump()})
@@ -272,11 +275,18 @@ def voice_record(voices_dir: str | Path, voice: str) -> dict | None:
     return record if isinstance(record, dict) else None
 
 
-def voice_of(body: dict, default: str) -> str:
-    """The voice a TTS request will speak in: one its fields name (``-p voice_clone_id=…``), else *default*."""
+def voice_of(body: dict, default: str, *, wyoming: bool = False) -> str:
+    """The voice a TTS request will speak in: one its fields name (``-p voice_clone_id=…``), else *default*.
+
+    As :func:`argus_mask.client.voiced` reads them: over HTTP a ``speaker`` is itself the voice (one of the
+    service's own, never a clone made here); on Wyoming it picks a speaker of the named or default voice.
+    """
     for key in ("voice_clone_id", "voice", "name"):
         if isinstance(body.get(key), str) and body[key].strip():
             return body[key]
+    speaker = body.get("speaker")
+    if not wyoming and isinstance(speaker, (str, int)) and str(speaker).strip():
+        return f"speaker:{speaker}"
     return default
 
 

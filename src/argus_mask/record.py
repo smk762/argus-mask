@@ -241,13 +241,20 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
 
 def video_refusal(base: str, face_id: str) -> str | None:
     """Why *face_id* may not be recorded to video, if the server says so: a real person's face whose release does
-    not cover video. A face the server does not serve is left for the capture to report."""
+    not cover video. A face the server does not serve, or a server that cannot be reached, is left for the capture
+    to report; any other failure to answer refuses, since the check cannot be skipped."""
     url = f"{base.rstrip('/')}/face/{quote(face_id, safe='')}/consent?use=video"
     try:
         with urllib.request.urlopen(url, timeout=5) as reply:  # noqa: S310 - the server's own http(s) URL
             verdict = json.loads(reply.read())
-    except (urllib.error.URLError, OSError, ValueError):
-        return None  # unreachable, or no such face: capture says so in its own words
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None  # no such face: capture says so in its own words
+        return f"{face_id} may not be recorded: the server could not check its consent (HTTP {exc.code})"
+    except (urllib.error.URLError, OSError):
+        return None  # unreachable: capture says so in its own words
+    except ValueError:
+        return f"{face_id} may not be recorded: the server's consent check did not answer in JSON"
     if isinstance(verdict, dict) and verdict.get("ok") is False:
         return f"{face_id} may not be recorded: {verdict.get('detail') or 'its consent record does not cover video'}"
     return None

@@ -313,6 +313,16 @@ def test_a_consented_voice_is_spoken_only_while_its_record_covers_it(tmp_path) -
     assert voice_disclosed(voices, "a-person-warm") and not voice_disclosed(voices, "made-up")
     assert voice_of({"voice_clone_id": "a-person-warm"}, "made-up") == "a-person-warm"
     assert voice_of({"text": "hi"}, "made-up") == "made-up"
+    # Over HTTP a speaker is the voice (not the default clone); on Wyoming it is a speaker of the default voice.
+    assert voice_of({"speaker": 3}, "a-person-warm") == "speaker:3"
+    assert voice_of({"speaker": "3"}, "a-person-warm", wyoming=True) == "a-person-warm"
+
+
+def test_a_revocation_names_its_recorder_briefly(tmp_path) -> None:
+    write_consent(tmp_path)
+    with pytest.raises(ConsentError, match="at most"):
+        ConsentStore(tmp_path).revoke(RELEASE, Revocation(requested_on=AT.date(), effective_on=AT.date(), by="x" * 500))
+    assert ConsentStore(tmp_path).get(RELEASE).revocation is None
 
 
 def test_speak_refuses_a_revoked_voice_before_any_tts(tmp_path) -> None:

@@ -140,11 +140,13 @@ def check_hair_colour(path: str, spec) -> None:
         raise RecipeError(f"{path}: hair_colour has unknown fields: {', '.join(extra)}")
     for key in ("eumelanin", "pheomelanin", "dye_strength"):
         value = spec.get(key, 0.0)
-        if not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
             raise RecipeError(f"{path}: hair_colour.{key} must be between 0 and 1")
     dye = spec.get("dye")
     if dye is not None:
         try:
+            if not isinstance(dye, str) or not dye.startswith("#"):
+                raise ValueError(dye)
             hair_colour.hex_to_linear(dye)
         except (ValueError, TypeError) as exc:
             raise RecipeError(f"{path}: hair_colour.dye must be #rrggbb") from exc

@@ -8,7 +8,7 @@
 //   ?scene=ftl       a backdrop with a little life in it, flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
 //                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
 //   ?hud=0           hide the status line (never the disclosure label a real person's face or voice carries)
-//   ?disclosure=…    a label to show from the start (`argus-mask record` passes a consented voice's)
+//   ?disclosure=…    record mode only: a label to show from the start (`argus-mask record` passes a consented voice's)
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
 //   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
 //   ?kiosk=1         a dedicated screen: no HUD, no cursor, full screen on the first tap or key press
@@ -545,7 +545,8 @@ function draw() {
 
 // A real person's face (its manifest) or voice (the stream's header) is never shown unlabelled. The text is the
 // server's; a stream's label stays a few seconds past its end, while its last audio plays out.
-const labels = { face: null, stream: params.get('disclosure') || null };
+// ?disclosure= is honoured only in record mode, where there is no stream header to carry the label.
+const labels = { face: null, stream: (RECORD && params.get('disclosure')) || null };
 let labelTimer = null;
 function showDisclosure() {
   const text = [...new Set([labels.face, labels.stream].filter(Boolean))].join(' ');

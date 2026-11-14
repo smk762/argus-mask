@@ -328,7 +328,7 @@ def say(
     from argus_mask.faces import local_now
 
     # A voice made on this machine's Voices page is checked against its consent record; one made elsewhere is not.
-    spoken = voice_of(body, voice or settings.tts_voice)
+    spoken = voice_of(body, voice or settings.tts_voice, wyoming=tts_url.startswith("wyoming://"))
     consents = ConsentStore(settings.assets_dir)
     if why := voice_refusal(settings.voices_dir, consents, spoken, use="avatar", at=local_now()):
         raise _fail(why)
