@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A splat face from `inspect` kept the wide shot over a backdrop.** `inspect` writes LAM's standard framing into the
+  manifest, which counted as the face's own, so the close head-and-shoulders shot never applied. LAM's standard
+  framing now counts as not set.
 - **A splat face's review on Saved faces timed out** ("did not load in 20 s") when opened while the thumbnails
   were still loading: two splat renderers building at once stall each other, so the page's stages now take turns.
 - **Two recordings of one take match at `high`** (#81). Film grain's noise followed the post chain's wall clock, so
