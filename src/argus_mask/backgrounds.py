@@ -19,6 +19,7 @@ import json
 import re
 import secrets
 import struct
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,6 +49,7 @@ BUILT_IN_SCENES: dict[str, str] = {"ftl": "FTL starstreaks", "garden": "Conserva
 VIEWER_SCENES = Path(__file__).parent / "viewer" / "scenes"
 # Plates of one's own live in <assets>/backgrounds/<name>/; the name is reserved, so no face can take it.
 PLATES_DIR = "backgrounds"
+NO_SCENE = "none"  # ?scene=none: a plain background, whatever the face's default; never a plate's name
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # A plate ships in the viewer or is fetched by every screen: one image at most this big, all of them together
 # at most the total. A 1344x768 PNG from darkroom is about 2 MB; a depth map a few hundred KB.
@@ -437,7 +439,7 @@ class PlateStore:
         """The plate *name* and its directory; raises :class:`PlateError` saying why it is not served."""
         if not re.fullmatch(SCENE_NAME_PATTERN, name):
             raise PlateError(f"{name!r} is not a scene name")
-        if name in BUILT_IN_SCENES:
+        if name in BUILT_IN_SCENES or name == NO_SCENE:
             raise PlateError(f"{name} is a built-in scene: a plate of one's own cannot take its name")
         directory = self.root / name
         if directory.is_symlink() or not directory.is_dir():
@@ -490,3 +492,79 @@ class PlateStore:
                 SceneInfo(name=m.name, title=m.title, kind="plate", built_in=False, cleared=m.provenance.cleared)
             )
         return found
+
+
+# ---- each face's backdrop ------------------------------------------------------------------------
+
+SCENES_NAME = "scenes.json"
+
+
+class SceneChoices:
+    """Which backdrop each face shows by default, in ``<assets>/scenes.json``: ``{"faces": {"ginger-3": "garden"}}``.
+
+    Written by the editor (Saved faces) and read by the server, like ``expressions.json``. A screen's own
+    ``?scene=`` wins; a choice whose scene is gone (a plate removed or refused) is ignored, so the face shows a
+    plain background rather than none at all.
+    """
+
+    def __init__(self, assets_root: Path, plates: PlateStore) -> None:
+        self.path = assets_root / SCENES_NAME
+        self.plates = plates
+        self._seen: tuple[int, int, int] | None = None
+        self._faces: dict[str, str] = {}
+        self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
+
+    def raw(self) -> dict[str, str]:
+        """Face id -> scene name, as written: valid or not."""
+        try:
+            stat = self.path.stat()
+        except OSError:
+            self._seen, self._faces = None, {}
+            return {}
+        key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)  # every write replaces the file: a new inode
+        if key != self._seen:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                faces = data.get("faces") if isinstance(data, dict) else None
+                self._faces = {str(k): str(v) for k, v in faces.items()} if isinstance(faces, dict) else {}
+            except (OSError, ValueError):
+                self._faces = {}
+            self._seen = key
+        return dict(self._faces)
+
+    def available(self) -> set[str]:
+        return {s.name for s in self.plates.scenes()}
+
+    def choices(self) -> dict[str, str]:
+        """Face id -> its scene, for the faces whose scene can be shown."""
+        available = self.available()
+        return {f: s for f, s in sorted(self.raw().items()) if s in available}
+
+    def for_face(self, face_id: str) -> str | None:
+        return self.choices().get(face_id)
+
+    def _write(self, faces: dict[str, str]) -> None:
+        tmp = self.path.with_name(SCENES_NAME + ".part")
+        tmp.write_text(json.dumps({"faces": dict(sorted(faces.items()))}, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(self.path)
+
+    def choose(self, face_id: str, scene: str | None) -> None:
+        """*face_id* shows *scene* by default; None clears its choice (a plain background)."""
+        with self._lock:
+            if scene is not None and scene not in self.available():
+                raise PlateError(f"no scene {scene!r}: there are {', '.join(sorted(self.available()))}")
+            faces = {k: v for k, v in self.raw().items() if k != face_id}
+            if scene is not None:
+                faces[face_id] = scene
+            self._write(faces)
+
+    def repoint(self, old: str, new: str | None) -> None:
+        """A face was renamed (*new*) or deleted (None): its choice follows it, or goes."""
+        with self._lock:
+            faces = self.raw()
+            if old not in faces:
+                return
+            scene = faces.pop(old)
+            if new is not None:
+                faces[new] = scene
+            self._write(faces)

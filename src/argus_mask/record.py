@@ -28,7 +28,7 @@ from urllib.parse import quote, urlencode
 
 import numpy as np
 
-from argus_mask.backgrounds import BUILT_IN_SCENES
+from argus_mask.backgrounds import BUILT_IN_SCENES, NO_SCENE
 from argus_mask.client import ClientError, view_url
 from argus_mask.models import Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
@@ -295,7 +295,8 @@ async def record(
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
-    if scene and scene not in SCENES and (why := await asyncio.to_thread(scene_refusal, base, scene)):
+    # No scene: the face's own default, as on a screen; `none`: a plain background whatever the default.
+    if scene and scene not in (*SCENES, NO_SCENE) and (why := await asyncio.to_thread(scene_refusal, base, scene)):
         raise RecordError(why)
     if (why := await asyncio.to_thread(video_refusal, base, face_id)) is not None:
         raise RecordError(why)

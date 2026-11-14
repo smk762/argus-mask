@@ -55,6 +55,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, decode_wav, read_wav
+from argus_mask.backgrounds import PlateError, PlateStore, SceneChoices
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of, voice_refusal
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
@@ -78,7 +79,7 @@ from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
 from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
 from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
-from argus_mask.server.app import VIEWER_DIR, install_guards, read_body
+from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
@@ -203,6 +204,11 @@ class VoiceTry(BaseModel):
     tts_url: str = Field("", max_length=500)
 
 
+class SceneChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scene: str | None = Field(None, max_length=64, description="a scene's name (GET /scenes); null: a plain background")
+
+
 class RestChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     set: str | None = Field(None, max_length=64, description="a rest set's name; null: the default")
@@ -250,6 +256,8 @@ def create_editor_app(
     consents = ConsentStore(cfg.assets_dir)
     aliases = Aliases(store)
     expressions = Expressions(cfg.assets_dir)
+    plates = PlateStore(cfg.assets_dir)
+    scene_choices = SceneChoices(cfg.assets_dir, plates)
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
@@ -468,6 +476,12 @@ def create_editor_app(
                 raise HTTPException(
                     500, f"renamed to {new_id!r}, but {expressions.path.name} was not updated: {exc}"
                 ) from exc
+            try:
+                scene_choices.repoint(face_id, new_id)  # and its backdrop
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"renamed to {new_id!r}, but {scene_choices.path.name} was not updated: {exc}"
+                ) from exc
         return {"id": new_id}
 
     @app.delete("/saved/{face_id}")
@@ -490,7 +504,31 @@ def create_editor_app(
         if where in (None, "export"):
             with contextlib.suppress(OSError):  # the face is gone; a stale choice is ignored anyway
                 expressions.repoint(face_id, None)
+            with contextlib.suppress(OSError):
+                scene_choices.repoint(face_id, None)
         return {"trash": str(trash)}
+
+    # ---- backdrops: the scene each face shows by default, kept in the assets' scenes.json ----------------
+
+    add_scene_routes(app, plates)  # the server's own /scenes and /scene/{name}/..., for the previews
+
+    @app.get("/scenes/faces")
+    def scene_choice_list() -> dict[str, str]:
+        return scene_choices.choices()
+
+    @app.put("/scenes/faces/{face_id}")
+    def scene_choose(face_id: str, choice: SceneChoice) -> dict:
+        """Which backdrop a face shows when a screen does not ask for one. Screens pick it up on their next load."""
+        if not _FACE_ID.match(face_id):
+            raise HTTPException(404, f"no face {face_id!r}")
+        try:
+            scene_choices.choose(face_id, choice.scene)
+        except PlateError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"could not write {scene_choices.path.name}: {exc}") from exc
+        log.info("scene_chosen", face=face_id, scene=choice.scene)
+        return {"face": face_id, "scene": choice.scene}
 
     # ---- rest sets: the baseline expression each face holds at rest, kept in the assets' expressions.json --
 
@@ -1008,7 +1046,13 @@ def create_editor_app(
         # The viewer's lighting and materials, so the editor's previews look as the face will on a screen.
         return FileResponse(VIEWER_DIR / "look.js", media_type="text/javascript")
 
-    # three.js is the viewer's vendored copy: one copy in the package.
+    @app.get("/backdrop.js")
+    def backdrop() -> FileResponse:
+        # The viewer's backdrops, so a face's preview shows the scene it will have on a screen.
+        return FileResponse(VIEWER_DIR / "backdrop.js", media_type="text/javascript")
+
+    # three.js is the viewer's vendored copy, and the scenes the viewer's: one copy of each in the package.
     app.mount("/vendor", StaticFiles(directory=VIEWER_DIR / "vendor"), name="vendor")
+    app.mount("/scenes", StaticFiles(directory=VIEWER_DIR / "scenes"), name="scenes")
     app.mount("/", StaticFiles(directory=PAGE_DIR, html=True), name="page")
     return app

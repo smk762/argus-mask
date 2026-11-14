@@ -436,6 +436,12 @@ class SceneInfo(BaseModel):
     cleared: bool = Field(..., description="whether it may be shown beyond the user's own screens")
 
 
+class FaceScene(BaseModel):
+    """The backdrop a face shows by default (``GET /face/{id}/scene``): a scene name, or null for a plain one."""
+
+    scene: str | None = Field(None, pattern=SCENE_NAME_PATTERN)
+
+
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
     from argus_mask.consent import ConsentVerdict  # noqa: PLC0415 - consent imports this module
@@ -453,6 +459,7 @@ def render_wire_schema() -> str:
             ConsentVerdict,
             PlateManifest,
             SceneInfo,
+            FaceScene,
         ],
         title=WIRE_TITLE,
     )

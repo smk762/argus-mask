@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
+import { Backdrop } from './backdrop.js';
 import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
@@ -186,6 +187,20 @@ export class Stage {
     this.camera.aspect = box.width / box.height;
     this.camera.updateProjectionMatrix();
     this.look.setSize(box.width, box.height);
+    this.backdrop?.setSize(this.renderer.domElement.width, this.renderer.domElement.height);
+  }
+
+  // A backdrop behind the face (backdrop.js), as a screen shows it; '' or null for the plain background.
+  // A splat head draws its own background, so it shows none. Changes may overlap: only the latest one stays.
+  async setScene(name) {
+    const gen = (this.sceneLoads = (this.sceneLoads || 0) + 1);
+    const made = name ? await Backdrop.create(THREE, this.renderer, name, { quality: this.look.summary.quality }) : null;
+    if (gen !== this.sceneLoads) { made?.dispose(); return; }
+    this.backdrop?.dispose();
+    this.backdrop = made;
+    this.scene.background = made ? made.texture : new THREE.Color('#101216');
+    this.look.tintRims(made ? made.meta.tint : null);
+    if (made) made.setSize(this.renderer.domElement.width, this.renderer.domElement.height);
   }
 
   weigh(name, value) {
@@ -219,6 +234,7 @@ export class Stage {
     }
     for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
     this.pivot.rotation.set(this.headTurn.pitch * rad, this.spin + this.headTurn.yaw * rad, this.headTurn.roll * rad);
+    this.backdrop?.update(t);
     this.look.render();
   }
 
