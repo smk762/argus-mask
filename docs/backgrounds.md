@@ -116,6 +116,20 @@ and provenance. Then add the name to `SCENES` in `backdrop.js` (`<name>: plate('
 - **Small.** At most 4 MB per image and 6 MB per plate. A 1344x768 plate is about 2 MB.
 - **Soft and dark in the middle**, as for any scene: the face is the subject.
 
-Not built yet (#55): plates and video loops served from the assets directory (made with
-`argus-mask plate generate` into your own assets), a face's default backdrop chosen on Saved faces, and
-backdrops on the editor's previews.
+## Plates of your own
+
+A plate need not ship with mask. Generate it into the server's assets instead:
+
+```bash
+argus-mask plate generate "$ARGUS_MASK_ASSETS_DIR/backgrounds/rain" --title "Rain on a window" --prompt "…"
+```
+
+The server serves every plate in `<assets>/backgrounds/<name>/` that passes `plate check`, and refuses the
+rest (no provenance, a changed or linked file, a size over the limits) as it refuses a face. Any screen can
+then show it as `?scene=rain`, and `argus-mask record --scene rain` records it. `GET /scenes` lists what a
+screen can show: the built-in scenes first, then the plates. A plate cannot take a built-in scene's name,
+and `backgrounds` is not a face id. A plate of your own may be `personal` (the user's own screens only); only
+a cleared plate may ship, be demoed or be published.
+
+Not built yet (#55): video loops, a face's default backdrop chosen on Saved faces, and backdrops on the
+editor's previews.

@@ -371,7 +371,11 @@ def record(
     height: int = Option(720, "--height", min=16),
     display: str = Option("flat", "--display", help="The viewer's display tier: flat or hld"),
     bg: str = Option("", "--bg", help="Background colour, as the viewer takes it (e.g. '#202020')"),
-    scene: str = Option("", "--scene", help="A backdrop behind the face, flat display only (e.g. 'ftl')"),
+    scene: str = Option(
+        "",
+        "--scene",
+        help="A backdrop behind the face, flat display only: ftl, garden, or a plate in the assets (GET /scenes)",
+    ),
     quality: str = Option("high", "--quality", help="The viewer's look: low, medium or high (lighting, shadows, post)"),
     keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
 ) -> None:
@@ -747,7 +751,10 @@ def _plate_progress(event: str, data: object) -> None:
 
 @plate_app.command("generate")
 def plate_generate(
-    directory: Path = Argument(..., help="Where the plate goes; its name is the plate's (e.g. scenes/garden)"),
+    directory: Path = Argument(
+        ...,
+        help="Where the plate goes; its name is the plate's: <assets>/backgrounds/<name> for your own screens, src/argus_mask/viewer/scenes/<name> to ship one",
+    ),
     prompt: str = Option(..., "--prompt", help="The setting, with no people, real places, brands or artists"),
     title: str = Option(..., "--title", help="What the plate shows, in a few words"),
     checkpoint: str = Option("flux/flux1-schnell-fp8-e4m3fn.safetensors", "--checkpoint"),

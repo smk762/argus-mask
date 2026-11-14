@@ -28,13 +28,14 @@ from urllib.parse import quote, urlencode
 
 import numpy as np
 
+from argus_mask.backgrounds import BUILT_IN_SCENES
 from argus_mask.client import ClientError, view_url
 from argus_mask.models import Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
-SCENES = ("ftl", "garden")  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
+SCENES = tuple(BUILT_IN_SCENES)  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
 BACKENDS = (
     ("gpu", ["--use-angle=gl-egl", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"]),
@@ -239,6 +240,18 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
         raise RecordError(f"ffmpeg failed: {result.stderr.strip() or result.returncode}")
 
 
+def scene_refusal(base: str, scene: str) -> str | None:
+    """Why *scene* cannot be shown, if it cannot: not built in, and not a plate the server serves."""
+    try:
+        with urllib.request.urlopen(f"{base.rstrip('/')}/scenes", timeout=5) as reply:  # noqa: S310 - the server's URL
+            names = [s["name"] for s in json.loads(reply.read())]
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as exc:
+        return f"scene {scene!r}: not built in ({', '.join(SCENES)}), and the server could not list its plates: {exc}"
+    if scene in names:
+        return None
+    return f"scene {scene!r}: choose from {', '.join(names)} (a plate the server refuses is not listed: plate check)"
+
+
 def video_refusal(base: str, face_id: str) -> str | None:
     """Why *face_id* may not be recorded to video, if the server says so: a real person's face whose release does
     not cover video. A face the server does not serve, or a server that cannot be reached, is left for the capture
@@ -282,8 +295,8 @@ async def record(
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
-    if scene and scene not in SCENES:
-        raise RecordError(f"scene {scene!r}: choose from {', '.join(SCENES)}")
+    if scene and scene not in SCENES and (why := await asyncio.to_thread(scene_refusal, base, scene)):
+        raise RecordError(why)
     if (why := await asyncio.to_thread(video_refusal, base, face_id)) is not None:
         raise RecordError(why)
     recording = await capture(base, face_id, on_wait=on_wait)

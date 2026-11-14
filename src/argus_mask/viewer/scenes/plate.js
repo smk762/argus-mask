@@ -13,6 +13,8 @@
 // Like every scene, the picture is a pure function of uTime and uRes (and the images): no clock, no
 // randomness, so a recording of the same take comes out the same. Every motion is a sum of sines and smooth
 // noise of time, so it never jumps. Output is linear light: the plate is decoded from sRGB on sampling.
+//
+// Plates of your own live in <assets>/backgrounds/<name>/ and are served by the server (/scene/<name>/).
 
 const FILE = /^[a-z0-9][a-z0-9_-]{0,63}\.png$/;   // models.py: PLATE_FILE_PATTERN
 const SHOWN = new Set(['personal', 'stock', 'synthetic']);   // a plate shows no one: never consented; curated is refused
@@ -96,11 +98,12 @@ const vertexShader = /* glsl */ `
   void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 `;
 
-// The plate named *name*: its manifest, refused unless it says where it came from.
-export async function load(name) {
-  const base = new URL(`./${name}/`, import.meta.url);
+// The plate named *name*, whose files are under *base* (a URL ending in /): its manifest, refused unless it
+// says where it came from. A built-in plate's base is next to this module; one of your own is the server's.
+export async function load(name, base) {
   const reply = await fetch(new URL('background.json', base));
-  if (!reply.ok) throw new Error(`The plate "${name}" has no background.json (${reply.status}).`);
+  if (reply.status === 404) throw new Error(`Unknown scene "${name}": no such plate, or the server refused it (argus-mask plate check).`);
+  if (!reply.ok) throw new Error(`The plate "${name}" could not be read (${reply.status}).`);
   const manifest = await reply.json();
   const provenance = manifest.provenance || {};
   if (manifest.kind !== 'plate' || !SHOWN.has(provenance.kind) || !String(provenance.source || '').trim()) {

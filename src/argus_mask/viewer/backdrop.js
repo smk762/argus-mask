@@ -11,12 +11,15 @@
 
 // The built-in scenes. A name is looked up here before any import, so ?scene= never names a file.
 // A procedural scene is a module (scenes/<name>.js); a plate is a still image and its background.json in
-// scenes/<name>/, animated by scenes/plate.js.
-const plate = (name) => () => import('./scenes/plate.js').then((m) => m.load(name));
+// scenes/<name>/, animated by scenes/plate.js. Any other name is a plate in the server's assets
+// (/scene/<name>/), which the server serves only once it has checked it (backgrounds.py: PlateStore).
+const plate = (name, base) => () => import('./scenes/plate.js').then((m) => m.load(name, base));
+const builtIn = (name) => plate(name, new URL(`./scenes/${name}/`, import.meta.url));
 export const SCENES = {
   ftl: () => import('./scenes/ftl.js'),
-  garden: plate('garden'),
+  garden: builtIn('garden'),
 };
+const NAME = /^[a-z][a-z0-9-]{0,31}$/;   // models.py: SCENE_NAME_PATTERN
 
 // Per profile: the longest side the backdrop draws at, and how often it redraws. It is soft and far, so
 // low and medium draw it smaller and the GPU upscales it; high (and record) draw it at full size every frame.
@@ -28,8 +31,9 @@ const BUDGET = {
 
 export class Backdrop {
   static async create(THREE, renderer, name, { quality = 'medium', options = {} } = {}) {
-    const load = Object.hasOwn(SCENES, name) ? SCENES[name] : null;
-    if (!load) throw new Error(`Unknown scene "${name}". Scenes: ${Object.keys(SCENES).join(', ')}.`);
+    let load = Object.hasOwn(SCENES, name) ? SCENES[name] : null;
+    if (!load && NAME.test(name)) load = plate(name, new URL(`/scene/${name}/`, window.location.href));
+    if (!load) throw new Error(`Unknown scene "${name}". Scenes: ${Object.keys(SCENES).join(', ')}, or a plate of your own.`);
     const module = await load();
     // A plate's material loads its images first: a recording must not pose a frame before they are in.
     const material = await module.material(THREE, options);
