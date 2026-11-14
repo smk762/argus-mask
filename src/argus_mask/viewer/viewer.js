@@ -127,21 +127,33 @@ async function meshScene() {
   scene.add(pivot);
   // HLD keeps its subject on black and a transparent page shows what is behind it: neither takes a scene.
   if (SCENE && DISPLAY === 'flat' && !transparent) {
-    const options = {};
-    for (const key of ['speed', 'density']) if (params.has(`scene.${key}`)) options[key] = Number.parseFloat(params.get(`scene.${key}`));
-    if (params.has('scene.tint')) options.tint = params.get('scene.tint');
-    try {
-      backdrop = await Backdrop.create(THREE, renderer, SCENE, { quality: look.summary.quality, options });
-    } catch (error) {
-      if (ASKED_SCENE !== null) throw error;   // asked for by name: say so
-      // The face's default could not be shown (a plate since removed or refused): the face, on its plain background.
-      state.sceneError = error.message || String(error);
-      console.warn(`The face's backdrop "${SCENE}" was not shown:`, state.sceneError);
-    }
+    const options = sceneOptions();
+    backdrop = await showScene(() => Backdrop.create(THREE, renderer, SCENE, { quality: look.summary.quality, options }));
     if (backdrop) {
       scene.background = backdrop.texture;
       look.tintRims(options.tint || backdrop.meta.tint);
     }
+  }
+}
+
+// The page's scene.* parameters, for the backdrop.
+function sceneOptions() {
+  const options = {};
+  for (const key of ['speed', 'density']) if (params.has(`scene.${key}`)) options[key] = Number.parseFloat(params.get(`scene.${key}`));
+  if (params.has('scene.tint')) options.tint = params.get('scene.tint');
+  return options;
+}
+
+// Load the backdrop (make() resolves to it). One the page asked for by name must load; the face's own default
+// may not (a plate since removed or refused): then the face shows on its plain background, and says why.
+async function showScene(make) {
+  try {
+    return await make();
+  } catch (error) {
+    if (ASKED_SCENE !== null) throw error;
+    state.sceneError = error.message || String(error);
+    console.warn(`The face's backdrop "${SCENE}" was not shown:`, state.sceneError);
+    return null;
   }
 }
 
@@ -244,7 +256,6 @@ async function sceneFor(faceId) {
 // splat renderer. The archive is fetched by its own name: the renderer wants a URL ending .zip.
 async function loadSplat(faceId, manifest) {
   if (DISPLAY === 'hld') throw new Error('A splat face cannot be shown on display=hld yet. Use display=flat.');
-  if (ASKED_SCENE && ASKED_SCENE !== 'none') throw new Error('A splat face cannot show a scene yet: it draws its own background. Leave out ?scene=.');
   state.renderer = 'splat';
   const { SplatHead, readSkin, jawCap, JAW } = await import('./splat.js');
   const url = `/face/${encodeURIComponent(faceId)}/model/${encodeURIComponent(manifest.model.file)}?v=${manifest.model.sha256}`;
@@ -256,6 +267,13 @@ async function loadSplat(faceId, manifest) {
   if (colour === 'transparent') colour = '#101216';   // the splat renderer draws on an opaque canvas
   try { new THREE.Color(colour); document.body.style.background = colour; } catch { colour = '#101216'; }
   splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD });
+  // A backdrop is drawn by the splat renderer itself (splat.js setScene), behind the head, on the same canvas.
+  SCENE = await sceneFor(faceId);
+  if (SCENE) {
+    const quality = ['low', 'medium', 'high'].includes(params.get('quality')) ? params.get('quality') : (RECORD ? 'high' : 'medium');
+    backdrop = await showScene(() => splat.setScene(SCENE, { quality, options: sceneOptions() }));
+  }
+  state.scene = backdrop ? backdrop.summary : null;
   const asked = Number.parseFloat(params.get('jaw'));
   const knee = Number.isFinite(asked) ? Math.max(0, asked) : JAW.knee;   // below 0, the jaw would never open
   motion = new Motion({ budget: skin.budget, seed: faceSeed(manifest.id), life: LIFE ?? 1, cap: jawCap(knee) });
@@ -278,7 +296,7 @@ async function loadSplat(faceId, manifest) {
 
 // Record mode on a splat head: the pose goes straight through motion.js to the splat renderer, and resolves
 // only once exactly that pose, depth-sorted for this camera, is on the canvas (splat.js exact()).
-function splatPose(weights, headTurn, blendshapes) {
+function splatPose(weights, headTurn, blendshapes, tMs) {
   if (blendshapes) names = blendshapes;
   const order = names.length ? names : ARKIT;
   current = Float32Array.from(weights);
@@ -286,7 +304,7 @@ function splatPose(weights, headTurn, blendshapes) {
   const shown = motion.present(current, order, { live: true, t: 0, dt: 0 });
   state.weights = shown.weights;
   splat.set(shown.weights, order, head);
-  return splat.exact();
+  return splat.exact(Number.isFinite(tMs) ? tMs / 1000 : 0);   // the backdrop at the frame's own time
 }
 
 // The face's rest set: its own, or the page's ?rest=. A server without the route leaves the face neutral.
@@ -543,7 +561,7 @@ function draw() {
   if (splat) {
     state.weights = shown.weights;
     splat.set(shown.weights, order, head);
-    splat.step();
+    splat.step(wall / 1000);
   } else {
     applyWeights(shown.weights, order);
     applyHead();

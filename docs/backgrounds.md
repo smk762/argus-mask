@@ -13,8 +13,14 @@ Built in today:
 | `garden` | An overgrown glass conservatory: the camera drifts, fronds sway, light dapples. A plate from argus-darkroom (FLUX.1 schnell, Apache-2.0). | `scene.speed`, `scene.tint` |
 | `lake` | An alpine lake at dusk: the camera drifts across the water (parallax), the pines and the water stir. A plate from argus-darkroom (FLUX.1 schnell, Apache-2.0). | `scene.speed`, `scene.tint` |
 
-Where a backdrop does not apply: `display=hld` keeps its subject on black, `bg=transparent` shows what is behind
-the page, and a splat face draws its own background, so it refuses a scene rather than ignore it.
+Where a backdrop does not apply: `display=hld` keeps its subject on black, and `bg=transparent` shows what is
+behind the page.
+
+**Splat faces** (LAM heads) show backdrops too: the splat renderer draws the scene behind the head on its own
+canvas, so recordings stay frame-exact. A LAM head fades out below the collarbone, which a plain dark background
+hides but a scene would show as a floating head, so over a backdrop the camera moves in to a closer
+head-and-shoulders shot that ends above the fade (`SPLAT_CLOSE` in `splat.js`), unless the face's manifest sets
+its own framing. Splat faces have no post-processing, so a backdrop's `soft` is their only softening.
 
 ## How a backdrop is drawn
 
@@ -146,6 +152,5 @@ deleted.
   `--scene none` leaves it out.
 - A choice whose plate has gone (removed, or refused by `plate check`) is ignored: the face shows a plain
   background rather than failing to load.
-- A splat face draws its own background, so it ignores the choice.
 
 Not built yet (#55): video loops.

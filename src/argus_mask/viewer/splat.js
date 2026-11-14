@@ -20,6 +20,9 @@
 // - The head turn: LAM's skin.glb carries a full body rig (neckLower, neckUpper, head; not FLAME's single
 //   "neck", so the renderer's getNeckPose({neck}) moves nothing on it). The turn is shared down the chain and
 //   applied about world axes at each bone, as the mesh viewer turns its head: yaw, pitch, roll in degrees.
+// - A backdrop (backdrop.js) is drawn with the renderer's own WebGL context and set as the background of its
+//   three.js scene. The renderer draws that scene (background first) before the splats, but only when something
+//   in it is visible, so an empty group stands in. One canvas: exact() covers the backdrop too.
 // - The camera is fixed. The renderer builds no orbit controls (its setupControls is commented out); if a
 //   later version does, they are told to stop listening to the window's keys (W A S D would be lost to text boxes).
 
@@ -27,19 +30,27 @@ import * as THREE from 'three';
 import JSZip from 'jszip';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { GaussianSplatRenderer } from './vendor/gsplat-flame-avatar-renderer.esm.min.js';
+import { Backdrop } from './backdrop.js';
 import { ARKIT, lipBudget } from './motion.js';
 
 // Where the camera sits when the manifest does not say (faces.py SPLAT_FRAMING): LAM's heads stand at about
 // 1.65 m. The camera aims at `height` from a tenth of its distance above it, as a portrait is taken.
 export const SPLAT_FRAMING = { distance: 0.7, height: 1.65, fov: 50 };
 const MESH_DEFAULT = { distance: 0.6, height: 0, fov: 30 };   // models.Framing's defaults: "not set" for a splat head
+// Over a backdrop, closer: LAM's head fades out below the collarbone, which a plain dark background hides and a
+// scene shows as a floating head. This shot ends just above the fade. Used only when the manifest sets no framing.
+export const SPLAT_CLOSE = { distance: 0.45, height: 1.67, fov: 50 };
 const LIFT = 0.1;
 
 export function splatFraming(framing) {
   const f = framing || {};
-  const unset = !framing || (f.distance === MESH_DEFAULT.distance && (f.height || 0) === MESH_DEFAULT.height && f.fov === MESH_DEFAULT.fov);
-  return unset ? { ...SPLAT_FRAMING } : { distance: f.distance || SPLAT_FRAMING.distance, height: f.height || 0, fov: f.fov || SPLAT_FRAMING.fov };
+  return splatFraming.isDefault(framing) ? { ...SPLAT_FRAMING } : { distance: f.distance || SPLAT_FRAMING.distance, height: f.height || 0, fov: f.fov || SPLAT_FRAMING.fov };
 }
+// Whether a manifest's framing is "not set": absent, or models.Framing's defaults (a mesh head's).
+splatFraming.isDefault = (framing) => {
+  const f = framing || {};
+  return !framing || (f.distance === MESH_DEFAULT.distance && (f.height || 0) === MESH_DEFAULT.height && f.fov === MESH_DEFAULT.fov);
+};
 
 export const JAW = { knee: 0.35, slope: 0.35 };
 
@@ -135,14 +146,9 @@ export class SplatHead {
       const world = bone.getWorldQuaternion(new THREE.Quaternion());
       return { bone, share: share / total, world, inverse: world.clone().invert() };
     });
-    const f = splatFraming(framing);
-    const camera = v.camera;
-    camera.fov = f.fov;
-    camera.position.set(0, f.height + LIFT * f.distance, f.distance);
-    camera.lookAt(0, f.height, 0);
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld(true);
-    head.framing = f;
+    head.framing = splatFraming(framing);
+    head.ownFraming = !splatFraming.isDefault(framing);
+    head.aim(head.framing);
     // create() resolves after the first section of a progressive load; the rest builds afterwards (each build
     // stops rendering until its sort is done). Wait for the last, or a recording's first frames race it.
     await until(() => !v.isLoadingOrUnloading() && v.splatRenderReady && v.splatMesh?.finalBuild && v.splatMesh.getSplatCount() > 0, 'load');
@@ -150,6 +156,17 @@ export class SplatHead {
   }
 
   get canvas() { return this.r.viewer.renderer.domElement; }
+
+  // Point the camera: at `height` from a tenth of its distance above it, as a portrait is taken.
+  aim(f) {
+    const camera = this.r.viewer.camera;
+    camera.fov = f.fov;
+    camera.position.set(0, f.height + LIFT * f.distance, f.distance);
+    camera.lookAt(0, f.height, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+    this.shot = f;
+  }
 
   // Called by the renderer once a frame (as getNeckPose), after its mixer and before skinning: the rest pose,
   // then mask's head turn. Each turning bone takes its share of the turn about world axes at its own pivot:
@@ -184,35 +201,63 @@ export class SplatHead {
     this.turn.setFromEuler(_euler);
   }
 
-  // The canvas at its host's size (CSS pixels, as the renderer counts them).
+  // A backdrop behind the head (backdrop.js: a scene name), or none ('' or null). Changes may overlap: only the
+  // latest one stays. Resolves to the Backdrop shown (null for none); throws if the scene cannot be loaded.
+  async setScene(name, { quality = 'medium', options = {} } = {}) {
+    const v = this.r.viewer;
+    const gen = (this.sceneLoads = (this.sceneLoads || 0) + 1);
+    const made = name ? await Backdrop.create(THREE, v.renderer, name, { quality, options }) : null;
+    if (gen !== this.sceneLoads) { made?.dispose(); return null; }
+    this.backdrop?.dispose();
+    this.backdrop = made;
+    if (!this.anchor) { this.anchor = new THREE.Group(); v.threeScene.add(this.anchor); }
+    this.anchor.visible = Boolean(made);   // the renderer draws its scene, background and all, only if this is on
+    v.threeScene.background = made ? made.texture : null;
+    this.aim(made && !this.ownFraming ? SPLAT_CLOSE : this.framing);
+    this.sized = null;
+    this.fit();
+    return made;
+  }
+
+  // The canvas at its host's size (CSS pixels, as the renderer counts them), and the backdrop at the canvas's.
   fit() {
     const v = this.r.viewer;
     const size = v.renderer.getSize(new THREE.Vector2());
     const w = this.host.offsetWidth;
     const h = this.host.offsetHeight;
     if (w && h && (size.x !== w || size.y !== h)) v.renderer.setSize(w, h);
+    if (this.backdrop) {
+      const buffer = v.renderer.getDrawingBufferSize(new THREE.Vector2());
+      const key = `${buffer.x}x${buffer.y}`;
+      if (key !== this.sized) { this.backdrop.setSize(buffer.x, buffer.y); this.sized = key; }
+    }
   }
 
   // One frame, now: pose, skin, start a depth sort, draw (with the last finished sort: fine while live).
-  step() {
+  // t: seconds on the backdrop's clock (the page's own, live).
+  step(t = 0) {
     this.fit();
+    this.backdrop?.update(t);
     this.r.render();
     cancelAnimationFrame(this.r.viewer.requestFrameId);
   }
 
   // Record mode: resolves once exactly the pose last set() is on the canvas, drawn with the depth sort for it and
   // this camera. The sort runs in a worker: wait for any in flight, start this pose's, wait for it, then draw.
-  async exact() {
+  // t: the posed frame's time on the take, in seconds, for the backdrop: never the wall clock.
+  async exact(t = 0) {
     const v = this.r.viewer;
     await until(() => !v.sortRunning, 'finish sorting');
-    this.step();
+    this.step(t);
     await until(() => !v.sortRunning, 'finish sorting');
     await nextFrame();
     this.fit();
+    this.backdrop?.update(t, { exact: true });
     v.render();
   }
 
   dispose() {
+    this.backdrop?.dispose();
     try { this.r.dispose(); } catch { /* already gone */ }
   }
 }
