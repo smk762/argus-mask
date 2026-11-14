@@ -7,7 +7,8 @@
 //   ?bg=<css colour> background for the flat tier, or "transparent"
 //   ?scene=ftl       a backdrop with a little life in it, flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
 //                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
-//   ?hud=0           hide the status line
+//   ?hud=0           hide the status line (never the disclosure label a real person's face or voice carries)
+//   ?disclosure=…    a label to show from the start (`argus-mask record` passes a consented voice's)
 //   ?buffer=250      how far behind arrival the audio plays, in ms (more absorbs jitter, less feels snappier)
 //   ?record=1        posed from outside (`argus-mask record`): no socket, no sound, no notice
 //   ?kiosk=1         a dedicated screen: no HUD, no cursor, full screen on the first tap or key press
@@ -55,6 +56,7 @@ const noticeText = document.getElementById('notice-text');
 const noticeButton = document.getElementById('notice-button');
 if (params.get('hud') === '0' || KIOSK) hudEl.hidden = true;
 if (KIOSK) document.body.classList.add('kiosk');
+const disclosureEl = document.getElementById('disclosure');
 const startEl = document.getElementById('start');
 const readyEl = document.getElementById('ready');
 
@@ -175,6 +177,8 @@ async function loadFace() {
   const reply = await fetch(`/face/${encodeURIComponent(faceId)}`);
   if (!reply.ok) throw new Error(`There is no face "${faceId}" on this server.`);
   const manifest = await reply.json();
+  labels.face = (manifest.provenance && manifest.provenance.disclosure) || null;
+  showDisclosure();
   if (manifest.model && manifest.model.format === 'lam-splat') return loadSplat(faceId, manifest);
   state.renderer = 'mesh';
   await meshScene();
@@ -372,6 +376,9 @@ function onHeader(header) {
   current = current && current.length === names.length ? current : new Float32Array(names.length);
   state.session = header.session_id;
   state.lastSeq = -1;
+  clearTimeout(labelTimer);
+  labels.stream = header.disclosure || null;
+  showDisclosure();
 }
 
 function onMessage(event) {
@@ -387,7 +394,11 @@ function onMessage(event) {
     queue.push(message);
     state.frames += 1;
     state.lastSeq = message.seq;
-  } else if (message.type === 'end') { ended = true; state.streamsEnded += 1; }
+  } else if (message.type === 'end') {
+    ended = true;
+    state.streamsEnded += 1;
+    if (labels.stream) labelTimer = setTimeout(() => { labels.stream = null; showDisclosure(); }, 4000);
+  }
   else if (message.type === 'error') fail(message.detail);
 }
 
@@ -528,6 +539,19 @@ function draw() {
     hudEl.textContent = `${state.face || '…'}  ${DISPLAY}  ${state.connected ? (live ? 'live' : 'idle') : 'offline'}  ${fps} fps  audio ${state.audio}`
       + (state.underruns ? `  underruns ${state.underruns}` : '');
   }
+}
+
+// ---- disclosure ----------------------------------------------------------------------------
+
+// A real person's face (its manifest) or voice (the stream's header) is never shown unlabelled. The text is the
+// server's; a stream's label stays a few seconds past its end, while its last audio plays out.
+const labels = { face: null, stream: params.get('disclosure') || null };
+let labelTimer = null;
+function showDisclosure() {
+  const text = [...new Set([labels.face, labels.stream].filter(Boolean))].join(' ');
+  disclosureEl.textContent = text;
+  disclosureEl.hidden = !text;
+  state.disclosure = text || null;
 }
 
 // ---- start ---------------------------------------------------------------------------------

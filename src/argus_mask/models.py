@@ -19,7 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.0: initial contract.
 # 1.1: provenance kinds personal and consented, consent fields, and the derived ``cleared``.
 # 1.2: ``ModelFile.format``: a face is a glTF binary (``.glb``) or a LAM Gaussian-splat head (``.zip``).
-MASK_VERSION = "1.2"
+# 1.3: ``Provenance.generator`` and the derived ``disclosure``; ``SourceHello.disclose`` and
+#      ``StreamHeader.disclosure`` (a real, consenting person's voice); ``ConsentVerdict``.
+MASK_VERSION = "1.3"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -39,10 +41,17 @@ class AudioFormat(BaseModel):
     format: Literal["f32le", "s16le"] = "f32le"
 
 
+# The label every output of a consented likeness carries. Fixed text: no record or request can change or drop it.
+FACE_DISCLOSURE = "An AI avatar of a real person, shown with their consent."
+VOICE_DISCLOSURE = "An AI voice of a real person, used with their consent."
+
+
 class SourceHello(AudioFormat):
-    """The first message a source sends on its socket: its audio format, and the idle layer's seed."""
+    """The first message a source sends on its socket: its audio format, the idle layer's seed, and whether the
+    voice is a real, consenting person's (so the stream carries the disclosure label)."""
 
     seed: int = Field(0, ge=0)
+    disclose: bool = Field(False, description="the voice is a real person's, used with their consent")
 
 
 class DriverInfo(BaseModel):
@@ -61,6 +70,11 @@ class StreamHeader(_Versioned):
     blendshapes: list[str]
     audio: AudioFormat
     driver: DriverInfo
+    disclosure: str | None = Field(
+        None,
+        description="the label a viewer shows while this stream plays: set when the voice is a real person's",
+        exclude_if=lambda v: v is None,  # left out when unset, so a take without one reads as it did before 1.3
+    )
 
 
 class Head(BaseModel):
@@ -97,6 +111,17 @@ CLEARED_KINDS: frozenset[str] = frozenset({"stock", "synthetic", "consented"})
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
+class Generator(BaseModel):
+    """How a generated face was made: the model (and its sha256), the seed and the prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(..., min_length=1, max_length=300)
+    model_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
+    seed: int | None = Field(None, ge=0)
+    prompt: str = Field("", max_length=4000)
+
+
 class Provenance(BaseModel):
     """Where a face came from. Required: a face without it is not served.
 
@@ -108,8 +133,12 @@ class Provenance(BaseModel):
       release's sha256 (never the document) and the subject as the release names them.
     - ``curated``: refused until 0.3 defines what a curated face must prove.
 
+    A ``synthetic`` (or ``personal``) face may say how it was generated (``generator``). A ``consented`` face is
+    served only with a valid consent record for its release (:mod:`argus_mask.consent`), and carries the
+    disclosure label.
+
     Unknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for
-    ``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.
+    ``license``, and the derived ``cleared`` and ``disclosure`` a dumped record carries are recomputed, never read.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -120,13 +149,14 @@ class Provenance(BaseModel):
     notes: str = ""
     subject: str = ""
     release_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
+    generator: Generator | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _read(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        data = {k: v for k, v in data.items() if k != "cleared"}
+        data = {k: v for k, v in data.items() if k not in ("cleared", "disclosure")}
         if "licence" in data:
             licence = data.pop("licence")
             if "license" in data and data["license"] != licence:
@@ -142,6 +172,10 @@ class Provenance(BaseModel):
             raise ValueError(f"a {self.kind} face states its licence")
         if self.kind == "consented" and not (self.release_sha256 and self.subject.strip()):
             raise ValueError("a consented face names its subject and the sha256 of the signed release")
+        if self.generator is not None and self.kind not in ("synthetic", "personal"):
+            raise ValueError(
+                f"a {self.kind} face was not generated: only synthetic and personal faces name a generator"
+            )
         return self
 
     @computed_field  # type: ignore[prop-decorator]
@@ -149,6 +183,12 @@ class Provenance(BaseModel):
     def cleared(self) -> bool:
         """Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public."""
         return self.kind in CLEARED_KINDS
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def disclosure(self) -> str | None:
+        """The label shown with the face: set for a real person's likeness, which is never shown unlabelled."""
+        return FACE_DISCLOSURE if self.kind == "consented" else None
 
 
 ModelFormat = Literal["gltf", "lam-splat"]
@@ -268,6 +308,9 @@ class RestSet(BaseModel):
 
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
+    from argus_mask.consent import ConsentVerdict  # noqa: PLC0415 - consent imports this module
+
     return render_schema(
-        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus, RestSet], title=WIRE_TITLE
+        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus, RestSet, ConsentVerdict],
+        title=WIRE_TITLE,
     )

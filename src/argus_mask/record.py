@@ -18,11 +18,13 @@ import json
 import shutil
 import struct
 import subprocess
+import urllib.error
+import urllib.request
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import numpy as np
 
@@ -237,6 +239,20 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
         raise RecordError(f"ffmpeg failed: {result.stderr.strip() or result.returncode}")
 
 
+def video_refusal(base: str, face_id: str) -> str | None:
+    """Why *face_id* may not be recorded to video, if the server says so: a real person's face whose release does
+    not cover video. A face the server does not serve is left for the capture to report."""
+    url = f"{base.rstrip('/')}/face/{quote(face_id, safe='')}/consent?use=video"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as reply:  # noqa: S310 - the server's own http(s) URL
+            verdict = json.loads(reply.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None  # unreachable, or no such face: capture says so in its own words
+    if isinstance(verdict, dict) and verdict.get("ok") is False:
+        return f"{face_id} may not be recorded: {verdict.get('detail') or 'its consent record does not cover video'}"
+    return None
+
+
 async def record(
     base: str,
     face_id: str,
@@ -261,6 +277,8 @@ async def record(
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
     if scene and scene not in SCENES:
         raise RecordError(f"scene {scene!r}: choose from {', '.join(SCENES)}")
+    if (why := await asyncio.to_thread(video_refusal, base, face_id)) is not None:
+        raise RecordError(why)
     recording = await capture(base, face_id, on_wait=on_wait)
     if not recording.frames:
         raise RecordError("the session had no frames")
@@ -279,6 +297,8 @@ async def record(
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
     params |= {"scene": scene} if scene else {}
+    # A real person's voice is labelled in the clip as on a screen (the face's own label comes with its manifest).
+    params |= {"disclosure": recording.header.disclosure} if recording.header.disclosure else {}
     try:
         await render_frames(
             f"{base.rstrip('/')}/?{urlencode(params)}",

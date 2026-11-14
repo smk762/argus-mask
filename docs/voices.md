@@ -16,7 +16,7 @@ A voice is a likeness, like a face ([#19](https://github.com/smk762/argus-mask/i
 |---|---|---|
 | **Generated** | A TTS service's own voice, or a voice designed from a description: no real person | What made it: the service, the speaker or description, the temperature |
 | **Your own** | You, recorded by you | That it is yours |
-| **A consenting speaker** | Someone paid and released for this use ([#26](https://github.com/smk762/argus-mask/issues/26)) | Their name as the release gives it, and the release's sha256 (never the document) |
+| **A consenting speaker** | Someone paid and released for this use ([below](#a-consenting-speaker-the-session)) | Their name as the release gives it, and the release's sha256 (never the document). The release's consent record must cover the voice and the delivery |
 | **Personal use** | Anyone else, for your own speakers only: a game character, a narrator. Never cleared | Where the clips came from, in your words |
 
 A cleared voice is never a clip of anyone who hasn't agreed to it: not taken from a film, show, game, video, podcast, audiobook or call, and not someone doing an impression of a real person. The page asks you to confirm this before it makes a cleared voice. A clip cut from a recording is also usually a bad reference anyway, with music, effects and room sound under the voice (the checks below catch it).
@@ -45,6 +45,19 @@ The **transcript** is word for word what is said, with normal capitals and punct
 4. **Script:** read one of the scripts on the Voices page's Generate tab (one per delivery), or write your own: three or four sentences, about 40 to 50 words, in the voice you want to hear back. Read it as if speaking to someone across a table. Do several takes and keep the best.
 5. **Edit:** trim to about 0.2 s before the first word and after the last. Don't add noise reduction, compression or EQ: they smear the voice, and the clone copies the smear. Save as WAV (16 or 24-bit).
 6. **Check:** upload it on the Voices page with its transcript. Fix anything marked bad, and read the warnings.
+
+## A consenting speaker: the session
+
+A real person's voice needs a signed release that covers the voice and the deliveries you will record ([docs/likeness-release.md](likeness-release.md)), and its consent record ([docs/consent.md](consent.md)). A cloned voice can impersonate someone where nobody can see them: on a phone call, in a voicemail, or to a bank's voice check. The release treats the voice as a likeness of its own, and rules those uses out.
+
+Record everything in **one session, with one setup**: the same room, mic, distance and gain for every delivery, so the deliveries sound like one voice.
+
+1. **The reference recording.** At the signing, the person reads a short passage (any of the scripts below), recorded in the session's setup. Its hash goes into the record (`consent new --reference-recording`). It binds the release to this voice: a later check can compare a voice's clips with it by speaker embedding, as curator does for faces, so that a clip of someone else can't be passed off under the release.
+2. **The material.** For each delivery the release covers, 12 to 20 s of speech, read from the scripts on the Generate tab (or the person's own words in that register), in several takes. If the release allows training, record a longer set separately (several minutes of varied reading) and keep it apart.
+3. **The transcript.** Type it word for word at the session, and check it against the audio before moving on.
+4. **The check.** Put every clip through the Voices page's checks **before the person leaves**, so that a bad take can be redone while they are there.
+
+Then make each delivery as its own voice on the Voices page, with source **A consenting speaker**, the speaker's name exactly as the release gives it, and the release's sha256. The page refuses unless the record covers the voice and that delivery. From then on, `say`, `/speak` and the Broadcast page refuse the voice once the record no longer covers it (revoked, expired, or a use it doesn't cover). Whatever it says carries the disclosure label on screen: *An AI voice of a real person, used with their consent.* For audio heard with no face, say so in words as well, since nobody sees a screen.
 
 ## A synthetic voice
 
