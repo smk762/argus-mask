@@ -18,6 +18,7 @@ const builtIn = (name) => plate(name, new URL(`./scenes/${name}/`, import.meta.u
 export const SCENES = {
   ftl: () => import('./scenes/ftl.js'),
   garden: builtIn('garden'),
+  lake: builtIn('lake'),
 };
 const NAME = /^[a-z][a-z0-9-]{0,31}$/;   // models.py: SCENE_NAME_PATTERN
 

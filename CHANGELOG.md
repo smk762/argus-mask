@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exported face, keeps it in `<assets>/scenes.json`; it follows a rename and goes with a delete. Screens show it
   unless they ask for another (`?scene=`, or `?scene=none` for a plain background), and so does `record`
   (`--scene none` to leave it out). `GET /face/{id}/scene` (`FaceScene`).
+- **`?scene=lake`**: an alpine lake at dusk, the third scene, a plate made with `argus-mask plate generate`
+  through darkroom in one step (FLUX.1 schnell, Apache-2.0, with darkroom's depth map).
 
 ### Fixed
 

@@ -45,7 +45,11 @@ from argus_mask.models import (
 MANIFEST = "background.json"
 # The viewer's built-in scenes, in backdrop.js's order (a test holds the two together), with their titles: a
 # procedural scene is a module (viewer/scenes/<name>.js), a plate a directory (viewer/scenes/<name>/).
-BUILT_IN_SCENES: dict[str, str] = {"ftl": "FTL starstreaks", "garden": "Conservatory garden"}
+BUILT_IN_SCENES: dict[str, str] = {
+    "ftl": "FTL starstreaks",
+    "garden": "Conservatory garden",
+    "lake": "Alpine lake at dusk",
+}
 VIEWER_SCENES = Path(__file__).parent / "viewer" / "scenes"
 # Plates of one's own live in <assets>/backgrounds/<name>/; the name is reserved, so no face can take it.
 PLATES_DIR = "backgrounds"

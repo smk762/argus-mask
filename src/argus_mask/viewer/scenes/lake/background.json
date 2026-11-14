@@ -1,0 +1,62 @@
+{
+  "mask_version": "1.4",
+  "name": "lake",
+  "title": "Alpine lake at dusk",
+  "kind": "plate",
+  "tint": "#c8d6f0",
+  "plate": {
+    "file": "plate.png",
+    "sha256": "c692d3006daba53bc5aa2578c40fa560187ab6d7d0f06a6c50a025bcf0e98941",
+    "width": 1344,
+    "height": 768
+  },
+  "depth": {
+    "file": "depth.png",
+    "sha256": "05f3635ff6649aacb8488579e3f46db2f8eee4990d3353bcb68fab94916f42e8",
+    "width": 1344,
+    "height": 768
+  },
+  "effects": {
+    "drift": 0.7,
+    "sway": 0.3,
+    "dapple": 0.0,
+    "pulse": 0.0,
+    "soft": 0.5,
+    "exposure": 0.7
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "source": "argus-darkroom record b39eebef260b491db11fa30e2238d039",
+    "license": "Apache-2.0",
+    "notes": "A still generated through argus-darkroom under its SFW policy, with no person in the prompt.",
+    "subject": "",
+    "generator": {
+      "model": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+      "seed": 1116975577,
+      "prompt": "a calm alpine lake at dusk seen from the shore, still water reflecting distant snowy mountains, tall dark pine trees in the foreground at the left and right edges, soft blue and violet evening light, gentle mist over the water, open quiet sky in the middle, photographic, shallow depth of field, no people, no text, no logos"
+    },
+    "cleared": true
+  },
+  "darkroom": {
+    "record_id": "b39eebef260b491db11fa30e2238d039",
+    "darkroom_version": "0.1.4.dev36+gc9794888b",
+    "outcome": "passed",
+    "enforcing_policy": "default",
+    "checkpoint": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+    "seed": 1116975577,
+    "prompt": "a calm alpine lake at dusk seen from the shore, still water reflecting distant snowy mountains, tall dark pine trees in the foreground at the left and right edges, soft blue and violet evening light, gentle mist over the water, open quiet sky in the middle, photographic, shallow depth of field, no people, no text, no logos",
+    "negative_prompt": "",
+    "workflow": "flux",
+    "sampler": "euler",
+    "scheduler": "simple",
+    "steps": 4,
+    "cfg": 1.0,
+    "guidance": 3.5,
+    "depth": {
+      "model": "depth-anything-v2-small",
+      "model_license": "Apache-2.0",
+      "sha256": "05f3635ff6649aacb8488579e3f46db2f8eee4990d3353bcb68fab94916f42e8",
+      "workflow": "depth-anything-v2-small"
+    }
+  }
+}
