@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.2: ``ModelFile.format``: a face is a glTF binary (``.glb``) or a LAM Gaussian-splat head (``.zip``).
 # 1.3: ``Provenance.generator`` and the derived ``disclosure``; ``SourceHello.disclose`` and
 #      ``StreamHeader.disclosure`` (a real, consenting person's voice); ``ConsentVerdict``.
-MASK_VERSION = "1.3"
+# 1.4: ``PlateManifest``, a backdrop made from a still image (``background.json``).
+MASK_VERSION = "1.4"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -306,11 +307,139 @@ class RestSet(BaseModel):
     life: float = Field(1.0, ge=0.0, le=2.0)
 
 
+# A backdrop's name: a URL parameter (``?scene=``) and a directory name.
+SCENE_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,31}$"
+# What a plate's files may be called: a plain PNG in the plate's own directory, never a path.
+PLATE_FILE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}\.png$"
+
+
+class PlateImage(BaseModel):
+    """One image of a plate, in its directory: the file, its sha256, and its size in pixels."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(..., pattern=PLATE_FILE_PATTERN)
+    sha256: str = Field(..., pattern=SHA256_PATTERN)
+    width: int = Field(..., gt=0, le=8192)
+    height: int = Field(..., gt=0, le=8192)
+
+
+class PlateEffects(BaseModel):
+    """How much each built-in effect moves the still, 0 (off) to 1. All are functions of the scene's time.
+
+    - ``drift``: the camera drifts slowly across the plate; with a depth map, near things move more (parallax).
+    - ``sway``: leaves and fronds move in a breeze, where ``sway_mask`` is light, or by depth without one.
+    - ``dapple``: light through leaves drifts over the scene.
+    - ``pulse``: lights breathe, where ``light_mask`` is light.
+    - ``soft``: how far out of focus the plate is, so it sits behind the face.
+    - ``exposure``: the plate's brightness, so it sits behind the face (below 1 darkens).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    drift: float = Field(0.5, ge=0.0, le=1.0)
+    sway: float = Field(0.0, ge=0.0, le=1.0)
+    dapple: float = Field(0.0, ge=0.0, le=1.0)
+    pulse: float = Field(0.0, ge=0.0, le=1.0)
+    soft: float = Field(0.4, ge=0.0, le=1.0)
+    exposure: float = Field(0.8, ge=0.1, le=2.0)
+
+
+class DarkroomDepth(BaseModel):
+    """The depth map darkroom derived from the plate's record (``POST /depth/{record_id}``)."""
+
+    model: str = Field(..., min_length=1)
+    model_license: str = Field(..., min_length=1)
+    sha256: str = Field(..., pattern=SHA256_PATTERN)
+    workflow: str | None = None
+
+
+class DarkroomRender(BaseModel):
+    """The argus-darkroom generation a plate came from: its record, and what was asked for.
+
+    Darkroom keeps the full record (the guard's verdicts included); this is what a reader of the plate needs to
+    find it again and to judge it. ``plate.sha256`` is the record's image sha256: the plate is darkroom's bytes.
+    """
+
+    record_id: str = Field(..., min_length=1, max_length=200)
+    darkroom_version: str = ""
+    outcome: Literal["passed"] = Field("passed", description="only a released image becomes a plate")
+    enforcing_policy: str = Field(..., min_length=1)
+    checkpoint: str = Field(..., min_length=1)
+    seed: int = Field(..., ge=0)
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    negative_prompt: str = Field("", max_length=4000)
+    workflow: str | None = None
+    sampler: str | None = None
+    scheduler: str | None = None
+    steps: int | None = None
+    cfg: float | None = None
+    guidance: float | None = None
+    depth: DarkroomDepth | None = None
+
+
+class PlateManifest(_Versioned):
+    """``background.json`` in a plate's directory: a still image, animated by the viewer's built-in effects.
+
+    The plate is the picture; ``depth`` (near is light) gives parallax and places the sway; ``sway_mask`` and
+    ``light_mask`` (light is on) say where leaves move and lights pulse. Every image is the plate's size.
+    Provenance is required, as for a face: a plate without it is not shown, and only a cleared one may ship.
+    """
+
+    name: str = Field(..., pattern=SCENE_NAME_PATTERN)
+    title: str = Field(..., min_length=1, max_length=80)
+    kind: Literal["plate"] = "plate"
+    tint: str = Field("#ffffff", pattern=r"^#[0-9a-fA-F]{6}$", description="the scene's light, for the rim lights")
+    plate: PlateImage
+    depth: PlateImage | None = None
+    sway_mask: PlateImage | None = None
+    light_mask: PlateImage | None = None
+    effects: PlateEffects = Field(default_factory=PlateEffects)
+    provenance: Provenance
+    darkroom: DarkroomRender | None = None
+
+    @model_validator(mode="after")
+    def _agrees(self) -> PlateManifest:
+        images = {"depth": self.depth, "sway_mask": self.sway_mask, "light_mask": self.light_mask}
+        for role, image in images.items():
+            if image is not None and (image.width, image.height) != (self.plate.width, self.plate.height):
+                raise ValueError(
+                    f"{role} is {image.width}x{image.height}, the plate {self.plate.width}x{self.plate.height}"
+                )
+        files = [i.file for i in (self.plate, *images.values()) if i is not None]
+        if len(set(files)) != len(files):
+            raise ValueError("each image of a plate is its own file")
+        if self.provenance.kind == "curated":
+            raise ValueError("a curated plate is refused until curated is defined")
+        if self.provenance.kind == "consented":
+            raise ValueError("a plate shows no one: consented is for a person's likeness")
+        if self.darkroom is not None:
+            generator = self.provenance.generator
+            if generator is None or generator.model != self.darkroom.checkpoint or generator.seed != self.darkroom.seed:
+                raise ValueError("a plate from darkroom names darkroom's checkpoint and seed as its generator")
+            if self.darkroom.depth is not None and (
+                self.depth is None or self.depth.sha256 != self.darkroom.depth.sha256
+            ):
+                raise ValueError("the depth map is not the one darkroom made")
+        return self
+
+
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
     from argus_mask.consent import ConsentVerdict  # noqa: PLC0415 - consent imports this module
 
     return render_schema(
-        [StreamHeader, Frame, StreamEnd, SourceHello, FaceManifest, Health, ViewerStatus, RestSet, ConsentVerdict],
+        [
+            StreamHeader,
+            Frame,
+            StreamEnd,
+            SourceHello,
+            FaceManifest,
+            Health,
+            ViewerStatus,
+            RestSet,
+            ConsentVerdict,
+            PlateManifest,
+        ],
         title=WIRE_TITLE,
     )

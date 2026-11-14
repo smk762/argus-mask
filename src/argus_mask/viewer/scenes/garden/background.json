@@ -1,0 +1,62 @@
+{
+  "mask_version": "1.4",
+  "name": "garden",
+  "title": "Conservatory garden",
+  "kind": "plate",
+  "tint": "#f3e6c8",
+  "plate": {
+    "file": "plate.png",
+    "sha256": "b28f06cbd24806d25996ee663bd342b22d191ed0ab5877ec9dc49664a77d0872",
+    "width": 1344,
+    "height": 768
+  },
+  "depth": {
+    "file": "depth.png",
+    "sha256": "5cd5506af55c5d1d0f16704662ab62cd8464a608396063814e2a945e82d6155b",
+    "width": 1344,
+    "height": 768
+  },
+  "effects": {
+    "drift": 0.6,
+    "sway": 0.5,
+    "dapple": 0.4,
+    "pulse": 0.0,
+    "soft": 0.5,
+    "exposure": 0.65
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "source": "argus-darkroom record df668a65852b4974ae567da6620e63cc",
+    "license": "Apache-2.0",
+    "notes": "A still generated through argus-darkroom under its SFW policy, with no person in the prompt.",
+    "subject": "",
+    "generator": {
+      "model": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+      "seed": 758768726,
+      "prompt": "inside an overgrown glass conservatory, lush ferns and palm fronds in the foreground at the edges, soft diffuse daylight through the glass roof, quiet calm open space in the middle, gentle green and warm tones, shallow depth of field, photographic, no people, no text, no logos"
+    },
+    "cleared": true
+  },
+  "darkroom": {
+    "record_id": "df668a65852b4974ae567da6620e63cc",
+    "darkroom_version": "0.1.4.dev34+gaafcbd6ef.d20261114",
+    "outcome": "passed",
+    "enforcing_policy": "default",
+    "checkpoint": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+    "seed": 758768726,
+    "prompt": "inside an overgrown glass conservatory, lush ferns and palm fronds in the foreground at the edges, soft diffuse daylight through the glass roof, quiet calm open space in the middle, gentle green and warm tones, shallow depth of field, photographic, no people, no text, no logos",
+    "negative_prompt": "",
+    "workflow": "flux",
+    "sampler": "euler",
+    "scheduler": "simple",
+    "steps": 4,
+    "cfg": 1.0,
+    "guidance": 3.5,
+    "depth": {
+      "model": "depth-anything-v2-small",
+      "model_license": "Apache-2.0",
+      "sha256": "5cd5506af55c5d1d0f16704662ab62cd8464a608396063814e2a945e82d6155b",
+      "workflow": "depth-anything-v2-small"
+    }
+  }
+}

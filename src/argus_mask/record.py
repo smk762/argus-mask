@@ -34,7 +34,7 @@ from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
-SCENES = ("ftl",)  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
+SCENES = ("ftl", "garden")  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
 BACKENDS = (
     ("gpu", ["--use-angle=gl-egl", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"]),
