@@ -136,7 +136,7 @@ argus-mask inspect assets/<face-id>/head.glb --write-manifest --id <face-id> --n
     --source "AureaNuance_XL (sha256 …) + a character LoRA (sha256 …), seed …; see generation.json"
 ```
 
-[#19](https://github.com/smk762/argus-mask/issues/19) will add a dedicated provenance kind for generated faces, which carries the model, license, seed and prompt as fields. Until then they go in `source` and `notes` as above.
+The model, its sha256, the seed and the prompt also have fields of their own, in the provenance's `generator`. Add them to either command with `--generator "SDXL base 1.0" --generator-sha256 <sha256> --generator-seed <seed> --prompt "…"`. Only a `synthetic` or `personal` face takes a generator.
 
 ## Checklist
 

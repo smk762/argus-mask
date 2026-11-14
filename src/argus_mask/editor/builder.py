@@ -118,10 +118,10 @@ class Builder:
         self.cache_dir = self.preview_dir / CACHE_DIR
         self.cache_size = max(0, cache_size)
         self._lock = asyncio.Lock()
-        # What else decides the model: the recipe, the slider catalogue and the Blender it runs in. A
+        # What else decides the model: the recipe (and the hair colour it loads), the slider catalogue and the Blender it runs in. A
         # change to any of them is a different key, so a cache never serves a model the recipe no longer makes.
         recipe = hashlib.sha256()
-        for part in (SCRIPT, SCRIPT.with_name("modifiers.json")):
+        for part in (SCRIPT, SCRIPT.with_name("modifiers.json"), SCRIPT.with_name("hair_colour.py")):
             recipe.update(part.read_bytes() if part.is_file() else b"")
         # The Blender that runs, not just its name: an upgrade in place is a new binary on the same PATH entry.
         # And MPFB's data, and this version (it is written into the provenance).

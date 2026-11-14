@@ -260,6 +260,83 @@ function picker(library, [key, title, part, optional, slot, enlarge]) {
   controls.push({ sync: syncTiles });
 }
 
+// ---- hair colour ------------------------------------------------------------------------------
+
+// The swatch only: the build bakes the colour with hair_colour.py, which this mirrors (melanin absorption,
+// as in Blender's Principled Hair BSDF). Keep PATH, DENSEST and CUTICLE equal to that file's.
+const HAIR = { eu: [0.419, 0.697, 1.37], pheo: [0.187, 0.4, 1.05], PATH: 4.0, DENSEST: 0.95, CUTICLE: 0.02 };
+const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const toSrgb = (c) => { c = Math.min(1, Math.max(0, c)); return c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055; };
+function hairHex(spec) {
+  const amount = (x) => -Math.log(1 - HAIR.DENSEST * Math.min(1, Math.max(0, x || 0)));
+  let rgb = [0, 1, 2].map((i) => HAIR.CUTICLE + (1 - HAIR.CUTICLE)
+    * Math.exp(-HAIR.PATH * (amount(spec.eumelanin) * HAIR.eu[i] + amount(spec.pheomelanin) * HAIR.pheo[i])));
+  const strength = spec.dye_strength || 0;
+  if (spec.dye && strength > 0) {
+    const dye = [1, 3, 5].map((i) => toLinear(parseInt(spec.dye.slice(i, i + 2), 16) / 255));
+    rgb = rgb.map((v, i) => (1 - strength) * v + strength * dye[i]);
+  }
+  return `#${rgb.map((v) => Math.round(toSrgb(v) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+const HAIR_COLOUR = [
+  ['hair_colour.eumelanin', 'Dark pigment', 0, 1, 0.01, pct, 0],
+  ['hair_colour.pheomelanin', 'Red pigment', 0, 1, 0.01, pct, 0],
+  ['hair_colour.dye_strength', 'Dye strength', 0, 1, 0.01, pct, 0],
+];
+const DYE_DEFAULT = '#8a2be2';
+
+function hairColourPanel() {
+  const entry = panel('hair-colour', 'Hair colour', { reset: () => { delete preset.hair_colour; } });
+  entry.body.append(el('div', { className: 'hint', textContent: 'Baked into the hair’s texture by the build. Untouched, the hair keeps its own colour.' }));
+  const swatch = el('span', { className: 'swatch' });
+  const swatchOut = el('output');
+  const swatchRow = el('label', { className: 'row' }, el('span', { textContent: 'Colour' }), swatch, swatchOut);
+  entry.body.append(swatchRow);
+  const made = HAIR_COLOUR.map((spec) => slider(entry, spec));
+  const dye = el('input', { type: 'color', value: DYE_DEFAULT });
+  const dyeOut = el('output');
+  const dyeRow = el('label', { className: 'row', title: 'Dye colour, mixed over the natural colour by the dye strength' },
+    el('span', { textContent: 'Dye colour' }), dye, dyeOut);
+  dye.addEventListener('input', () => { (preset.hair_colour ??= {}).dye = dye.value; changed(); });
+  entry.body.append(dyeRow);
+  fields.set('hair_colour.dye', { label: 'Hair colour: dye', show: (v) => v || 'none' });
+  const parts = () => preset.hair_colour?.parts ?? ['hair'];
+  const toggles = [['eyebrows', 'Brows too'], ['eyelashes', 'Lashes too']].map(([part, label]) => {
+    const box = el('input', { type: 'checkbox' });
+    const row = el('label', { className: 'row' }, el('span', { textContent: label }), box, el('output'));
+    box.addEventListener('change', () => {
+      const now = new Set(parts());
+      if (box.checked) now.add(part); else now.delete(part);
+      (preset.hair_colour ??= {}).parts = ['hair', 'eyebrows', 'eyelashes'].filter((p) => now.has(p));
+      changed();
+    });
+    entry.body.append(row);
+    entry.rows.push({ el: row, text: `${label} hair colour`.toLowerCase() });
+    return { part, box };
+  });
+  fields.set('hair_colour.parts', { label: 'Hair colour: parts', show: (v) => (v || ['hair']).join(', ') });
+  entry.rows.push({ el: swatchRow, text: 'colour hair colour' }, { el: dyeRow, text: 'dye colour hair colour' });
+  const paint = () => {
+    // As the build will get it: a dye strength with no dye picked yet takes the picker's colour (current()).
+    const spec = preset.hair_colour && { ...preset.hair_colour, dye: preset.hair_colour.dye || dye.value };
+    swatch.style.background = spec ? hairHex(spec) : 'transparent';
+    swatch.classList.toggle('none', !spec);
+    swatchOut.textContent = spec ? hairHex(spec) : 'texture’s own';
+    dyeOut.textContent = (spec?.dye_strength || 0) > 0 ? (spec.dye || dye.value) : 'off';
+  };
+  const sync = () => {
+    if (preset.hair_colour?.dye) dye.value = preset.hair_colour.dye;
+    for (const t of toggles) t.box.checked = parts().includes(t.part);
+    paint();
+  };
+  controls.push({ sync, paint });
+  entry.changed = () => made.filter((m) => m.isChanged()).length + (parts().length > 1 ? 1 : 0);
+  // A dye strength with no dye picked yet takes the picker's colour; an unused dye is not part of the build.
+  return { dyeValue: () => dye.value };
+}
+let hairColour = null;
+
 // Within a group: the one-way shapes first, then by label, with moves and angles last.
 function order(a, b) {
   const rank = (m) => (m.min === 0 ? 0 : /^(Move|Angle|Rotate)/.test(m.label) ? 2 : 1);
@@ -268,7 +345,10 @@ function order(a, b) {
 
 function buildPanels(library, catalogue) {
   sliderPanel('body', 'Body', BODY, { resetTo: () => { preset.phenotype = structuredClone(DEFAULT.phenotype); } });
-  for (const spec of PICKERS) picker(library, spec);
+  for (const spec of PICKERS) {
+    picker(library, spec);
+    if (spec[0] === 'hair') hairColour = hairColourPanel();
+  }
   for (const [group, title] of Object.entries(catalogue.groups)) {
     const mods = catalogue.modifiers.filter((m) => m.group === group).sort(order);
     if (!mods.length) continue;
@@ -508,6 +588,10 @@ function current() {
   body.id = $('id').value.trim();
   body.name = $('name').value.trim();
   if (!body.assets.hair) delete body.assets.hair;
+  if (body.hair_colour) {
+    if ((body.hair_colour.dye_strength || 0) > 0) body.hair_colour.dye ??= hairColour?.dyeValue() ?? DYE_DEFAULT;
+    else delete body.hair_colour.dye;
+  }
   return body;
 }
 

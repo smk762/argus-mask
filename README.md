@@ -48,13 +48,14 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 
 | Command | What it does |
 |---|---|
-| `argus-mask inspect <face>` | Checks a face directory or a `.glb`: which of the 52 ARKit shapes it has, triangles, texture sizes. `--write-manifest` writes `manifest.json` beside a `.glb` or a splat `.zip`; it needs `--source`, and `--license` too for any `--kind` but the default `personal` (`consented` also needs `--subject` and `--release-sha256`). It and takes `--distance`, `--height` and `--fov` for the camera framing. |
+| `argus-mask inspect <face>` | Checks a face directory or a `.glb`: which of the 52 ARKit shapes it has, triangles, texture sizes. `--write-manifest` writes `manifest.json` beside a `.glb` or a splat `.zip`; it needs `--source`, and `--license` too for any `--kind` but the default `personal` (`consented` also needs `--subject` and `--release-sha256`; a generated face may add `--generator`, `--generator-sha256`, `--generator-seed` and `--prompt`). It and takes `--distance`, `--height` and `--fov` for the camera framing. |
 | `argus-mask drive <audio.wav> --out take.ndjson` | Audio to a take file, offline. The same audio, driver and seed give the same file. |
 | `argus-mask push <audio.wav> --face <id>` | Plays a WAV into a running server in real time. |
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
 | `argus-mask record --face <id> --out clip.mp4` | Waits for the next session on a face and renders it to a video, offline and frame-exact, with the audio. |
 | `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
 | `argus-mask editor` | The face editor (port 8111): build heads from presets with Blender. See [Face editor](#face-editor). |
+| `argus-mask consent new\|list\|revoke` | Consent records for a real person's face or voice: write one from a signed release, list them, revoke one. See [Consented faces and voices](#consented-faces-and-voices). |
 | `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
 
 ## Faces
@@ -66,7 +67,7 @@ A face is a directory under the assets root holding a model and a `manifest.json
 - **Provenance is required.** A face with no provenance is not served. `kind` is one of:
   - `personal`: your own use. Needs only a `source` saying what it is. This is `inspect`'s default.
   - `stock` or `synthetic`: a published asset, or a generated face with no real person or owned character going in. Needs a `source` and a `license`.
-  - `consented`: a real person's likeness, or an owned character, under a signed release. Also needs the `subject` as the release names them and the release's sha256 (never the document).
+  - `consented`: a real person's likeness, or an owned character, under a signed release. Also needs the `subject` as the release names them and the release's sha256 (never the document). It is served only while the release's **consent record** covers the face (`argus-mask consent new`; see [Consented faces and voices](#consented-faces-and-voices)), and always with the disclosure label.
   - `curated` is refused until faces from curator are designed.
 - A face is also refused when its manifest id differs from its directory name, or its model no longer matches the recorded sha256. `inspect` says why.
 
@@ -77,6 +78,16 @@ This is self-hosted software. What you put on your own screens at home is up to 
 Showing or sharing is different. A face is **cleared** (`cleared: true` in its provenance, and in `/faces`) when it is `stock`, `synthetic` or `consented`. Only cleared faces and voices go in this repo, its fixtures and examples, demos, recordings made to publish, or anything commercial. The editor marks a face that is not cleared as `personal`.
 
 To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md).
+
+### Consented faces and voices
+
+A real person can be the avatar: their face, their voice, or both, under a release written for this use. There are three documents:
+
+- [docs/likeness-release.md](https://github.com/smk762/argus-mask/blob/main/docs/likeness-release.md): a release template, for a lawyer to review before use;
+- [docs/consented-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/consented-faces.md): the face capture protocol;
+- [docs/voices.md § A consenting speaker](https://github.com/smk762/argus-mask/blob/main/docs/voices.md#a-consenting-speaker-the-session): the voice session.
+
+`argus-mask consent new` writes the release's consent record (hashes only: never the release, the media, or the ID). `consent list` shows each record and whether it holds. `consent revoke` ends a release: nothing under it is served or spoken again, its voices are deleted from their TTS services, and its voices and faces go to the trash. Everything a consenting person's face or voice produces is labelled as such on screen and in recordings. See [docs/consent.md](https://github.com/smk762/argus-mask/blob/main/docs/consent.md).
 
 ### The stock head
 
@@ -149,6 +160,7 @@ Audio2Face's weights are tuned for its own character. On another head, the shape
 | `face` | a face id; default: the first one the server lists |
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
+| `scene` | a backdrop with a little life in it, drawn behind the face instead of `bg`: `ftl` (stars streaking past at warp). Flat tier and mesh faces only; `hld` stays black and a splat face refuses it. Tune it with `scene.speed` (default 1), `scene.density` (0.2 to 1) and `scene.tint` (a CSS colour). See [docs/backgrounds.md](https://github.com/smk762/argus-mask/blob/main/docs/backgrounds.md). |
 | `hud` | `0` hides the status line |
 | `kiosk` | `1` for a dedicated screen: no status line, no cursor, full screen on the first tap |
 | `buffer` | how far behind arrival the audio plays, in ms (default 250). Raise it on a jittery network; lower it if the face feels late. |
@@ -250,7 +262,7 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_SERVER_URL` | `http://127.0.0.1:8109` | How the editor reaches the server, to check a face and send a test |
 | `ARGUS_MASK_VIEWER_URL` | the server URL | The origin screens open the viewer at (the TLS proxy, on a LAN); the editor's links point here |
 | `ARGUS_MASK_RECORDINGS_DIR` | `recordings` | Where the Broadcast page's recordings go (an MP4, its WAV and take) |
-| `ARGUS_MASK_VOICES_DIR` | `voices` | The Voices page's checked clips, and each voice's record and clips |
+| `ARGUS_MASK_VOICES_DIR` | `voices` | The Voices page's checked clips, and each voice's record and clips. The server and `say` read it too, to refuse a consenting speaker's voice that their record no longer covers |
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 
@@ -294,7 +306,7 @@ argus-mask record --face stock-01 --out clip.mp4 &
 argus-mask say "Hello from the bridge." --face stock-01
 ```
 
-`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser with the viewer's `high` look (`--quality low|medium|high`) at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
+`record` listens on the face's viewer socket, keeps the next session's header, frames and audio, renders every frame in a headless browser with the viewer's `high` look (`--quality low|medium|high`) at `--width`×`--height` (default 1280×720; `--display hld --width 1080 --height 1920` for the portrait panel), and muxes them with the audio using the `ffmpeg` on PATH or the one the extra brings. `--scene ftl` records a backdrop, in step with the frames: its clock is each frame's own time on the take, never the wall clock. The session's take and WAV are written beside the clip. Rendering runs at a few frames a second in software; a 20 s clip takes a minute or two and never drops a frame.
 
 ## Wire
 

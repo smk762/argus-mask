@@ -18,11 +18,13 @@ import json
 import shutil
 import struct
 import subprocess
+import urllib.error
+import urllib.request
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import numpy as np
 
@@ -32,6 +34,7 @@ from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
+SCENES = ("ftl",)  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
 BACKENDS = (
     ("gpu", ["--use-angle=gl-egl", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"]),
@@ -184,8 +187,8 @@ async def render_frames(
             total = len(recording.frames)
             for i, frame in enumerate(recording.frames):
                 await page.evaluate(
-                    "([w, h, n]) => window.__mask.pose(w, h, n)",
-                    [list(frame.weights), frame.head.model_dump(), names if i == 0 else None],
+                    "([w, h, n, t]) => window.__mask.pose(w, h, n, t)",
+                    [list(frame.weights), frame.head.model_dump(), names if i == 0 else None, frame.t_ms],
                 )
                 await page.screenshot(path=str(frames_dir / f"{frame.seq:06d}.png"), type="png")
                 if on_progress:
@@ -236,6 +239,27 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
         raise RecordError(f"ffmpeg failed: {result.stderr.strip() or result.returncode}")
 
 
+def video_refusal(base: str, face_id: str) -> str | None:
+    """Why *face_id* may not be recorded to video, if the server says so: a real person's face whose release does
+    not cover video. A face the server does not serve, or a server that cannot be reached, is left for the capture
+    to report; any other failure to answer refuses, since the check cannot be skipped."""
+    url = f"{base.rstrip('/')}/face/{quote(face_id, safe='')}/consent?use=video"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as reply:  # noqa: S310 - the server's own http(s) URL
+            verdict = json.loads(reply.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None  # no such face: capture says so in its own words
+        return f"{face_id} may not be recorded: the server could not check its consent (HTTP {exc.code})"
+    except (urllib.error.URLError, OSError):
+        return None  # unreachable: capture says so in its own words
+    except ValueError:
+        return f"{face_id} may not be recorded: the server's consent check did not answer in JSON"
+    if isinstance(verdict, dict) and verdict.get("ok") is False:
+        return f"{face_id} may not be recorded: {verdict.get('detail') or 'its consent record does not cover video'}"
+    return None
+
+
 async def record(
     base: str,
     face_id: str,
@@ -245,6 +269,7 @@ async def record(
     height: int = DEFAULT_HEIGHT,
     display: str = "flat",
     bg: str = "",
+    scene: str = "",
     quality: str = "high",
     keep: bool = False,
     on_wait: Callable[[], None] | None = None,
@@ -257,6 +282,10 @@ async def record(
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
+    if scene and scene not in SCENES:
+        raise RecordError(f"scene {scene!r}: choose from {', '.join(SCENES)}")
+    if (why := await asyncio.to_thread(video_refusal, base, face_id)) is not None:
+        raise RecordError(why)
     recording = await capture(base, face_id, on_wait=on_wait)
     if not recording.frames:
         raise RecordError("the session had no frames")
@@ -274,6 +303,9 @@ async def record(
     # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
+    params |= {"scene": scene} if scene else {}
+    # A real person's voice is labelled in the clip as on a screen (the face's own label comes with its manifest).
+    params |= {"disclosure": recording.header.disclosure} if recording.header.disclosure else {}
     try:
         await render_frames(
             f"{base.rstrip('/')}/?{urlencode(params)}",

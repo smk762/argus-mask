@@ -99,6 +99,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | `mouth.cavity_shade` | How dark the back of the mouth gets, as a multiplier on its texture (0.02 is nearly black). Leave it out for no shading. |
 | `shape_scale` | Face shapes to exaggerate or soften, by name: `{"mouthPucker": 1.5}` moves every vertex 1.5 times as far. |
 | `texture_gain` | Brightness multiplier for a part's texture, by part: `{"teeth": 1.3}`. |
+| `hair_colour` | Optional. Bakes a hair colour into the hair's texture, keeping its strand variation: `{"eumelanin": 0.35, "pheomelanin": 0.85, "parts": ["hair", "eyebrows"]}`. `eumelanin` (brown to black) and `pheomelanin` (red to ginger) are 0 to 1; neither gives near-white. `dye` (`#rrggbb`) is mixed over that by `dye_strength` (0 to 1). `parts` is what takes the colour: `hair` (the default), `eyebrows`, `eyelashes`. Leave it out and the hair keeps its own colour. The colour model is `src/argus_mask/editor/hair_colour.py`. |
 | `blend_parts` | Parts whose transparency stays blended (soft edges) instead of becoming a cut-out. Only for parts that lie flat on the skin: `["eyebrows", "eyelashes"]`. |
 
 **18 and over, and dressed.** `phenotype.age` below 0.3542 is refused: on MakeHuman's scale that is 18 years (below 0.5 the macro maps to years as 1 + 48 × age; 0.5 is about 25). Every head wears clothes: `assets.clothes` must name at least one garment, and the editor also requires one of them to be an outfit, not only a hat.
@@ -107,6 +108,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 
 - Bakes the phenotype into the mesh, then loads the 52 face units and has MPFB interpolate them onto the eyes, lashes, brows, teeth, tongue and hair. glTF cannot drive one mesh's morph targets from another, so each part carries its own copies of the shapes that move it.
 - Removes MakeHuman's helper geometry, cuts the bust with three planes, and centres the head.
+- Recolours the parts `hair_colour` names, then applies `texture_gain`.
 - Converts opaque textures to JPEG and drops normal maps.
 - Exports without Draco, meshopt or KTX2, with sparse morph targets and no morph normals.
 - Rewrites blended materials as alpha cut-outs (`MASK`, cutoff 0.35), because blended hair sorts wrongly against itself and the face in a real-time renderer. Parts listed in `blend_parts` stay blended.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import wave
 from pathlib import Path
@@ -139,3 +140,50 @@ def test_the_viewer_is_asked_for_the_look(server, tmp_path: Path, monkeypatch, g
 
     asyncio.run(run())
     assert f"quality={sent}" in urls[0] and "record=1" in urls[0]
+
+
+def test_an_unknown_scene_is_refused_before_waiting(tmp_path: Path) -> None:
+    with pytest.raises(record.RecordError, match="scene 'warp'"):
+        asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / "c.mp4", scene="warp"))
+
+
+def test_record_knows_the_viewers_scenes() -> None:
+    backdrop = (Path(record.__file__).parent / "viewer" / "backdrop.js").read_text()
+    table = backdrop.split("export const SCENES = {", 1)[1].split("};", 1)[0]
+    assert tuple(re.findall(r"^\s*([a-z][a-z0-9-]*):", table, re.M)) == record.SCENES
+    for name in record.SCENES:
+        assert (Path(record.__file__).parent / "viewer" / "scenes" / f"{name}.js").is_file()
+
+
+def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch) -> None:
+    urls = []
+
+    async def render(page_url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003 - stands in for the browser
+        urls.append(page_url)
+
+    monkeypatch.setattr(record, "render_frames", render)
+    monkeypatch.setattr(record, "mux", lambda *a, **k: None)
+
+    async def run():
+        pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
+        await record.record(server, "test-head", tmp_path / "c.mp4", width=160, height=120, scene="ftl")
+        await pushed
+
+    asyncio.run(run())
+    assert "scene=ftl" in urls[0]
+
+
+def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> None:
+    import io
+    import urllib.error
+
+    def fail(code: int):  # noqa: ANN202 - stands in for urlopen
+        def urlopen(url, timeout):  # noqa: ANN001, ANN202
+            raise urllib.error.HTTPError(url, code, "x", {}, io.BytesIO(b""))
+
+        return urlopen
+
+    monkeypatch.setattr(record.urllib.request, "urlopen", fail(500))
+    assert "could not check" in record.video_refusal("http://127.0.0.1:9", "someone")
+    monkeypatch.setattr(record.urllib.request, "urlopen", fail(404))
+    assert record.video_refusal("http://127.0.0.1:9", "someone") is None

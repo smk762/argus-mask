@@ -56,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, decode_wav, read_wav
 from argus_mask.config import EditorSettings, Settings
+from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of, voice_refusal
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
@@ -246,6 +247,7 @@ def create_editor_app(
         cache_size=ed.build_cache,
     )
     store = FaceStore(cfg.assets_dir)
+    consents = ConsentStore(cfg.assets_dir)
     aliases = Aliases(store)
     expressions = Expressions(cfg.assets_dir)
     previews = FaceStore(builder.preview_dir)
@@ -771,6 +773,11 @@ def create_editor_app(
             paths = [voice_store.clip(c.sha) for c in req.clips]
         except VoiceError as exc:
             raise HTTPException(422, str(exc)) from exc
+        if source["kind"] == "consented":
+            # The record decides whether the voice may be made, and in which deliveries (argus-mask#26).
+            found = consents.check_voice(source, delivery=req.delivery, use=None, at=store.clock())
+            if (why := refusal(found)) is not None:
+                raise HTTPException(403, f"this voice may not be made: {why}")
         if voice_store.record(req.id) is not None:
             raise HTTPException(409, f"there is already a voice called {req.id}: delete it first, or pick another name")
         existing = await asyncio.to_thread(client.tts_voices, tts)
@@ -830,6 +837,8 @@ def create_editor_app(
         tts = chosen_tts(request, req.tts_url)
         if not tts.startswith(("http://", "https://", "wyoming://")):
             raise HTTPException(422, "a TTS service is needed: set ARGUS_MASK_TTS_URL")
+        if why := voice_refusal(ed.voices_dir, consents, req.voice, use=None, at=store.clock()):
+            raise HTTPException(403, why)
         body = client.voiced(
             {"text": req.text, **({"temperature": req.temperature} if req.temperature else {})}, req.voice, tts
         )
@@ -890,6 +899,10 @@ def create_editor_app(
         if not tts_url.startswith(("http://", "https://", "wyoming://")):
             raise HTTPException(422, "a TTS service is needed: an http(s):// or wyoming:// URL (or ARGUS_MASK_TTS_URL)")
         await served(req.face)
+        spoken = voice_of(req.params, req.voice or cfg.tts_voice, wyoming=tts_url.startswith("wyoming://"))
+        for use in ("avatar", "video") if req.record is not None else ("avatar",):
+            if why := voice_refusal(ed.voices_dir, consents, spoken, use=use, at=store.clock()):  # type: ignore[arg-type]
+                raise HTTPException(403, why)
         body = client.voiced({**req.params, "text": req.text}, req.voice or cfg.tts_voice, tts_url)
         if req.record is not None and (why_not := recording_ready()) is not None:
             raise HTTPException(422, why_not)
@@ -903,6 +916,7 @@ def create_editor_app(
                 pause_ms=req.pause,
                 tidy=req.tidy,
                 context=req.context,
+                disclose=voice_disclosed(ed.voices_dir, spoken),
                 record=req.record.options() if req.record else None,
             )
         except Broadcasting as exc:

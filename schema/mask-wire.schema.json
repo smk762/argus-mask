@@ -32,6 +32,46 @@
       "title": "AudioFormat",
       "type": "object"
     },
+    "ConsentVerdict": {
+      "additionalProperties": false,
+      "description": "What a service returns about a record: the verdict and its reason, never the record itself.",
+      "properties": {
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "revoked",
+                "not-yet-signed",
+                "expired",
+                "likeness-not-covered",
+                "use-not-covered",
+                "delivery-not-covered"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "ConsentVerdict",
+      "type": "object"
+    },
     "DriverHealth": {
       "properties": {
         "available": {
@@ -118,7 +158,7 @@
           "type": "string"
         },
         "mask_version": {
-          "default": "1.2",
+          "default": "1.3",
           "title": "Mask Version",
           "type": "string"
         },
@@ -203,6 +243,55 @@
         }
       },
       "title": "Framing",
+      "type": "object"
+    },
+    "Generator": {
+      "additionalProperties": false,
+      "description": "How a generated face was made: the model (and its sha256), the seed and the prompt.",
+      "properties": {
+        "model": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "model_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Sha256"
+        },
+        "prompt": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "Generator",
       "type": "object"
     },
     "Head": {
@@ -331,13 +420,37 @@
     },
     "Provenance": {
       "additionalProperties": false,
-      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared`` a dumped record carries is recomputed, never read.",
+      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nA ``synthetic`` (or ``personal``) face may say how it was generated (``generator``). A ``consented`` face is\nserved only with a valid consent record for its release (:mod:`argus_mask.consent`), and carries the\ndisclosure label.\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared`` and ``disclosure`` a dumped record carries are recomputed, never read.",
       "properties": {
         "cleared": {
           "description": "Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public.",
           "readOnly": true,
           "title": "Cleared",
           "type": "boolean"
+        },
+        "disclosure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The label shown with the face: set for a real person's likeness, which is never shown unlabelled.",
+          "readOnly": true,
+          "title": "Disclosure"
+        },
+        "generator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Generator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "kind": {
           "enum": [
@@ -387,7 +500,8 @@
       "required": [
         "kind",
         "source",
-        "cleared"
+        "cleared",
+        "disclosure"
       ],
       "title": "Provenance",
       "type": "object"
@@ -457,7 +571,7 @@
       "type": "object"
     },
     "SourceHello": {
-      "description": "The first message a source sends on its socket: its audio format, and the idle layer's seed.",
+      "description": "The first message a source sends on its socket: its audio format, the idle layer's seed, and whether the\nvoice is a real, consenting person's (so the stream carries the disclosure label).",
       "properties": {
         "channels": {
           "default": 1,
@@ -465,6 +579,12 @@
           "minimum": 1,
           "title": "Channels",
           "type": "integer"
+        },
+        "disclose": {
+          "default": false,
+          "description": "the voice is a real person's, used with their consent",
+          "title": "Disclose",
+          "type": "boolean"
         },
         "format": {
           "default": "f32le",
@@ -534,6 +654,19 @@
           "title": "Blendshapes",
           "type": "array"
         },
+        "disclosure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the label a viewer shows while this stream plays: set when the voice is a real person's",
+          "title": "Disclosure"
+        },
         "driver": {
           "$ref": "#/$defs/DriverInfo"
         },
@@ -548,7 +681,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.2",
+          "default": "1.3",
           "title": "Mask Version",
           "type": "string"
         },

@@ -6,8 +6,8 @@ import pytest
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, inspect_glb, read_glb
-from argus_mask.models import Provenance
-from tests.helpers import make_face, make_glb
+from argus_mask.models import FACE_DISCLOSURE, Provenance
+from tests.helpers import RELEASE, make_face, make_glb, write_consent
 
 
 def test_a_model_with_all_52_shapes(tmp_path) -> None:
@@ -49,9 +49,6 @@ def test_a_curated_face_is_refused(tmp_path) -> None:
     make_face(tmp_path, "someone", provenance=Provenance(kind="curated", source="a curator export", license="unknown"))
     with pytest.raises(FaceError, match="curated faces are not accepted yet"):
         FaceStore(tmp_path).load("someone")
-
-
-RELEASE = "a" * 64
 
 
 def test_a_personal_face_needs_only_its_source_and_is_never_cleared(tmp_path) -> None:
@@ -102,8 +99,10 @@ def test_a_consented_face_is_served_and_cleared(tmp_path) -> None:
         kind="consented", source="a capture", license="per the release", subject="A. Person", release_sha256=RELEASE
     )
     make_face(tmp_path, "agreed", provenance=provenance)
+    write_consent(tmp_path)
     manifest, _ = FaceStore(tmp_path).load("agreed")
     assert manifest.provenance.cleared is True and manifest.provenance.subject == "A. Person"
+    assert manifest.provenance.disclosure == FACE_DISCLOSURE
 
 
 def test_a_manifest_must_match_its_directory_and_its_model(tmp_path) -> None:

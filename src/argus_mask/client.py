@@ -114,9 +114,13 @@ async def send(
     chunks: AsyncIterator[bytes],
     *,
     seed: int = 0,
+    disclose: bool = False,
     on_ready: Callable[[dict], None] | None = None,
 ) -> dict:
-    """Stream *chunks* of PCM in *fmt* to a face. Returns the server's closing ``done`` message."""
+    """Stream *chunks* of PCM in *fmt* to a face. Returns the server's closing ``done`` message.
+
+    *disclose*: the voice is a real, consenting person's, so viewers show the disclosure label while it plays.
+    """
     try:
         import websockets  # noqa: PLC0415
     except ImportError as exc:
@@ -124,7 +128,7 @@ async def send(
     frame_bytes = _frame_bytes(fmt)
     try:
         async with websockets.connect(source_url(base, face_id), max_size=2**22, proxy=None) as ws:
-            await ws.send(SourceHello(**fmt.model_dump(), seed=seed).model_dump_json())
+            await ws.send(SourceHello(**fmt.model_dump(), seed=seed, disclose=disclose).model_dump_json())
             ready = await _reply(ws, "ready")
             if on_ready:
                 on_ready(ready)
@@ -614,6 +618,7 @@ async def say(
     pause_ms: int = SAY_PAUSE_MS,
     tidy: bool = True,
     context: bool = False,
+    disclose: bool = False,
     on_ready: Callable[[dict], None] | None = None,
     on_audio: Callable[[float], None] | None = None,
     on_wait: Callable[[], None] | None = None,
@@ -642,6 +647,8 @@ async def say(
     begins; *on_progress* before each sentence with its index and the count;
     *on_audio* is told the utterance's length in seconds once it is known.
 
+    *disclose*: the voice is a real, consenting person's (see :func:`argus_mask.consent.voice_disclosed`).
+
     Cancelling this (Ctrl-C in the CLI) cuts the TTS socket, so the thread reading
     it ends at once instead of holding the process open until the service gives up.
     """
@@ -662,7 +669,7 @@ async def say(
                 yield whole[start : start + block]
             yield tail
 
-        return await send(base, face_id, fmt, buffered(), seed=seed, on_ready=on_ready)
+        return await send(base, face_id, fmt, buffered(), seed=seed, disclose=disclose, on_ready=on_ready)
 
     parts = _parts(body, pause_ms, tidy)
     if on_wait:
@@ -704,7 +711,7 @@ async def say(
         yield _silence(fmt, SAY_TAIL_MS)
 
     try:
-        return await send(base, face_id, fmt, streamed(), seed=seed, on_ready=on_ready)
+        return await send(base, face_id, fmt, streamed(), seed=seed, disclose=disclose, on_ready=on_ready)
     finally:
         # The generator closes each reply it reads, but one the server never asked for (it refused the
         # source, or could not be reached) is open still: the service would go on generating into it.

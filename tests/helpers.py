@@ -24,10 +24,42 @@ from pathlib import Path
 import numpy as np
 
 from argus_mask.arkit import ARKIT_52
+from argus_mask.consent import AgeCheck, ConsentRecord, ConsentStore
 from argus_mask.faces import MANIFEST_NAME, build_manifest
 from argus_mask.models import Provenance
 
 STOCK = Provenance(kind="stock", source="generated in tests/helpers.py", license="CC0-1.0")
+# A release that exists only as this hash: no real person, no document. "A. Person" is a placeholder name.
+RELEASE = "ab" * 32
+
+
+def consent_record(**over: object) -> ConsentRecord:
+    """A consent record for the placeholder release: face and voice (neutral, warm), avatar and video."""
+    fields: dict = {
+        "release_sha256": RELEASE,
+        "subject": "A. Person",
+        "collected_by": "B. Collector",
+        "signed_on": "2026-01-10",
+        "expires_on": None,
+        "age_check": AgeCheck(checked_by="B. Collector", checked_on="2026-01-10"),  # type: ignore[arg-type]
+        "face": True,
+        "voice": True,
+        "deliveries": ["neutral", "warm"],
+        "uses": ["avatar", "video"],
+        "reference_images": ["cd" * 32],
+        "reference_recordings": ["ef" * 32],
+        "revocable": True,
+        "notice_days": 0,
+        "on_revoke": "delete",
+    }
+    return ConsentRecord(**(fields | over))
+
+
+def write_consent(assets: Path, **over: object) -> ConsentRecord:
+    """:func:`consent_record`, written where the face store and the voice checks look for it."""
+    record = consent_record(**over)
+    ConsentStore(assets).create(record)
+    return record
 
 
 def make_glb(targets: tuple[str, ...] | list[str] = ARKIT_52, *, extra_static_mesh: bool = False) -> bytes:
