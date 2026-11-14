@@ -7,43 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Consent records are argus-cortex's** (#83). `ConsentRecord`, `AgeCheck`, `Revocation`, `ConsentVerdict`,
-  `consent_valid` and `consent_matches` now come from `argus_cortex.consent` (argus-cortex 0.5.0, now required).
-  Mask keeps the store, `consent revoke` and the checks where it serves and speaks. Differences from mask's own record:
-  - a record whose age check names nobody, or whose revocation is dated before the signing, is refused;
-  - a face's subject and a voice's speaker must match the record's exactly, spaces at the ends aside (no longer
-    case-insensitive);
-  - record dates are read as UTC days, and `consent revoke` dates a revocation by the UTC day, so it stops use at
-    once east of UTC too;
-  - a record lists its uses in cortex's order (avatar, video, speech, training).
-
-  `consent new` still refuses delivery names the Voices page wouldn't use (`Warm`) and overlong text.
+## [0.2.0] - 2026-11-14
 
 ### Added
 
-- **Consented faces and voices** (#26). A real person can be the avatar under a release written for this use:
+- **Consented faces and voices** (#26, #83). A real person can be the avatar under a release written for this use:
   `docs/likeness-release.md` (a template for a lawyer to review), `docs/consented-faces.md` (the face capture
   protocol and reference images), `docs/voices.md` § A consenting speaker (the voice session) and `docs/consent.md`.
-  `argus-mask consent new` writes a consent record (`<assets>/.consent/<release_sha256>.json`: the release's, reference
-  images' and reference recordings' hashes, never the documents, media or ID; the face, the voice and its deliveries;
-  uses `avatar`, `video`, `speech`, `training`; dates; revocation terms), `consent list` shows them, and
-  `consent revoke` ends one: nothing under the release is served or spoken from its effective day, its voices are
-  deleted from the TTS services they were made on and moved to the trash, and its faces are moved to the trash. It can
-  be re-run if a service was down. A `consented` face is served only while its record covers it (`avatar`; `record`
-  also needs `video`, asked of the new `GET /face/{id}/consent`). The Voices page makes a consented voice only with
-  a record that covers it and its delivery. `say`, `POST /speak`, the Broadcast page and **Try** refuse one the
-  record no longer covers. The types (`ConsentRecord`, `consent_valid`, `consent_matches`) are the definition
-  argus-cortex#31 moves into cortex.
+  - `argus-mask consent new` writes a consent record to `<assets>/.consent/<release_sha256>.json`. It holds the
+    hashes of the release, the reference images and the reference recordings, never the documents, media or ID; the
+    face, the voice and its deliveries; the uses `avatar`, `video`, `speech` and `training`; dates; and the
+    revocation terms. `consent list` shows each record and whether it holds today.
+  - `consent revoke` ends a release. Nothing under it is served or spoken from its effective day (a UTC day, as the
+    record's dates are), its voices are deleted from the TTS services they were made on and moved to the trash, and
+    its faces are moved to the trash. It can be re-run if a service was down.
+  - A `consented` face is served only while its record covers it (`avatar`); `record` also needs `video`, which it
+    asks of the new `GET /face/{id}/consent`. The Voices page makes a consented voice only with a record that covers
+    the voice and its delivery. `say`, `POST /speak`, the Broadcast page and **Try** refuse one that the record no
+    longer covers.
+  - A face's subject and a voice's speaker must match the record's exactly, spaces at the ends aside.
+  - The record and its checks (`ConsentRecord`, `consent_valid`, `consent_matches`) are argus-cortex's
+    (`argus_cortex.consent`), shared with curator and darkroom. Mask adds its own rules for the records it writes:
+    delivery names as the Voices page uses them (`warm`, not `Warm`), and length limits.
 - **The disclosure label.** A consented face's provenance carries `disclosure`, and a stream in a consenting
   person's voice carries it in its header (`SourceHello.disclose`, set by `say` and Broadcast). The viewer shows it on
   every screen, kiosks and `?hud=0` included, and in every recording.
 - **Generated faces say how:** `Provenance.generator` (the model, its sha256, the seed and the prompt), for
   `synthetic` and `personal` faces only; `inspect --generator … --generator-sha256 … --generator-seed … --prompt …`.
-- Wire contract 1.3 (additive): `Provenance.generator` and `disclosure`, `SourceHello.disclose`,
-  `StreamHeader.disclosure` (left out of a take when unset, so takes are unchanged), `ConsentVerdict`.
-
 - **Hair colour** (part of #59). A preset's `hair_colour` bakes a colour into the hair's texture at build time:
   `eumelanin` (brown to black) and `pheomelanin` (red to ginger), each 0 to 1, as in a physically based hair shader,
   plus an optional `dye` mixed over them by `dye_strength`. The texture keeps its own strand variation and its alpha.
@@ -51,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   colour the build will bake. The model is `editor/hair_colour.py`, pure numpy: the recipe loads it by path and the
   tests import it, so both run the same code, and it is part of the build cache's key. Takes and the viewer are
   unchanged. Presets without `hair_colour` build as before.
+
+### Changed
+
+- Wire contract 1.3 (additive): `Provenance.generator` and `disclosure`, `SourceHello.disclose`,
+  `StreamHeader.disclosure` (left out of a take when unset, so takes are unchanged), `ConsentVerdict`. Manifests and
+  takes from 1.2 read as before.
+- Requires argus-cortex `>=0.5.0,<0.6` (for `argus_cortex.consent`).
 
 ## [0.1.0] - 2026-11-13
 
@@ -262,5 +259,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is given. The server now holds each audio chunk until frames reach its end, and ends a stream whose driver falls
   more than 10 s behind.
 
-[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/smk762/argus-mask/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/smk762/argus-mask/releases/tag/v0.1.0
