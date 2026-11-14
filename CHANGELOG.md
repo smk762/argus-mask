@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scenes/plate.js` animates a plate with built-in effects: drift with parallax over the depth map, sway,
   dappled light, a light pulse, softness and exposure, all functions of the scene's time.
 - **`?scene=garden`**: an overgrown glass conservatory, the first plate, from FLUX.1 schnell (Apache-2.0)
-  through darkroom. `argus-mask record --scene garden` too.
+  through darkroom, with darkroom's depth map for parallax. `argus-mask record --scene garden` too.
 
 ### Fixed
 
