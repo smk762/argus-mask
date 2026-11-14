@@ -187,3 +187,27 @@ def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> No
     assert "could not check" in record.video_refusal("http://127.0.0.1:9", "someone")
     monkeypatch.setattr(record.urllib.request, "urlopen", fail(404))
     assert record.video_refusal("http://127.0.0.1:9", "someone") is None
+
+
+@pytest.mark.skipif(not _can_render(), reason="needs playwright with a browser, and ffmpeg")
+def test_two_recordings_of_one_take_match_at_high(server, tmp_path: Path) -> None:
+    # high adds film grain, whose noise once followed the composer's wall clock: how long the browser took (#81).
+    async def run():
+        pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
+        rec = await record.capture(server, "test-head")
+        await pushed
+        page = f"{server}/?face=test-head&record=1&hud=0&display=flat&quality=high"
+        try:
+            for n in ("a", "b"):
+                await record.render_frames(page, rec, tmp_path / n, width=160, height=120)
+        except record.RecordError as exc:
+            if "no browser" in str(exc):
+                pytest.skip(str(exc))
+            raise
+        return rec
+
+    rec = asyncio.run(run())
+    names = [f"{f.seq:06d}.png" for f in rec.frames]
+    assert len(names) == 6
+    for name in names:
+        assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes(), name

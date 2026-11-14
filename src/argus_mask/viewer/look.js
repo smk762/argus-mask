@@ -396,7 +396,10 @@ export class Look {
       if (this.o.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.12, 0.35, 0.92));  // the catch-lights only
       c.addPass(new OutputPass());  // tone mapping and sRGB, from the renderer's settings
       if (this.o.smaa) c.addPass(new SMAAPass());
-      if (this.o.grain) c.addPass(new FilmPass(0.05, false));  // just enough to break up banding and flat skin
+      if (this.o.grain) {  // just enough to break up banding and flat skin
+        this.film = new FilmPass(0.05, false);
+        c.addPass(this.film);
+      }
       this.composer = c;
     }
     this.composer.setPixelRatio(ratio);
@@ -409,9 +412,14 @@ export class Look {
     this.bokeh.uniforms.focus.value = this.camera.position.distanceTo(centre) - 0.06;  // the front of the face
   }
 
-  render() {
-    if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+  // t (s), given in record mode, is the posed frame's time on the take: the grain's noise is a function of it,
+  // and no pass is handed the composer's own clock. Without it (a live screen) the composer keeps wall time.
+  // Grain on the wall clock would make two recordings of one take differ (#81).
+  render(t) {
+    if (!this.composer) { this.renderer.render(this.scene, this.camera); return; }
+    if (t === undefined) { this.composer.render(); return; }
+    if (this.film) this.film.uniforms.time.value = t;
+    this.composer.render(0);
   }
 
   // What is on, for window.__mask and for anyone asking which look a recording used.
