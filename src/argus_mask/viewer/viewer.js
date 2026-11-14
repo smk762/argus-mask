@@ -5,7 +5,8 @@
 //   ?face=<id>       which face (default: the first the server lists)
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
 //   ?bg=<css colour> background for the flat tier, or "transparent"
-//   ?scene=ftl       a backdrop with a little life in it (ftl, garden), flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
+//   ?scene=ftl       a backdrop with a little life in it (ftl, garden, a plate of your own: GET /scenes), flat tier,
+//                    mesh faces, over ?bg=. Without it, the face's own (Saved faces); ?scene=none for none
 //                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
 //   ?hud=0           hide the status line (never the disclosure label a real person's face or voice carries)
 //   ?disclosure=…    record mode only: a label to show from the start (`argus-mask record` passes a consented voice's)
@@ -35,7 +36,8 @@ import { Backdrop } from './backdrop.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
-const SCENE = params.get('scene') || '';
+const ASKED_SCENE = params.has('scene') ? params.get('scene') : null;   // null: the face's own, if it has one
+let SCENE = '';   // the scene this page shows, once the face is known
 const RECORD = params.get('record') === '1';
 const KIOSK = params.get('kiosk') === '1';
 const BUFFER_MS = params.has('buffer') ? Number(params.get('buffer')) : 250;
@@ -67,6 +69,7 @@ const state = window.__mask = {
   streamsEnded: 0, underruns: 0, audioDropped: 0, lastSeq: -1, weights: null, error: null, audio: 'locked',
   look: null,   // the profile and effects in use: see look.js
   scene: null,  // the backdrop on show (backdrop.js), or null for a plain background
+  sceneError: null,  // why the face's default backdrop was not shown, if it was not
   screenReady: false, kiosk: KIOSK,   // connected and heard (or, sound external, connected); a dedicated screen
   sound: EXTERNAL ? 'external' : 'local', delayMs: DELAY_S * 1000,
 };
@@ -127,9 +130,18 @@ async function meshScene() {
     const options = {};
     for (const key of ['speed', 'density']) if (params.has(`scene.${key}`)) options[key] = Number.parseFloat(params.get(`scene.${key}`));
     if (params.has('scene.tint')) options.tint = params.get('scene.tint');
-    backdrop = await Backdrop.create(THREE, renderer, SCENE, { quality: look.summary.quality, options });
-    scene.background = backdrop.texture;
-    look.tintRims(options.tint || backdrop.meta.tint);
+    try {
+      backdrop = await Backdrop.create(THREE, renderer, SCENE, { quality: look.summary.quality, options });
+    } catch (error) {
+      if (ASKED_SCENE !== null) throw error;   // asked for by name: say so
+      // The face's default could not be shown (a plate since removed or refused): the face, on its plain background.
+      state.sceneError = error.message || String(error);
+      console.warn(`The face's backdrop "${SCENE}" was not shown:`, state.sceneError);
+    }
+    if (backdrop) {
+      scene.background = backdrop.texture;
+      look.tintRims(options.tint || backdrop.meta.tint);
+    }
   }
 }
 
@@ -181,6 +193,7 @@ async function loadFace() {
   showDisclosure();
   if (manifest.model && manifest.model.format === 'lam-splat') return loadSplat(faceId, manifest);
   state.renderer = 'mesh';
+  SCENE = await sceneFor(faceId);
   await meshScene();
   resize();
   const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model`);
@@ -218,11 +231,20 @@ function faceSeed(id) {
   return seed;
 }
 
+// The scene to show: the page's ?scene= (none: a plain background), else the face's own default, if any.
+async function sceneFor(faceId) {
+  if (ASKED_SCENE !== null) return ASKED_SCENE === 'none' ? '' : ASKED_SCENE;
+  try {
+    const reply = await fetch(`/face/${encodeURIComponent(faceId)}/scene`);
+    return reply.ok ? ((await reply.json()).scene || '') : '';
+  } catch { return ''; }   // an older server: no defaults
+}
+
 // A LAM Gaussian-splat head (splat.js): the same frames, rest set, idle life and lip budget, drawn by the
 // splat renderer. The archive is fetched by its own name: the renderer wants a URL ending .zip.
 async function loadSplat(faceId, manifest) {
   if (DISPLAY === 'hld') throw new Error('A splat face cannot be shown on display=hld yet. Use display=flat.');
-  if (SCENE) throw new Error('A splat face cannot show a scene yet: it draws its own background. Leave out ?scene=.');
+  if (ASKED_SCENE && ASKED_SCENE !== 'none') throw new Error('A splat face cannot show a scene yet: it draws its own background. Leave out ?scene=.');
   state.renderer = 'splat';
   const { SplatHead, readSkin, jawCap, JAW } = await import('./splat.js');
   const url = `/face/${encodeURIComponent(faceId)}/model/${encodeURIComponent(manifest.model.file)}?v=${manifest.model.sha256}`;

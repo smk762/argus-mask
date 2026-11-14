@@ -1266,3 +1266,25 @@ def test_a_broadcast_face_row_reads_cleared_or_falls_back_on_its_kind() -> None:
     assert face_row({"id": "a", "provenance": {"kind": "personal", "cleared": False}})["cleared"] is False
     assert face_row({"id": "b", "provenance": {"kind": "stock", "license": "CC0-1.0"}})["cleared"] is True
     assert face_row({"id": "c", "provenance": {"kind": "personal"}})["cleared"] is False
+
+
+def test_a_face_keeps_its_backdrop_through_rename_and_loses_it_on_delete(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    assert [s["name"] for s in client.get("/scenes").json()] == ["ftl", "garden"]
+    assert client.put("/scenes/faces/my-face", json={"scene": "warp"}).status_code == 422
+    assert client.put("/scenes/faces/my-face", json={"scene": "garden"}).json() == {
+        "face": "my-face",
+        "scene": "garden",
+    }
+    assert client.get("/scenes/faces").json() == {"my-face": "garden"}
+    assert client.post("/saved/my-face/rename", json={"id": "renamed"}).status_code == 200
+    assert client.get("/scenes/faces").json() == {"renamed": "garden"}
+    assert client.delete("/saved/renamed").status_code == 200
+    assert client.get("/scenes/faces").json() == {}
+
+
+def test_the_editor_serves_what_a_preview_needs_for_a_backdrop(client) -> None:
+    assert client.get("/backdrop.js").status_code == 200
+    assert client.get("/scenes/plate.js").status_code == 200
+    assert client.get("/scenes/garden/background.json").json()["name"] == "garden"

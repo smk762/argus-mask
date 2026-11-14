@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<assets>/backgrounds/<name>/` that passes `plate check` (`GET /scenes`, `GET /scene/{name}/background.json`
   and its images, nothing else), and refuses the rest. `?scene=<name>` and `record --scene <name>` show it.
   `backgrounds` is a reserved face id.
+- **A face's own backdrop** (#55). Saved faces → Review → Backdrop previews a scene behind the face and, for an
+  exported face, keeps it in `<assets>/scenes.json`; it follows a rename and goes with a delete. Screens show it
+  unless they ask for another (`?scene=`, or `?scene=none` for a plain background), and so does `record`
+  (`--scene none` to leave it out). `GET /face/{id}/scene` (`FaceScene`).
 
 ### Fixed
 

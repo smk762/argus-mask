@@ -156,7 +156,8 @@ def test_record_knows_the_viewers_scenes() -> None:
         assert (scenes / f"{name}.js").is_file() or (scenes / name / "background.json").is_file()
 
 
-def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("scene", ["ftl", "none"])
+def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch, scene: str) -> None:
     urls = []
 
     async def render(page_url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003 - stands in for the browser
@@ -167,11 +168,11 @@ def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch) 
 
     async def run():
         pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
-        await record.record(server, "test-head", tmp_path / "c.mp4", width=160, height=120, scene="ftl")
+        await record.record(server, "test-head", tmp_path / "c.mp4", width=160, height=120, scene=scene)
         await pushed
 
     asyncio.run(run())
-    assert "scene=ftl" in urls[0]
+    assert f"scene={scene}" in urls[0]
 
 
 def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> None:

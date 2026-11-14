@@ -79,6 +79,12 @@ export class Backdrop {
     this.renderer.setRenderTarget(previous);
   }
 
+  dispose() {
+    this.target.dispose();
+    for (const uniform of Object.values(this.material.uniforms)) if (uniform.value && uniform.value.isTexture) uniform.value.dispose();
+    this.material.dispose();
+  }
+
   get summary() {
     const { maxFps } = this.budget;
     return { name: this.name, title: this.meta.title, size: [this.target.width, this.target.height], maxFps: Number.isFinite(maxFps) ? maxFps : 'every frame' };

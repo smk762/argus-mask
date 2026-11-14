@@ -323,9 +323,12 @@ export class Look {
   // Lean the rim lights toward a backdrop's light (a CSS colour), by *amount*: they come from behind, where
   // the backdrop is, so a cool starfield or a green garden should colour them a little.
   tintRims(colour, amount = 0.5) {
+    // From the rims' own colour each time, so a preview that changes scene does not tint on top of a tint;
+    // a null colour gives them back their own.
+    for (const rim of this.rims) rim.userData.ownColour ??= rim.color.clone();
     const tint = new THREE.Color();
-    try { tint.set(colour); } catch { return; }
-    for (const rim of this.rims) rim.color.lerp(tint, amount);
+    try { tint.set(colour); } catch { for (const rim of this.rims) rim.color.copy(rim.userData.ownColour); return; }
+    for (const rim of this.rims) rim.color.copy(rim.userData.ownColour).lerp(tint, amount);
   }
 
   // Dress a loaded face: shadows, skin, cornea, hair edges. Call once per model, then focus() once the

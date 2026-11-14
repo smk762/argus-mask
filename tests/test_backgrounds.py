@@ -392,3 +392,36 @@ def test_record_accepts_a_plate_the_server_serves(assets: Path) -> None:
         assert record.scene_refusal(url, "rain") is None
         assert "choose from ftl, garden, rain" in (record.scene_refusal(url, "warp") or "")
     assert "could not list" in (record.scene_refusal("http://127.0.0.1:9", "rain") or "")
+
+
+# ---- each face's backdrop ------------------------------------------------------------------------
+
+
+def test_a_face_shows_its_chosen_backdrop_until_a_screen_asks_for_another(assets: Path) -> None:
+    choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
+    with client(assets) as c:
+        assert c.get("/face/test-head/scene").json() == {"scene": None}
+        choices.choose("test-head", "rain")
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain"}
+        assert c.get("/face/nobody/scene").status_code == 404
+        # The plate goes: the choice stays in the file but is not offered, so the face shows a plain background.
+        (assets / "backgrounds" / "rain" / "plate.png").write_bytes(png(shade=1))
+        assert c.get("/face/test-head/scene").json() == {"scene": None}
+    assert choices.raw() == {"test-head": "rain"}
+
+
+def test_a_choice_must_be_a_scene_and_follows_its_face(assets: Path) -> None:
+    choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
+    with pytest.raises(PlateError, match="no scene 'warp'"):
+        choices.choose("test-head", "warp")
+    choices.choose("test-head", "ftl")
+    choices.repoint("test-head", "renamed")
+    assert choices.choices() == {"renamed": "ftl"}
+    choices.choose("renamed", None)
+    assert choices.choices() == {} and json.loads((assets / "scenes.json").read_text()) == {"faces": {}}
+
+
+def test_none_is_never_a_plate(assets: Path) -> None:
+    (assets / "backgrounds" / "rain").rename(assets / "backgrounds" / "none")
+    with pytest.raises(PlateError, match="built-in"):
+        backgrounds.PlateStore(assets).load("none")

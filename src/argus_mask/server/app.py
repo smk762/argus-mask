@@ -44,7 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, PcmDecoder, decode_wav
-from argus_mask.backgrounds import PlateError, PlateStore
+from argus_mask.backgrounds import PlateError, PlateStore, SceneChoices
 from argus_mask.config import Settings
 from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, voice_refusal
 from argus_mask.drivers import Driver, DriverError, build_driver
@@ -55,6 +55,7 @@ from argus_mask.models import (
     VOICE_DISCLOSURE,
     DriverHealth,
     FaceManifest,
+    FaceScene,
     Health,
     PlateManifest,
     RestSet,
@@ -259,12 +260,43 @@ def install_guards(app: FastAPI, cfg: Settings) -> Callable:
     return origin_refusal
 
 
+def add_scene_routes(app: FastAPI, plates: PlateStore) -> None:
+    """``GET /scenes`` and the assets' plates (``/scene/{name}/...``): the server's, and the editor's previews'."""
+
+    @app.get("/scenes", response_model=list[SceneInfo])
+    def scene_list() -> list[SceneInfo]:
+        """The backdrops a screen can show (``?scene=``): the viewer's own, then the plates in the assets."""
+        return plates.scenes()
+
+    def plate_or_404(name: str) -> tuple[PlateManifest, Path]:
+        try:
+            return plates.load(name)
+        except PlateError:
+            # As for faces: a refused plate is not served, and says why only to `plate check`.
+            raise HTTPException(status_code=404, detail=f"no plate {name!r}") from None
+
+    @app.get("/scene/{name}/background.json", response_model=PlateManifest)
+    def plate_manifest(name: str) -> PlateManifest:
+        """A plate in the assets, checked: what the viewer's plate.js reads."""
+        return plate_or_404(name)[0]
+
+    @app.get("/scene/{name}/{file}")
+    def plate_file(name: str, file: str) -> FileResponse:
+        """One of a plate's images: only a file its manifest names, never a path the request makes up."""
+        manifest, directory = plate_or_404(name)
+        images = {i.file: i for i in (manifest.plate, manifest.depth, manifest.sway_mask, manifest.light_mask) if i}
+        if file not in images:
+            raise HTTPException(status_code=404, detail=f"plate {name!r} has no file {file!r}")
+        return FileResponse(directory / file, media_type="image/png", headers={"ETag": f'"{images[file].sha256}"'})
+
+
 def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
     """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
     cfg = settings or Settings.from_env()
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
     store = FaceStore(cfg.assets_dir)
     plates = PlateStore(cfg.assets_dir)
+    scene_choices = SceneChoices(cfg.assets_dir, plates)
     aliases = Aliases(store)
     expressions = Expressions(cfg.assets_dir)
     stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
@@ -370,31 +402,13 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
         return model_response(manifest, path)
 
-    @app.get("/scenes", response_model=list[SceneInfo])
-    def scene_list() -> list[SceneInfo]:
-        """The backdrops a screen can show (``?scene=``): the viewer's own, then the plates in the assets."""
-        return plates.scenes()
+    add_scene_routes(app, plates)
 
-    def plate_or_404(name: str) -> tuple[PlateManifest, Path]:
-        try:
-            return plates.load(name)
-        except PlateError:
-            # As for faces: a refused plate is not served, and says why only to `plate check`.
-            raise HTTPException(status_code=404, detail=f"no plate {name!r}") from None
-
-    @app.get("/scene/{name}/background.json", response_model=PlateManifest)
-    def plate_manifest(name: str) -> PlateManifest:
-        """A plate in the assets, checked: what the viewer's plate.js reads."""
-        return plate_or_404(name)[0]
-
-    @app.get("/scene/{name}/{file}")
-    def plate_file(name: str, file: str) -> FileResponse:
-        """One of a plate's images: only a file its manifest names, never a path the request makes up."""
-        manifest, directory = plate_or_404(name)
-        images = {i.file: i for i in (manifest.plate, manifest.depth, manifest.sway_mask, manifest.light_mask) if i}
-        if file not in images:
-            raise HTTPException(status_code=404, detail=f"plate {name!r} has no file {file!r}")
-        return FileResponse(directory / file, media_type="image/png", headers={"ETag": f'"{images[file].sha256}"'})
+    @app.get("/face/{face_id}/scene", response_model=FaceScene)
+    def face_scene(face_id: str) -> FaceScene:
+        """The backdrop a face shows when a screen does not ask for one (the editor's Saved faces sets it)."""
+        manifest, _ = face_or_404(face_id)
+        return FaceScene(scene=scene_choices.for_face(manifest.id))
 
     def cross_site(ws: WebSocket) -> str | None:
         return origin_refusal({"type": "websocket", "method": "WebSocket"}, ws.headers)  # type: ignore[arg-type]

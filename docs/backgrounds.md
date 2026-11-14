@@ -131,5 +131,20 @@ screen can show: the built-in scenes first, then the plates. A plate cannot take
 and `backgrounds` is not a face id. A plate of your own may be `personal` (the user's own screens only); only
 a cleared plate may ship, be demoed or be published.
 
-Not built yet (#55): video loops, a face's default backdrop chosen on Saved faces, and backdrops on the
-editor's previews.
+## A face's own backdrop
+
+A face can have a backdrop of its own, shown on every screen that does not ask for another. Choose it in the
+editor's Saved faces: **Review** a face, then **Backdrop**. The stage previews it behind the face, and for an
+exported face the choice is kept in `<assets>/scenes.json` (`{"faces": {"ginger-3": "garden"}}`), which the
+server reads like `expressions.json`. It follows the face when the face is renamed and goes when the face is
+deleted.
+
+- A screen's own `?scene=` wins; `?scene=none` shows a plain background whatever the face's choice.
+- `GET /face/{id}/scene` says which backdrop a face has (`{"scene": null}` for none).
+- `argus-mask record` without `--scene` records the face's own backdrop, as a screen would show it;
+  `--scene none` leaves it out.
+- A choice whose plate has gone (removed, or refused by `plate check`) is ignored: the face shows a plain
+  background rather than failing to load.
+- A splat face draws its own background, so it ignores the choice.
+
+Not built yet (#55): video loops, and a third scene.
