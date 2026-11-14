@@ -62,6 +62,10 @@
   label.row > span { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   label.row.changed > span { color: var(--warn); }
   label.row output { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .swatch { height: 18px; border-radius: 4px; border: 1px solid var(--line); }
+  .swatch.none { background: repeating-linear-gradient(45deg, transparent 0 4px, rgba(128,128,128,.35) 4px 8px) !important; }
+  label.row input[type=color] { width: 100%; height: 22px; padding: 0; border: 0; background: none; }
+  label.row input[type=checkbox] { justify-self: start; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 5px; }

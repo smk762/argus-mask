@@ -283,6 +283,42 @@ def test_a_preset_has_no_unknown_fields() -> None:
         Preset.model_validate(preset(script="import os"))
 
 
+def test_hair_colour_is_optional_and_bounded() -> None:
+    assert Preset.model_validate(preset()).hair_colour is None
+    made = Preset.model_validate(preset(hair_colour={"eumelanin": 0.7, "dye": "#AA3311", "dye_strength": 0.2}))
+    assert made.hair_colour.parts == ["hair"] and made.hair_colour.dye == "#aa3311"
+    for bad in [
+        {"eumelanin": 1.5},
+        {"pheomelanin": -0.1},
+        {"dye": "red"},
+        {"dye_strength": 0.5},  # a strength with no dye
+        {"parts": []},
+        {"parts": ["hair", "hair"]},
+        {"parts": ["skin"]},
+        {"melanin": 0.5},
+    ]:
+        with pytest.raises(ValidationError):
+            Preset.model_validate(preset(hair_colour=bad))
+
+
+def test_the_recipe_loads_the_same_hair_colour_and_checks_it() -> None:
+    text = SCRIPT.read_text()
+    assert '"hair_colour.py"' in text and "check_hair_colour(path" in text
+    assert (SCRIPT.parent / "hair_colour.py").is_file()
+
+
+def test_a_hair_colour_is_a_different_build(client, rig) -> None:
+    first = client.post("/build", json=preset()).json()
+    coloured = client.post("/build", json=preset(hair_colour={"eumelanin": 0.6})).json()
+    assert coloured["cached"] is False and coloured["key"] != first["key"]
+    assert json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())["hair_colour"] == {
+        "eumelanin": 0.6,
+        "pheomelanin": 0.0,
+        "dye_strength": 0.0,
+        "parts": ["hair"],
+    }
+
+
 # ---- the library ---------------------------------------------------------------------------
 
 

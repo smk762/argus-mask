@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MAX_TRIANGLES
@@ -119,6 +119,39 @@ class Mouth(_Strict):
     cavity_shade: float | None = Field(None, ge=0.0, le=1.0)
 
 
+class HairColour(_Strict):
+    """A colour for the hair, baked into its texture by the recipe (``hair_colour.py``).
+
+    Two pigments, as in hair: ``eumelanin`` (brown to black) and ``pheomelanin`` (red to ginger), each 0 to
+    1; neither gives near-white. An optional ``dye`` (``#rrggbb``) is mixed over that by ``dye_strength``.
+    ``parts`` says what takes the colour: the hair, and the brows and lashes if listed.
+    """
+
+    eumelanin: Unit = 0.0
+    pheomelanin: Unit = 0.0
+    dye: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    dye_strength: Unit = 0.0
+    parts: list[Literal["hair", "eyebrows", "eyelashes"]] = Field(default_factory=lambda: ["hair"], min_length=1)
+
+    @field_validator("dye")
+    @classmethod
+    def _lower(cls, value: str | None) -> str | None:
+        return value.lower() if value else value
+
+    @field_validator("parts")
+    @classmethod
+    def _parts_once(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("a part is listed twice")
+        return value
+
+    @model_validator(mode="after")
+    def _dye_named(self) -> HairColour:
+        if self.dye_strength > 0 and not self.dye:
+            raise ValueError("a dye strength needs a dye colour")
+        return self
+
+
 class Preset(_Strict):
     id: str = Field(..., pattern=FACE_ID_PATTERN)
     name: str = Field(..., min_length=1, max_length=80)
@@ -133,6 +166,8 @@ class Preset(_Strict):
         Literal["eyes", "eyebrows", "eyelashes", "teeth", "tongue", "hair"], Annotated[float, Field(ge=0.2, le=3.0)]
     ] = Field(default_factory=dict)
     blend_parts: list[Literal["eyebrows", "eyelashes"]] = Field(default_factory=list)
+    # None: the hair keeps its texture's own colour.
+    hair_colour: HairColour | None = None
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
