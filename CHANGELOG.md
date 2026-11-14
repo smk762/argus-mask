@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Consent records are argus-cortex's** (#83). `ConsentRecord`, `AgeCheck`, `Revocation`, `ConsentVerdict`,
+  `consent_valid` and `consent_matches` now come from `argus_cortex.consent` (argus-cortex 0.5.0, now required).
+  Mask keeps the store, `consent revoke` and the checks where it serves and speaks. Differences from mask's own record:
+  - a record whose age check names nobody, or whose revocation is dated before the signing, is refused;
+  - a face's subject and a voice's speaker must match the record's exactly, spaces at the ends aside (no longer
+    case-insensitive);
+  - record dates are read as UTC days, and `consent revoke` dates a revocation by the UTC day, so it stops use at
+    once east of UTC too;
+  - a record lists its uses in cortex's order (avatar, video, speech, training).
+
+  `consent new` still refuses delivery names the Voices page wouldn't use (`Warm`) and overlong text.
+
 ### Added
 
 - **Consented faces and voices** (#26). A real person can be the avatar under a release written for this use:

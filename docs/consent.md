@@ -11,9 +11,9 @@ Records live at `<assets>/.consent/<release_sha256>.json`, one per release. A fa
 | Field | Meaning |
 |---|---|
 | `release_sha256` | The signed release |
-| `subject` | The person, as the release names them. A face's `subject` and a voice's speaker must match it (case and spacing aside) |
+| `subject` | The person, as the release names them. A face's `subject` and a voice's speaker must match it exactly, spaces at the ends aside |
 | `collected_by` | Who ran the signing session |
-| `signed_on`, `expires_on` | When it was signed; the first day it no longer holds (none: no expiry) |
+| `signed_on`, `expires_on` | When it was signed; the first day it no longer holds (none: no expiry). Dates are read as UTC days |
 | `age_check` | Who checked the person's age against ID, and when. Never the ID |
 | `face`, `voice` | Which the release covers. Each is a separate opt-in |
 | `deliveries` | For a voice: the deliveries covered (`neutral`, `warm`, …). Each is its own voice |
@@ -32,7 +32,7 @@ A record is checked in a fixed order, and the first failure is the answer. Mask 
 5. `use-not-covered`
 6. `delivery-not-covered`: voices only
 
-These types are what [smk762/argus-cortex#31](https://github.com/smk762/argus-cortex/issues/31) moves into cortex for every package to share. Until it lands they live in `argus_mask.consent`.
+The record and its checks are argus-cortex's (`argus_cortex.consent`, 0.5.0), shared by every package. Mask adds rules of its own for the records it writes: a delivery is named in lower case as the Voices page names it (`warm`, not `Warm`), and names and notes have a length limit. "Today" is the UTC day, as cortex reads a record's dates, so a revocation dated today stops use at once wherever you are.
 
 ## Commands
 

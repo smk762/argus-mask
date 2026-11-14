@@ -350,7 +350,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         if manifest.provenance.kind != "consented":
             return ConsentVerdict(ok=True)
         found = store.consents.check_face(manifest.provenance, use=use, at=store.clock())  # type: ignore[arg-type]
-        return found if isinstance(found, ConsentVerdict) else ConsentVerdict(ok=False, detail=found)
+        if isinstance(found, str):  # no record, or another person's: the face would not be served either
+            raise HTTPException(status_code=404, detail=f"no face {face_id!r}")
+        return found
 
     @app.get("/face/{face_id}/model")
     def face_model(face_id: str) -> FileResponse:

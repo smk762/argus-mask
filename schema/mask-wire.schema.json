@@ -33,7 +33,8 @@
       "type": "object"
     },
     "ConsentVerdict": {
-      "description": "Whether a record covers a use, and if not, why: a closed code, and words for a person.",
+      "additionalProperties": false,
+      "description": "What a service returns about a record: the verdict and its reason, never the record itself.",
       "properties": {
         "detail": {
           "default": "",
