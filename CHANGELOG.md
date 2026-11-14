@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The image reports the release's version** (#88). The 0.2.0 image said `0.2.1.dev0+g8e0618f5c.d20261114` at
+  `/health`: `.dockerignore` left the tracked `.github/` out of the build context while keeping `.git`, so hatch-vcs
+  saw a dirty tree. `.github/` is back in the context, the release passes the tag to the build as `VERSION`, and the
+  release fails if the pushed image's `/health.version` is not the tag.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added

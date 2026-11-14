@@ -1,6 +1,6 @@
 # NOTE: .git is deliberately *not* ignored -- hatch-vcs reads the version from
-# git history at build time. Set `version_build_arg` if you want it excluded.
-.github
+# git history at build time. So nothing tracked may be ignored here either: git
+# would see it deleted and version the image as a dirty dev build (#88).
 .venv
 venv
 dist
