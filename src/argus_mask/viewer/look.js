@@ -316,7 +316,16 @@ export class Look {
       key.shadow.normalBias = 0.0015;
     }
     this.key = key;
+    this.rims = [rimL, rimR];
     scene.add(this.rig);
+  }
+
+  // Lean the rim lights toward a backdrop's light (a CSS colour), by *amount*: they come from behind, where
+  // the backdrop is, so a cool starfield or a green garden should colour them a little.
+  tintRims(colour, amount = 0.5) {
+    const tint = new THREE.Color();
+    try { tint.set(colour); } catch { return; }
+    for (const rim of this.rims) rim.color.lerp(tint, amount);
   }
 
   // Dress a loaded face: shadows, skin, cornea, hair edges. Call once per model, then focus() once the

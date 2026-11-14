@@ -32,6 +32,7 @@ from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
+SCENES = ("ftl",)  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
 BACKENDS = (
     ("gpu", ["--use-angle=gl-egl", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"]),
@@ -184,8 +185,8 @@ async def render_frames(
             total = len(recording.frames)
             for i, frame in enumerate(recording.frames):
                 await page.evaluate(
-                    "([w, h, n]) => window.__mask.pose(w, h, n)",
-                    [list(frame.weights), frame.head.model_dump(), names if i == 0 else None],
+                    "([w, h, n, t]) => window.__mask.pose(w, h, n, t)",
+                    [list(frame.weights), frame.head.model_dump(), names if i == 0 else None, frame.t_ms],
                 )
                 await page.screenshot(path=str(frames_dir / f"{frame.seq:06d}.png"), type="png")
                 if on_progress:
@@ -245,6 +246,7 @@ async def record(
     height: int = DEFAULT_HEIGHT,
     display: str = "flat",
     bg: str = "",
+    scene: str = "",
     quality: str = "high",
     keep: bool = False,
     on_wait: Callable[[], None] | None = None,
@@ -257,6 +259,8 @@ async def record(
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
+    if scene and scene not in SCENES:
+        raise RecordError(f"scene {scene!r}: choose from {', '.join(SCENES)}")
     recording = await capture(base, face_id, on_wait=on_wait)
     if not recording.frames:
         raise RecordError("the session had no frames")
@@ -274,6 +278,7 @@ async def record(
     # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
+    params |= {"scene": scene} if scene else {}
     try:
         await render_frames(
             f"{base.rstrip('/')}/?{urlencode(params)}",

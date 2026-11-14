@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Backdrops** (part of #55). `?scene=ftl` draws stars streaking past at warp behind the face, tuned with
+  `scene.speed`, `scene.density` and `scene.tint`, and `argus-mask record --scene ftl` records it. A scene is a
+  procedural shader module (`viewer/scenes/`), drawn by `viewer/backdrop.js` into a half-float render target capped
+  by the look's profile (480 px at 30 fps on `low`) and used as the scene's background, so depth of field softens
+  it; it leans the rim lights toward its own light. In `record` its clock is each frame's `t_ms` (the viewer's
+  `pose()` takes it as a fourth argument), so recordings of one take match. Flat tier and mesh faces only: `hld`
+  stays black and a splat face refuses a scene. `docs/backgrounds.md` is the recipe for adding one.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added
