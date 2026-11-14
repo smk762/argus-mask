@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -64,6 +65,12 @@ RACE_KEYS = ("asian", "caucasian", "african")
 # one-way, 0 to 1. Two-way ones go from -1 to +1.
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "modifiers.json"), encoding="utf-8") as _fh:
     MODIFIERS = {m["name"]: m for m in json.load(_fh)["modifiers"]}
+# Hair colour: the same file the package's tests import, loaded by path (Blender's Python has no argus_mask).
+_spec = importlib.util.spec_from_file_location(
+    "argus_mask_hair_colour", os.path.join(os.path.dirname(os.path.abspath(__file__)), "hair_colour.py")
+)
+hair_colour = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(hair_colour)
 
 
 class RecipeError(Exception):
@@ -118,7 +125,36 @@ def load_preset(path: str) -> dict:
         low = -1.0 if MODIFIERS[name]["negative"] else 0.0
         if not isinstance(value, (int, float)) or not low <= value <= 1.0:
             raise RecipeError(f"{path}: targets.{name} must be between {low:g} and 1")
+    check_hair_colour(path, preset.get("hair_colour"))
     return preset
+
+
+def check_hair_colour(path: str, spec) -> None:
+    """The same rules as preset.py's HairColour, for a preset handed to Blender directly."""
+    if spec is None:
+        return
+    if not isinstance(spec, dict):
+        raise RecipeError(f"{path}: hair_colour must be an object")
+    known = {"eumelanin", "pheomelanin", "dye", "dye_strength", "parts"}
+    if extra := sorted(set(spec) - known):
+        raise RecipeError(f"{path}: hair_colour has unknown fields: {', '.join(extra)}")
+    for key in ("eumelanin", "pheomelanin", "dye_strength"):
+        value = spec.get(key, 0.0)
+        if not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
+            raise RecipeError(f"{path}: hair_colour.{key} must be between 0 and 1")
+    dye = spec.get("dye")
+    if dye is not None:
+        try:
+            hair_colour.hex_to_linear(dye)
+        except (ValueError, TypeError) as exc:
+            raise RecipeError(f"{path}: hair_colour.dye must be #rrggbb") from exc
+    elif spec.get("dye_strength", 0.0) > 0:
+        raise RecipeError(f"{path}: hair_colour.dye_strength needs a dye colour")
+    parts = spec.get("parts", ["hair"])
+    if not isinstance(parts, list) or not parts or any(p not in hair_colour.PARTS for p in parts):
+        raise RecipeError(f"{path}: hair_colour.parts must list some of {', '.join(hair_colour.PARTS)}")
+    if len(set(parts)) != len(parts):
+        raise RecipeError(f"{path}: hair_colour.parts lists a part twice")
 
 
 def find_mpfb():
@@ -557,6 +593,15 @@ def part_images(obj) -> set:
     return found
 
 
+def recolour(image, target) -> None:
+    """Bake hair colour *target* (linear RGB) into an image's colour, keeping its strand variation and alpha."""
+    pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    pixels = hair_colour.recolour(pixels.reshape(-1, image.channels), target).astype(np.float32)
+    image.pixels.foreach_set(pixels.ravel())
+    image.update()
+
+
 def brighten(image, gain: float) -> None:
     """Multiply an image's colour (not its alpha) by *gain*."""
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
@@ -610,8 +655,10 @@ def used_images() -> set:
     return used
 
 
-def fit_textures(max_px: int, max_alpha_px: int, workdir: str, gains: dict | None = None) -> list[dict]:
-    """Shrink every used image and store the opaque ones as JPEG. Returns what it did.
+def fit_textures(
+    max_px: int, max_alpha_px: int, workdir: str, gains: dict | None = None, colours: dict | None = None
+) -> list[dict]:
+    """Shrink every used image, recolour and brighten those asked for, and store the opaque ones as JPEG.
 
     Opaque images are capped at *max_px*. Images with real transparency stay PNG, which is far
     larger per pixel, so they get their own, usually smaller, cap *max_alpha_px*.
@@ -635,6 +682,8 @@ def fit_textures(max_px: int, max_alpha_px: int, workdir: str, gains: dict | Non
         scale = min(1.0, (max_alpha_px if keep_alpha else max_px) / max(width, height))
         if scale < 1.0:
             image.scale(max(1, round(width * scale)), max(1, round(height * scale)))
+        if colours and image in colours:
+            recolour(image, colours[image])
         if gains and image in gains:
             brighten(image, gains[image])
         scene.render.image_settings.file_format = "PNG" if keep_alpha else "JPEG"
@@ -832,7 +881,15 @@ def build(preset: dict, out: str) -> dict:
             if kind in parts
             for image in part_images(parts[kind])
         }
-        textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains)
+        dyed = preset.get("hair_colour")
+        target = hair_colour.colour(dyed) if dyed else None
+        colours = {
+            image: target
+            for kind in (dyed or {}).get("parts", ["hair"])
+            if dyed and kind in parts
+            for image in part_images(parts[kind])
+        }
+        textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains, colours)
         blended = {
             slot.material.name
             for kind in preset.get("blend_parts") or []
@@ -886,6 +943,14 @@ def build(preset: dict, out: str) -> dict:
         "skin_maps": {k: v for k, v in skin_maps.items() if k in ("made", "why", "source", "size")},
         "shape_scale": shape_scale,
         "textures": textures,
+        "hair_colour": (
+            {
+                "colour": hair_colour.to_hex(target),
+                "parts": sorted({k for k in dyed.get("parts", ["hair"]) if k in parts}),
+            }
+            if dyed
+            else None
+        ),
         "materials": [
             {"name": m.get("name"), "alphaMode": m.get("alphaMode", "OPAQUE")} for m in doc.get("materials", [])
         ],

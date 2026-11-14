@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pose()` takes it as a fourth argument), so recordings of one take match. Flat tier and mesh faces only: `hld`
   stays black and a splat face refuses a scene. `docs/backgrounds.md` is the recipe for adding one.
 
+- **Hair colour** (part of #59). A preset's `hair_colour` bakes a colour into the hair's texture at build time:
+  `eumelanin` (brown to black) and `pheomelanin` (red to ginger), each 0 to 1, as in a physically based hair shader,
+  plus an optional `dye` mixed over them by `dye_strength`. The texture keeps its own strand variation and its alpha.
+  `parts` can add the brows and lashes. The editor has a Hair colour panel under the hair picker, with a swatch of the
+  colour the build will bake. The model is `editor/hair_colour.py`, pure numpy: the recipe loads it by path and the
+  tests import it, so both run the same code, and it is part of the build cache's key. Takes and the viewer are
+  unchanged. Presets without `hair_colour` build as before.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added
