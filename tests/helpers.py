@@ -40,6 +40,7 @@ def consent_record(**over: object) -> ConsentRecord:
         "subject": "A. Person",
         "collected_by": "B. Collector",
         "signed_on": "2026-01-10",
+        "expires_on": None,
         "age_check": AgeCheck(checked_by="B. Collector", checked_on="2026-01-10"),  # type: ignore[arg-type]
         "face": True,
         "voice": True,
@@ -48,6 +49,7 @@ def consent_record(**over: object) -> ConsentRecord:
         "reference_images": ["cd" * 32],
         "reference_recordings": ["ef" * 32],
         "revocable": True,
+        "notice_days": 0,
         "on_revoke": "delete",
     }
     return ConsentRecord(**(fields | over))

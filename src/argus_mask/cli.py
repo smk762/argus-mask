@@ -638,19 +638,19 @@ def consent_list(
     assets: Path | None = Option(None, "--assets", help="The assets root; default: ARGUS_MASK_ASSETS_DIR"),
 ) -> None:
     """Every consent record, and whether it holds today."""
-    from argus_mask.consent import ConsentStore, consent_valid
+    from argus_mask.consent import ConsentStore, consent_holds, uses_of
     from argus_mask.faces import local_now
 
     records, broken = ConsentStore(assets or _settings().assets_dir).all()
     now = local_now()
     for r in records:
         likeness = "face" if r.face else "voice"
-        verdict = consent_valid(r, use=None, likeness=likeness, at=now, delivery=r.deliveries[0] if r.voice else None)
+        verdict = consent_holds(r, likeness=likeness, at=now, delivery=r.deliveries[0] if r.voice else None)
         state = "holds" if verdict.ok else verdict.reason
         covers = " + ".join(k for k in ("face", "voice") if getattr(r, k))
         extra = f" ({', '.join(r.deliveries)})" if r.voice else ""
         typer.echo(
-            f"{r.release_sha256[:16]}  {r.subject}  {covers}{extra}  uses: {', '.join(r.uses)}  "
+            f"{r.release_sha256[:16]}  {r.subject}  {covers}{extra}  uses: {', '.join(uses_of(r))}  "
             f"signed {r.signed_on}  {state}"
         )
     for name, why in broken.items():
@@ -663,7 +663,7 @@ def consent_list(
 def consent_revoke(
     release: str = Argument(..., help="The release's sha256, or its first 8+ characters"),
     by: str = Option(..., "--by", help="Who records the revocation"),
-    requested_on: str = Option("", "--requested-on", help="When it was asked for; default: today"),
+    requested_on: str = Option("", "--requested-on", help="When it was asked for; default: today (UTC)"),
     effective_on: str = Option("", "--effective-on", help="When it takes effect; default: the day it was asked for"),
     assets: Path | None = Option(None, "--assets", help="The assets root; default: ARGUS_MASK_ASSETS_DIR"),
     voices: Path | None = Option(None, "--voices", help="The voices directory; default: ARGUS_MASK_VOICES_DIR"),
@@ -675,12 +675,14 @@ def consent_revoke(
     from pydantic import ValidationError
 
     from argus_mask import client
-    from argus_mask.consent import ConsentError, ConsentStore, Revocation, withdraw
+    from argus_mask.consent import ConsentError, ConsentStore, Revocation, utc_today, withdraw
     from argus_mask.faces import local_now
 
     settings = _settings()
     assets_dir = assets or settings.assets_dir
-    today = local_now().date()
+    # The UTC day, as cortex reads a record's dates: a local "today" east of UTC would leave the release in force
+    # for the rest of the UTC day.
+    today = utc_today(local_now())
     requested = _day(requested_on, "--requested-on") if requested_on else today
     try:
         record = ConsentStore(assets_dir).find(release)

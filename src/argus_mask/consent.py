@@ -1,17 +1,25 @@
 """Consent records: the record that decides whether a real person's face or voice may be used, and for what.
 
 A ``consented`` face (its :class:`~argus_mask.models.Provenance`) or voice (its ``voice.json``) names a signed
-release by its sha256. The :class:`ConsentRecord` for that release says what the person agreed to: their face,
-their voice (and which deliveries), which uses, until when, and whether it has been revoked. It holds the
-release's hash and the hashes of the reference images and recordings taken at the signing, never the documents
-or the media themselves, and never any copy of the ID the person's age was checked against.
+release by its sha256. The :class:`~argus_cortex.consent.ConsentRecord` for that release says what the person agreed
+to: their face, their voice (and which deliveries), which uses, until when, and whether it has been revoked. It holds
+hashes of the release and of the reference images and recordings taken at the signing, never the documents or the
+media, and never any copy of the ID the person's age was checked against.
 
-The types and :func:`consent_valid` are the definition argus-cortex#31 lifts into cortex (argus-mask#26 sets it
-out), so curator and the rest refuse for the same reasons with the same words. Until then they live here.
+The record, :func:`~argus_cortex.consent.consent_valid` and :func:`~argus_cortex.consent.consent_matches` are
+argus-cortex's (``argus_cortex.consent``, from the definition on argus-mask#26), so mask, curator and darkroom
+refuse for the same reasons in the same words. Mask owns what the fields mean; change them there together with
+argus-mask#26. This module keeps what is mask's own:
 
-:func:`consent_valid` is pure: the caller passes the time, so a check never reads the clock. :class:`ConsentStore`
-keeps the records as ``<assets>/.consent/<release_sha256>.json``. The folder is hidden, so the face store never
-takes it for a face. A record is written once by ``consent new`` and changed only by ``consent revoke``.
+- :class:`ConsentStore`: the records as ``<assets>/.consent/<release_sha256>.json`` (hidden, so the face store never
+  takes the folder for a face), written once by ``consent new`` and changed only by ``consent revoke``, and mask's
+  write-side rules on top of cortex's (:func:`check_new`: delivery names the Voices page can use, bounded text);
+- :func:`consent_holds`: whether a record holds for a likeness at all, whatever the use (making a voice, Try);
+- the face and voice checks, with mask's own reasons (no record, another person) beside cortex's verdicts;
+- :func:`withdraw`, which is ``consent revoke``.
+
+The checks are pure: the caller passes the time. Cortex reads a record's dates as UTC days, so mask's own "today"
+(a revocation's default day, whether one is in effect yet) is the UTC day too: :func:`utc_today`.
 """
 
 from __future__ import annotations
@@ -19,193 +27,69 @@ from __future__ import annotations
 import json
 import os
 import re
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from argus_cortex.consent import CONSENT_USES as CONSENT_USES
+from argus_cortex.consent import AgeCheck as AgeCheck
+from argus_cortex.consent import ConsentRecord, ConsentUse, ConsentVerdict, Likeness, Revocation, consent_valid
+from argus_cortex.consent import consent_matches as consent_matches
+from argus_cortex.provenance import Provenance as CortexProvenance
+from pydantic import ValidationError
 
 from argus_mask.models import FACE_DISCLOSURE as FACE_DISCLOSURE  # the labels, beside Provenance which carries one
 from argus_mask.models import SHA256_PATTERN, Provenance
 from argus_mask.models import VOICE_DISCLOSURE as VOICE_DISCLOSURE
 
-ConsentUse = Literal["avatar", "video", "speech", "training"]
-"""``avatar``: a live face on a screen. ``video``: ``record`` output. ``speech``: audio with no face (a voice heard
-on its own). ``training``: fitting or fine-tuning a model on the captures. A use not listed is not covered."""
-CONSENT_USES: tuple[str, ...] = ("avatar", "video", "speech", "training")
-Likeness = Literal["face", "voice"]
-ConsentRefusal = Literal[
-    "revoked", "not-yet-signed", "expired", "likeness-not-covered", "use-not-covered", "delivery-not-covered"
-]
+# Mask's own, for records it writes: a delivery is named as the Voices page names it, so a record and a voice.json
+# say it the same way (a "Warm" in the record would never match a voice's "warm").
 DELIVERY_PATTERN = r"^[a-z][a-z0-9-]{0,31}$"
+MAX_NAME = 120  # subject, collector, age checker, revoker
+MAX_NOTES = 2000
 
 CONSENT_DIR = ".consent"
 
 
-class AgeCheck(BaseModel):
-    """That the person's age was checked against ID at the signing, and by whom. Never the ID or a copy of it."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    checked_by: str = Field(..., min_length=1, max_length=120)
-    checked_on: date
+def utc_today(at: datetime) -> date:
+    """*at*'s calendar day in UTC: the day cortex compares a record's dates with."""
+    return at.astimezone(UTC).date()
 
 
-class Revocation(BaseModel):
-    """A revoked release: when it was asked for, from when it holds, and who recorded it."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    requested_on: date
-    effective_on: date
-    by: str = Field(..., min_length=1, max_length=120)
-
-    @model_validator(mode="after")
-    def _order(self) -> Revocation:
-        if self.effective_on < self.requested_on:
-            raise ValueError("a revocation cannot take effect before it was asked for")
-        return self
+def uses_of(record: ConsentRecord) -> list[str]:
+    """The record's uses, in the stable order cortex writes them."""
+    return [u for u in CONSENT_USES if u in record.uses]
 
 
-class ConsentRecord(BaseModel):
-    """What a real person agreed to, under one signed release (argus-mask#26).
-
-    Free-text fields (``exclusions``, ``media``, ``territories``, ``notes``) are for people and are not checked by
-    code. Payment and retention terms stay in the signed document. The disclosure label is not a field: every
-    output of a consented likeness carries it, and nothing turns it off.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    release_sha256: str = Field(..., pattern=SHA256_PATTERN, description="the signed release; never the document")
-    subject: str = Field(..., min_length=1, max_length=120, description="the person, as the release names them")
-    collected_by: str = Field(..., min_length=1, max_length=120, description="who ran the signing session")
-    signed_on: date
-    expires_on: date | None = Field(None, description="the first day the release no longer holds; null: no expiry")
-    age_check: AgeCheck
-    face: bool = False
-    voice: bool = False
-    deliveries: list[str] = Field(default_factory=list, description="the voice deliveries covered (neutral, warm…)")
-    uses: list[ConsentUse] = Field(..., min_length=1)
-    reference_images: list[str] = Field(default_factory=list, description="sha256 of each, from the signing session")
-    reference_recordings: list[str] = Field(
-        default_factory=list, description="sha256 of each, from the signing session"
-    )
-    exclusions: list[str] = Field(default_factory=list, description="beyond the release template's standing list")
-    media: list[str] = Field(default_factory=list)
-    territories: list[str] = Field(default_factory=list)
-    revocable: bool
-    notice_days: int = Field(0, ge=0, le=3650)
-    on_revoke: Literal["delete", "keep-labelled"] = Field(
-        ..., description="what happens to recordings already made when the release is revoked"
-    )
-    revocation: Revocation | None = None
-    notes: str = Field("", max_length=2000)
-
-    @model_validator(mode="after")
-    def _complete(self) -> ConsentRecord:
-        if not self.subject.strip() or not self.collected_by.strip():
-            raise ValueError("a consent record names its subject and who collected it")
-        if not (self.face or self.voice):
-            raise ValueError("a release covers the face, the voice, or both")
-        if self.voice and not self.deliveries:
-            raise ValueError("a release for the voice names the deliveries it covers")
-        if not self.voice and self.deliveries:
-            raise ValueError("deliveries are for a voice: this release does not cover the voice")
-        if bad := [d for d in self.deliveries if not re.fullmatch(DELIVERY_PATTERN, d)]:
-            raise ValueError(f"not a delivery name: {', '.join(bad)}")
-        if self.face and not self.reference_images:
-            raise ValueError("a release for the face has reference images from the signing session")
-        if self.voice and not self.reference_recordings:
-            raise ValueError("a release for the voice has a reference recording from the signing session")
-        for name in ("reference_images", "reference_recordings"):
-            if bad := [h for h in getattr(self, name) if not re.fullmatch(SHA256_PATTERN, h)]:
-                raise ValueError(f"{name}: not a sha256: {', '.join(bad)}")
-        if self.expires_on is not None and self.expires_on <= self.signed_on:
-            raise ValueError("a release expires after it is signed")
-        if self.age_check.checked_on > self.signed_on:
-            raise ValueError("the age check comes before the release is signed, at the latest on the day")
-        # A set, kept sorted so the same record writes the same file.
-        self.uses = sorted(set(self.uses))  # type: ignore[assignment]
-        self.deliveries = sorted(set(self.deliveries))
-        return self
+def check_new(record: ConsentRecord) -> None:
+    """Mask's rules for a record it writes, beyond cortex's: :class:`ConsentError` if one fails."""
+    if bad := [d for d in record.deliveries if not re.fullmatch(DELIVERY_PATTERN, d)]:
+        raise ConsentError(f"not a delivery name (lower case, as the Voices page names them): {', '.join(bad)}")
+    names = {"subject": record.subject, "collected_by": record.collected_by, "age_check": record.age_check.checked_by}
+    if long := [k for k, v in names.items() if len(v) > MAX_NAME]:
+        raise ConsentError(f"at most {MAX_NAME} characters: {', '.join(long)}")
+    if len(record.notes) > MAX_NOTES:
+        raise ConsentError(f"notes: at most {MAX_NOTES} characters")
 
 
-class ConsentVerdict(BaseModel):
-    """Whether a record covers a use, and if not, why: a closed code, and words for a person."""
-
-    ok: bool
-    reason: ConsentRefusal | None = None
-    detail: str = ""
-
-
-def _day(at: datetime) -> date:
-    if at.tzinfo is None:
-        raise ValueError("pass an aware datetime: a consent check never guesses the time zone")
-    return at.date()
-
-
-def consent_valid(
-    record: ConsentRecord,
-    *,
-    use: ConsentUse | None,
-    likeness: Likeness,
-    at: datetime,
-    delivery: str | None = None,
+def consent_holds(
+    record: ConsentRecord, *, likeness: Likeness, at: datetime, delivery: str | None = None
 ) -> ConsentVerdict:
-    """Whether *record* covers *likeness* used for *use* at *at* (and, for a voice, *delivery*).
+    """Whether *record* holds for *likeness* at all, whatever the use: for making a voice, or trying a line.
 
-    The checks run in a fixed order and the first failure is the answer: revoked, not yet signed, expired, the
-    likeness not covered, the use not covered, the delivery not covered. *use* None asks only whether the record
-    holds for this likeness at all (making a voice, trying a line on the Voices page). For a voice, *delivery* is
-    required. Pure: *at* is the caller's.
+    Cortex's :func:`consent_valid` always names a use. Every check but the use's is the same for every use, and a
+    use the record lists passes the use's check, so asking for any one of the record's own uses answers this.
     """
-    day = _day(at)
-    if record.revocation is not None and day >= record.revocation.effective_on:
-        return ConsentVerdict(
-            ok=False, reason="revoked", detail=f"the release was revoked from {record.revocation.effective_on}"
-        )
-    if day < record.signed_on:
-        return ConsentVerdict(ok=False, reason="not-yet-signed", detail=f"the release is signed on {record.signed_on}")
-    if record.expires_on is not None and day >= record.expires_on:
-        return ConsentVerdict(ok=False, reason="expired", detail=f"the release expired on {record.expires_on}")
-    if not getattr(record, likeness):
-        return ConsentVerdict(
-            ok=False, reason="likeness-not-covered", detail=f"the release does not cover {record.subject}'s {likeness}"
-        )
-    if use is not None and use not in record.uses:
-        return ConsentVerdict(
-            ok=False,
-            reason="use-not-covered",
-            detail=f"the release does not cover {use} (it covers {', '.join(record.uses)})",
-        )
-    if likeness == "voice":
-        if not delivery:
-            raise ValueError("a voice's consent check names the delivery")
-        if delivery not in record.deliveries:
-            return ConsentVerdict(
-                ok=False,
-                reason="delivery-not-covered",
-                detail=f"the release does not cover the {delivery} delivery (it covers {', '.join(record.deliveries)})",
-            )
-    return ConsentVerdict(ok=True)
+    return consent_valid(record, use=uses_of(record)[0], likeness=likeness, at=at, delivery=delivery)
 
 
-def same_subject(a: str, b: str) -> bool:
-    """Two spellings of a name are the same person's: case, spacing and Unicode form aside."""
-
-    def norm(s: str) -> str:
-        return " ".join(unicodedata.normalize("NFKC", s).casefold().split())
-
-    return bool(norm(a)) and norm(a) == norm(b)
-
-
-def consent_matches(record: ConsentRecord, provenance: Provenance) -> bool:
-    """Whether *provenance* is under *record*: the same release, the same subject."""
-    return provenance.release_sha256 == record.release_sha256 and same_subject(provenance.subject, record.subject)
+def _verdict(
+    record: ConsentRecord, *, use: ConsentUse | None, likeness: Likeness, at: datetime, delivery: str | None = None
+) -> ConsentVerdict:
+    if use is None:
+        return consent_holds(record, likeness=likeness, at=at, delivery=delivery)
+    return consent_valid(record, use=use, likeness=likeness, at=at, delivery=delivery)
 
 
 # ── Mask's store and checks ───────────────────────────────────────────────────
@@ -294,6 +178,7 @@ class ConsentStore:
         """Write a new record. A release has one record: writing a second for the same hash is refused."""
         if record.revocation is not None:
             raise ConsentError("a new record is not revoked: write it, then revoke it")
+        check_new(record)
         self._write(record, new=True)
 
     def revoke(self, release_sha256: str, revocation: Revocation) -> ConsentRecord:
@@ -303,7 +188,11 @@ class ConsentStore:
             raise ConsentError(f"no consent record for release {release_sha256}")
         if record.revocation is not None:
             return record
-        revoked = record.model_copy(update={"revocation": revocation})
+        # Validated again with the revocation, so cortex's checks run (model_copy would skip them).
+        try:
+            revoked = ConsentRecord.model_validate(record.model_dump() | {"revocation": revocation.model_dump()})
+        except ValidationError as exc:
+            raise ConsentError(f"cannot revoke: {exc.errors()[0]['msg'].removeprefix('Value error, ')}") from exc
         self._write(revoked, new=False)
         return revoked
 
@@ -319,9 +208,9 @@ class ConsentStore:
             return str(exc)
         if record is None:
             return "no consent record for its release (argus-mask consent new)"
-        if not consent_matches(record, provenance):
+        if not consent_matches(record, provenance):  # type: ignore[arg-type] - mask's Provenance has the same fields
             return "its subject is not the person its release's consent record names"
-        return consent_valid(record, use=use, likeness="face", at=at)
+        return _verdict(record, use=use, likeness="face", at=at)
 
     def check_voice(self, source: dict, *, delivery: str, use: ConsentUse | None, at: datetime) -> ConsentVerdict | str:
         """The same for a consented voice, from its ``voice.json`` source (``speaker``, ``release_sha256``)."""
@@ -334,11 +223,26 @@ class ConsentStore:
             return str(exc)
         if record is None:
             return "no consent record for its release (argus-mask consent new)"
-        if not same_subject(str(source.get("speaker") or ""), record.subject):
+        if not _speaker_matches(record, str(source.get("speaker") or "")):
             return "its speaker is not the person its release's consent record names"
         if not delivery:
             return "its record names no delivery"
-        return consent_valid(record, use=use, likeness="voice", at=at, delivery=delivery)
+        return _verdict(record, use=use, likeness="voice", at=at, delivery=delivery)
+
+
+def _speaker_matches(record: ConsentRecord, speaker: str) -> bool:
+    """A voice's speaker is the record's subject by cortex's own rule: its consent_matches, on the voice's source."""
+    try:
+        source = CortexProvenance(
+            kind="consented",
+            source="a voice made on the Voices page",
+            license="per the release",
+            subject=speaker,
+            release_sha256=record.release_sha256,
+        )
+    except ValidationError:  # no speaker named
+        return False
+    return consent_matches(record, source)
 
 
 def refusal(found: ConsentVerdict | str) -> str | None:

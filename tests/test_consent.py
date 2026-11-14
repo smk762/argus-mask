@@ -9,6 +9,7 @@ import json
 from datetime import UTC, date, datetime
 
 import pytest
+from argus_cortex import consent as cortex_consent
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
@@ -19,8 +20,11 @@ from argus_mask.consent import (
     ConsentError,
     ConsentStore,
     Revocation,
+    consent_holds,
     consent_matches,
     consent_valid,
+    uses_of,
+    utc_today,
     voice_disclosed,
     voice_of,
     voice_refusal,
@@ -45,31 +49,54 @@ def at(day: str) -> datetime:
 # ── the record ────────────────────────────────────────────────────────────────
 
 
+# The record is cortex's (argus_cortex.consent); cortex tests its own checks. These check that mask uses it, the
+# refusals the 0.5.0 review added, and mask's own rules for the records it writes.
+
+
 @pytest.mark.parametrize(
     ("over", "why"),
     [
-        ({"face": False, "voice": False, "deliveries": []}, "the face, the voice, or both"),
-        ({"deliveries": []}, "names the deliveries"),
-        ({"voice": False}, "deliveries are for a voice"),
-        ({"reference_images": []}, "reference images"),
-        ({"reference_recordings": []}, "reference recording"),
-        ({"expires_on": "2026-01-10"}, "expires after it is signed"),
-        ({"uses": []}, "at least 1"),
-        ({"uses": ["avatar", "politics"]}, "avatar"),
-        ({"deliveries": ["Warm Voice"]}, "not a delivery name"),
-        ({"reference_images": ["nope"]}, "not a sha256"),
-        ({"subject": "   "}, "names its subject"),
+        ({"face": False, "voice": False, "deliveries": []}, "the face, the voice or both"),
+        ({"expires_on": "2026-01-10"}, "expires after the day it was signed"),
+        ({"age_check": {"checked_by": "   ", "checked_on": "2026-01-10"}}, "names who did it"),
         ({"id_scan": "…"}, "Extra inputs"),  # never the ID, nor any field nobody defined
     ],
 )
-def test_a_record_holds_what_it_must_and_nothing_else(over, why) -> None:
+def test_the_record_is_cortexs(over, why) -> None:
     with pytest.raises(ValidationError, match=why):
         consent_record(**over)
+    assert type(consent_record()) is cortex_consent.ConsentRecord
 
 
-def test_a_record_keeps_its_sets_sorted_so_it_writes_the_same_file() -> None:
-    record = consent_record(uses=["video", "avatar", "video"], deliveries=["warm", "neutral"])
-    assert record.uses == ["avatar", "video"] and record.deliveries == ["neutral", "warm"]
+def test_a_revocation_before_the_signing_is_refused(tmp_path) -> None:
+    write_consent(tmp_path)
+    early = Revocation(requested_on="2026-01-09", effective_on="2026-01-09", by="B")
+    with pytest.raises(ConsentError, match="requested on or after the day the release was signed"):
+        ConsentStore(tmp_path).revoke(RELEASE, early)
+    assert ConsentStore(tmp_path).get(RELEASE).revocation is None
+
+
+@pytest.mark.parametrize(
+    ("over", "why"),
+    [
+        ({"deliveries": ["Warm"]}, "not a delivery name"),
+        ({"deliveries": ["warm voice"]}, "not a delivery name"),
+        ({"subject": "A" * 121}, "subject"),
+        ({"notes": "x" * 2001}, "notes"),
+    ],
+)
+def test_mask_writes_only_records_its_voices_can_use(tmp_path, over, why) -> None:
+    with pytest.raises(ConsentError, match=why):
+        ConsentStore(tmp_path).create(consent_record(**over))
+    assert not (tmp_path / ".consent" / f"{RELEASE}.json").exists()
+
+
+def test_a_record_writes_its_uses_in_one_order() -> None:
+    record = consent_record(uses=["video", "avatar", "video"])
+    assert json.loads(record.model_dump_json())["uses"] == ["avatar", "video"] and uses_of(record) == [
+        "avatar",
+        "video",
+    ]
 
 
 # ── consent_valid: the order of the checks, and their words ────────────────────
@@ -105,7 +132,11 @@ def test_consent_valid_allows_what_the_record_covers_and_reads_no_clock() -> Non
     record = consent_record()
     assert consent_valid(record, use="avatar", likeness="face", at=AT).ok
     assert consent_valid(record, use="video", likeness="voice", at=AT, delivery="warm").ok
-    assert consent_valid(record, use=None, likeness="voice", at=AT, delivery="neutral").ok
+    # Whether it holds at all, whatever the use (making a voice, Try): cortex always names a use, so mask asks for one
+    # the record lists.
+    assert consent_holds(record, likeness="voice", at=AT, delivery="neutral").ok
+    assert consent_holds(consent_record(uses=["training"]), likeness="face", at=AT).ok
+    assert consent_holds(record, likeness="voice", at=AT, delivery="serious").reason == "delivery-not-covered"
     # A revocation that takes effect later: the record holds until that day.
     later = consent_record(revocation=Revocation(requested_on="2026-05-01", effective_on="2026-06-02", by="B"))
     assert consent_valid(later, use="avatar", likeness="face", at=AT).ok
@@ -119,7 +150,9 @@ def test_consent_valid_allows_what_the_record_covers_and_reads_no_clock() -> Non
 def test_a_record_matches_a_face_by_release_and_subject() -> None:
     record = consent_record()
     assert consent_matches(record, CONSENTED)
-    assert consent_matches(record, CONSENTED.model_copy(update={"subject": "  a.  person "}))
+    # The subject as the release names them: spaces at the ends aside, exactly (cortex's rule, the one curator uses).
+    assert consent_matches(record, CONSENTED.model_copy(update={"subject": "  A. Person "}))
+    assert not consent_matches(record, CONSENTED.model_copy(update={"subject": "a. person"}))
     assert not consent_matches(record, CONSENTED.model_copy(update={"subject": "Someone Else"}))
     assert not consent_matches(record, CONSENTED.model_copy(update={"release_sha256": "cd" * 32}))
 
@@ -163,7 +196,7 @@ def test_a_consented_face_is_served_only_while_its_record_covers_it(tmp_path) ->
     with pytest.raises(FaceError, match="no consent record"):
         store.load("agreed")
     write_consent(tmp_path, uses=["video"])
-    with pytest.raises(FaceError, match="does not cover avatar"):
+    with pytest.raises(FaceError, match="does not cover the use 'avatar'"):
         store.load("agreed")
     assert store.load("agreed", use="video")[0].provenance.disclosure == FACE_DISCLOSURE
     ConsentStore(tmp_path).revoke(RELEASE, Revocation(requested_on="2026-05-01", effective_on="2026-05-01", by="B"))
@@ -270,8 +303,10 @@ def test_a_consented_voice_is_spoken_only_while_its_record_covers_it(tmp_path) -
     assert "no consent record" in voice_refusal(voices, consents, "clone:a-person-warm", use="avatar", at=AT)
     write_consent(tmp_path)
     assert voice_refusal(voices, consents, "clone:a-person-warm", use="avatar", at=AT) is None
-    assert "does not cover training" in voice_refusal(voices, consents, "a-person-warm", use="training", at=AT)
-    assert "serious delivery" in voice_refusal(voices, consents, "a-person-serious", use="avatar", at=AT)
+    assert "does not cover the use 'training'" in voice_refusal(
+        voices, consents, "a-person-warm", use="training", at=AT
+    )
+    assert "delivery 'serious'" in voice_refusal(voices, consents, "a-person-serious", use="avatar", at=AT)
     # Not a consented voice made here: nothing to check.
     for other in ("made-up", "speaker:Rosemary", "0", "elsewhere", "../a-person-warm"):
         assert voice_refusal(voices, consents, other, use="training", at=AT) is None
@@ -299,7 +334,7 @@ def test_say_refuses_a_voice_out_of_scope(tmp_path, monkeypatch) -> None:
     result = CliRunner().invoke(
         cli, ["say", "Hello.", "--face", "f", "--tts-url", "http://127.0.0.1:9/synthesise", "--voice", "a-person-warm"]
     )
-    assert result.exit_code == 1 and "serious delivery" in result.output
+    assert result.exit_code == 1 and "delivery 'serious'" in result.output
 
 
 # ── revocation ────────────────────────────────────────────────────────────────
@@ -397,7 +432,7 @@ def test_consent_new_list_and_revoke(tmp_path, monkeypatch) -> None:
     assert made.exit_code == 0, made.output
     store = ConsentStore(tmp_path / "assets")
     (record,) = store.all()[0]
-    assert record.subject == "A. Person" and record.uses == ["avatar", "speech"] and record.age_check.checked_on
+    assert record.subject == "A. Person" and uses_of(record) == ["avatar", "speech"] and record.age_check.checked_on
     written = (store.dir / f"{record.release_sha256}.json").read_text()
     assert "a signed release" not in written and "frontal" not in written  # hashes only
     assert runner.invoke(cli, [*base, "--use", "avatar", "--face", "--reference-image", str(image)]).exit_code == 1
@@ -409,3 +444,12 @@ def test_consent_new_list_and_revoke(tmp_path, monkeypatch) -> None:
     assert revoked.exit_code == 0, revoked.output
     assert "revoked from" in revoked.output and "recordings already made: delete" in revoked.output
     assert "revoked" in runner.invoke(cli, ["consent", "list"]).output
+
+
+def test_mask_reads_today_as_cortex_does_in_utc() -> None:
+    # 01:00 on 2 June in UTC+8 is still 1 June in UTC: a revocation dated "today" must not be a day ahead of
+    # cortex's check, or the release would stay in force for the rest of the UTC day.
+    east = datetime.fromisoformat("2026-06-02T01:00:00+08:00")
+    assert utc_today(east) == date(2026, 6, 1)
+    revoked = consent_record(revocation=Revocation(requested_on=utc_today(east), effective_on=utc_today(east), by="B"))
+    assert consent_valid(revoked, use="avatar", likeness="face", at=east).reason == "revoked"
