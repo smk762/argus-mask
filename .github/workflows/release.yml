@@ -154,6 +154,10 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          # The version the image reports, from the tag rather than from git
+          # inside the build (#88).
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # A dispatch rebuilds an unchanged context, so a cached install layer
@@ -161,6 +165,24 @@ jobs:
           no-cache: ${{ github.event_name == 'repository_dispatch' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: The pushed image reports the tag at /health
+        # Compared as PEP 440 versions: a v0.3.0-rc1 tag reports 0.3.0rc1.
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/argus-mask:${{ steps.meta.outputs.version }}
+          WANT: ${{ steps.meta.outputs.version }}
+        run: |
+          docker run -d --name mask -p 127.0.0.1:8109:8109 "$IMAGE"
+          for _ in $(seq 30); do
+            # Not `curl | jq`: jq exits 0 on empty input, so a refused
+            # connection would end the wait.
+            health=$(curl -fsS http://127.0.0.1:8109/health) && break
+            sleep 2
+          done
+          docker logs mask
+          got=$(jq -r '.version // empty' <<<"${health:-}")
+          echo "image reports ${got:-nothing}, tag is $WANT"
+          docker exec -e GOT="$got" -e WANT="$WANT" mask python -c \
+            "import os; from pip._vendor.packaging.version import Version as V; exit(V(os.environ['GOT']) != V(os.environ['WANT']))"
 
   github-release:
     # The GitHub Release is the last step, so it only appears once the version is
