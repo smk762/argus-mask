@@ -28,6 +28,8 @@ WIRE_TITLE = "argus-mask wire contract"
 
 # A face id is a directory name under the assets root and a URL path segment.
 FACE_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+# Directories in the assets root that are not faces: plates of one's own live in backgrounds/.
+RESERVED_FACE_IDS: frozenset[str] = frozenset({"backgrounds"})
 
 _Versioned = make_versioned_base(
     "mask_version", MASK_VERSION, SUPPORTED_MASK_MAJORS, label="mask_version", class_name="_Versioned"
@@ -424,6 +426,16 @@ class PlateManifest(_Versioned):
         return self
 
 
+class SceneInfo(BaseModel):
+    """A backdrop a screen can show (``GET /scenes``): a built-in scene, or a plate in the assets."""
+
+    name: str = Field(..., pattern=SCENE_NAME_PATTERN)
+    title: str
+    kind: Literal["procedural", "plate"]
+    built_in: bool
+    cleared: bool = Field(..., description="whether it may be shown beyond the user's own screens")
+
+
 def render_wire_schema() -> str:
     """The canonical committed-schema string (``schema`` writes it, ``schema --check`` compares)."""
     from argus_mask.consent import ConsentVerdict  # noqa: PLC0415 - consent imports this module
@@ -440,6 +452,7 @@ def render_wire_schema() -> str:
             RestSet,
             ConsentVerdict,
             PlateManifest,
+            SceneInfo,
         ],
         title=WIRE_TITLE,
     )

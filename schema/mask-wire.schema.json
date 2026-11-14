@@ -898,6 +898,46 @@
       "title": "RestSet",
       "type": "object"
     },
+    "SceneInfo": {
+      "description": "A backdrop a screen can show (``GET /scenes``): a built-in scene, or a plate in the assets.",
+      "properties": {
+        "built_in": {
+          "title": "Built In",
+          "type": "boolean"
+        },
+        "cleared": {
+          "description": "whether it may be shown beyond the user's own screens",
+          "title": "Cleared",
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "procedural",
+            "plate"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,31}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "kind",
+        "built_in",
+        "cleared"
+      ],
+      "title": "SceneInfo",
+      "type": "object"
+    },
     "Screen": {
       "description": "A viewer that has said what it is: one entry of ``Health.screens``.",
       "properties": {

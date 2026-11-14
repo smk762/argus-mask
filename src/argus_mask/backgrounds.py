@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import struct
 import time
@@ -29,6 +30,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from argus_mask.models import (
+    SCENE_NAME_PATTERN,
     DarkroomDepth,
     DarkroomRender,
     Generator,
@@ -36,9 +38,16 @@ from argus_mask.models import (
     PlateImage,
     PlateManifest,
     Provenance,
+    SceneInfo,
 )
 
 MANIFEST = "background.json"
+# The viewer's built-in scenes, in backdrop.js's order (a test holds the two together), with their titles: a
+# procedural scene is a module (viewer/scenes/<name>.js), a plate a directory (viewer/scenes/<name>/).
+BUILT_IN_SCENES: dict[str, str] = {"ftl": "FTL starstreaks", "garden": "Conservatory garden"}
+VIEWER_SCENES = Path(__file__).parent / "viewer" / "scenes"
+# Plates of one's own live in <assets>/backgrounds/<name>/; the name is reserved, so no face can take it.
+PLATES_DIR = "backgrounds"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # A plate ships in the viewer or is fetched by every screen: one image at most this big, all of them together
 # at most the total. A 1344x768 PNG from darkroom is about 2 MB; a depth map a few hundred KB.
@@ -403,3 +412,81 @@ def add_depth(darkroom: Darkroom, directory: Path) -> PlateManifest:
     (directory / "depth.png").write_bytes(png)
     (directory / MANIFEST).write_text(updated.model_dump_json(indent=2, exclude_none=True) + "\n")
     return check_plate(directory)
+
+
+# ---- serving plates ------------------------------------------------------------------------------
+
+
+class PlateStore:
+    """The plates in ``<assets>/backgrounds/``, each checked (:func:`check_plate`) before it is served.
+
+    A plate that does not hold up (no provenance, a changed file, a link) is refused with the reason, as a face
+    is. The verdict is kept until a file in the plate's directory changes, so a screen asking for a plate does not
+    hash its images every time. A built-in scene's name is never taken by a plate here.
+    """
+
+    def __init__(self, assets_root: Path) -> None:
+        self.root = assets_root / PLATES_DIR
+        self._verdicts: dict[str, tuple[tuple, PlateManifest | str]] = {}
+
+    @staticmethod
+    def _version(directory: Path) -> tuple:
+        return tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in directory.iterdir()))
+
+    def load(self, name: str) -> tuple[PlateManifest, Path]:
+        """The plate *name* and its directory; raises :class:`PlateError` saying why it is not served."""
+        if not re.fullmatch(SCENE_NAME_PATTERN, name):
+            raise PlateError(f"{name!r} is not a scene name")
+        if name in BUILT_IN_SCENES:
+            raise PlateError(f"{name} is a built-in scene: a plate of one's own cannot take its name")
+        directory = self.root / name
+        if directory.is_symlink() or not directory.is_dir():
+            raise PlateError(f"no plate {name!r}")
+        version = self._version(directory)
+        cached = self._verdicts.get(name)
+        if cached is None or cached[0] != version:
+            try:
+                verdict: PlateManifest | str = check_plate(directory)
+            except PlateError as exc:
+                verdict = str(exc)
+            self._verdicts[name] = (version, verdict)
+        verdict = self._verdicts[name][1]
+        if isinstance(verdict, str):
+            raise PlateError(verdict)
+        return verdict, directory
+
+    def scan(self) -> tuple[list[PlateManifest], dict[str, str]]:
+        """Every plate that may be served, and for each directory that may not, the reason."""
+        accepted: list[PlateManifest] = []
+        refused: dict[str, str] = {}
+        if not self.root.is_dir():
+            return accepted, refused
+        for directory in sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+            try:
+                accepted.append(self.load(directory.name)[0])
+            except PlateError as exc:
+                refused[directory.name] = str(exc)
+        return accepted, refused
+
+    def scenes(self) -> list[SceneInfo]:
+        """What a screen can show: the built-in scenes, then the plates here."""
+        found = []
+        for name, title in BUILT_IN_SCENES.items():
+            plate = VIEWER_SCENES / name / MANIFEST
+            cleared = (
+                PlateManifest.model_validate_json(plate.read_bytes()).provenance.cleared if plate.is_file() else True
+            )
+            found.append(
+                SceneInfo(
+                    name=name,
+                    title=title,
+                    kind="plate" if plate.is_file() else "procedural",
+                    built_in=True,
+                    cleared=cleared,
+                )
+            )
+        for m in self.scan()[0]:
+            found.append(
+                SceneInfo(name=m.name, title=m.title, kind="plate", built_in=False, cleared=m.provenance.cleared)
+            )
+        return found

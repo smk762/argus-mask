@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MAX_TRIANGLES
-from argus_mask.models import FACE_ID_PATTERN
+from argus_mask.models import FACE_ID_PATTERN, RESERVED_FACE_IDS
 
 # The youngest a head may be: 18 years on MakeHuman's scale. Below 0.5 the age macro maps to years as
 # 1 + 48 * age, so 18 years is 17/48 (0.35417); this is that, rounded up. build_head.py holds the same.
@@ -171,6 +171,13 @@ class Preset(_Strict):
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
+
+    @field_validator("id")
+    @classmethod
+    def _not_reserved(cls, value: str) -> str:
+        if value in RESERVED_FACE_IDS:
+            raise ValueError(f"{value!r} is reserved: pick another id")
+        return value
 
     @field_validator("targets")
     @classmethod

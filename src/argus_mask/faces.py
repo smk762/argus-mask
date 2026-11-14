@@ -31,7 +31,15 @@ from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.consent import ConsentStore, ConsentUse, refusal
-from argus_mask.models import FACE_ID_PATTERN, MODEL_SUFFIXES, FaceManifest, Framing, ModelFile, Provenance
+from argus_mask.models import (
+    FACE_ID_PATTERN,
+    MODEL_SUFFIXES,
+    RESERVED_FACE_IDS,
+    FaceManifest,
+    Framing,
+    ModelFile,
+    Provenance,
+)
 
 MANIFEST_NAME = "manifest.json"
 # The stock head's budget: a Raspberry Pi renders it once a frame, a Looking Glass Go 66 times.
@@ -471,6 +479,8 @@ class FaceStore:
         """
         if not _FACE_ID.match(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
+        if face_id in RESERVED_FACE_IDS:
+            raise FaceError(f"{face_id!r} is reserved: the directory holds no faces")
         directory = self.root / face_id
         manifest_path = directory / MANIFEST_NAME
         if not manifest_path.is_file():
@@ -524,6 +534,8 @@ class FaceStore:
         if not self.root.is_dir():
             return accepted, refused
         for directory in sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+            if directory.name in RESERVED_FACE_IDS:
+                continue
             try:
                 accepted.append(self.load(directory.name)[0])
             except FaceError as exc:

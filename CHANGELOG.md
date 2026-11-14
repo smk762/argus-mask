@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dappled light, a light pulse, softness and exposure, all functions of the scene's time.
 - **`?scene=garden`**: an overgrown glass conservatory, the first plate, from FLUX.1 schnell (Apache-2.0)
   through darkroom, with darkroom's depth map for parallax. `argus-mask record --scene garden` too.
+- **Plates of your own, served from the assets** (#55). The server serves each plate in
+  `<assets>/backgrounds/<name>/` that passes `plate check` (`GET /scenes`, `GET /scene/{name}/background.json`
+  and its images, nothing else), and refuses the rest. `?scene=<name>` and `record --scene <name>` show it.
+  `backgrounds` is a reserved face id.
 
 ### Fixed
 

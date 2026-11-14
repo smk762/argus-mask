@@ -297,3 +297,98 @@ def test_a_shipped_plate_holds_up_and_is_cleared(directory: Path) -> None:
         ["background.json"]
         + [i.file for i in (manifest.plate, manifest.depth, manifest.sway_mask, manifest.light_mask) if i]
     ), "nothing but the plate's own files"
+
+
+# ---- plates of one's own, served from the assets ---------------------------------------------------
+
+
+@pytest.fixture
+def assets(tmp_path: Path) -> Path:
+    """An assets root with one face and one plate (``backgrounds/rain``)."""
+    from tests.helpers import make_face  # noqa: PLC0415
+
+    root = tmp_path / "assets"
+    make_face(root, "test-head")
+    with fake_darkroom() as (url, _calls):
+        make(url, root / "backgrounds" / "rain")
+    return root
+
+
+def client(assets: Path):  # noqa: ANN201 - a TestClient
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    from argus_mask.config import Settings  # noqa: PLC0415
+    from argus_mask.server.app import create_app  # noqa: PLC0415
+
+    return TestClient(create_app(Settings(assets_dir=assets)))
+
+
+def test_the_server_lists_built_in_scenes_then_plates(assets: Path) -> None:
+    with client(assets) as c:
+        scenes = c.get("/scenes").json()
+    assert [(s["name"], s["kind"], s["built_in"]) for s in scenes] == [
+        ("ftl", "procedural", True),
+        ("garden", "plate", True),
+        ("rain", "plate", False),
+    ]
+    assert all(s["cleared"] for s in scenes)
+
+
+def test_the_server_serves_a_checked_plate_and_only_its_files(assets: Path) -> None:
+    plate = assets / "backgrounds" / "rain"
+    with client(assets) as c:
+        manifest = c.get("/scene/rain/background.json").json()
+        assert manifest["name"] == "rain" and manifest["provenance"]["kind"] == "synthetic"
+        image = c.get("/scene/rain/plate.png")
+        assert image.status_code == 200 and image.content == (plate / "plate.png").read_bytes()
+        assert (
+            image.headers["content-type"] == "image/png" and image.headers["etag"] == f'"{manifest["plate"]["sha256"]}"'
+        )
+        assert c.get("/scene/rain/depth.png").content == (plate / "depth.png").read_bytes()
+        (plate / "notes.png").write_bytes(png())
+        assert c.get("/scene/rain/notes.png").status_code == 404, "a file the manifest does not name"
+        assert c.get("/scene/rain/..%2Fbackground.json").status_code == 404
+        assert c.get("/scene/nope/background.json").status_code == 404
+
+
+def test_a_plate_that_does_not_hold_up_is_not_served(assets: Path) -> None:
+    plate = assets / "backgrounds" / "rain"
+    with client(assets) as c:
+        assert c.get("/scene/rain/background.json").status_code == 200
+        manifest = json.loads((plate / "background.json").read_text())
+        del manifest["provenance"]
+        (plate / "background.json").write_text(json.dumps(manifest))
+        assert c.get("/scene/rain/background.json").status_code == 404, "re-checked once a file changes"
+        assert c.get("/scene/rain/plate.png").status_code == 404
+        assert "rain" not in [s["name"] for s in c.get("/scenes").json()]
+
+
+def test_a_plate_cannot_take_a_built_in_name(assets: Path) -> None:
+    (assets / "backgrounds" / "rain").rename(assets / "backgrounds" / "garden")
+    store = backgrounds.PlateStore(assets)
+    assert store.scan()[0] == []
+    with pytest.raises(PlateError, match="built-in"):
+        store.load("garden")
+
+
+def test_backgrounds_is_not_a_face(assets: Path) -> None:
+    from argus_mask.editor.preset import Preset  # noqa: PLC0415
+    from argus_mask.faces import FaceError, FaceStore  # noqa: PLC0415
+
+    faces, refused = FaceStore(assets).scan()
+    assert [f.id for f in faces] == ["test-head"] and "backgrounds" not in refused
+    with pytest.raises(FaceError, match="reserved"):
+        FaceStore(assets).load("backgrounds")
+    with pytest.raises(ValidationError, match="reserved"):
+        Preset.model_validate({"id": "backgrounds"})
+
+
+def test_record_accepts_a_plate_the_server_serves(assets: Path) -> None:
+    from argus_mask import record  # noqa: PLC0415
+    from argus_mask.config import Settings  # noqa: PLC0415
+    from argus_mask.server.app import create_app  # noqa: PLC0415
+
+    with live_server(create_app(Settings(assets_dir=assets))) as url:
+        assert record.scene_refusal(url, "rain") is None
+        assert "choose from ftl, garden, rain" in (record.scene_refusal(url, "warp") or "")
+    assert "could not list" in (record.scene_refusal("http://127.0.0.1:9", "rain") or "")
