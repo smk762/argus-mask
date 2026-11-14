@@ -5,7 +5,7 @@
 //   ?face=<id>       which face (default: the first the server lists)
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
 //   ?bg=<css colour> background for the flat tier, or "transparent"
-//   ?scene=ftl       a backdrop with a little life in it, flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
+//   ?scene=ftl       a backdrop with a little life in it (ftl, garden), flat tier, mesh faces (backdrop.js: SCENES), over ?bg=
 //                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
 //   ?hud=0           hide the status line (never the disclosure label a real person's face or voice carries)
 //   ?disclosure=…    record mode only: a label to show from the start (`argus-mask record` passes a consented voice's)

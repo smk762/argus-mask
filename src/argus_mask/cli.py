@@ -727,5 +727,129 @@ def consent_revoke(
         raise _fail("some voices are still on their TTS service (refused here, being revoked): run this again")
 
 
+# ── plates ────────────────────────────────────────────────────────────────────
+
+plate_app = typer.Typer(
+    help="Plates: backdrops made from a still image generated through argus-darkroom (docs/backgrounds.md).",
+    no_args_is_help=True,
+)
+app.add_typer(plate_app, name="plate")
+
+DARKROOM = Option("http://localhost:8106", "--darkroom", envvar="ARGUS_MASK_DARKROOM_URL", help="argus-darkroom's URL")
+
+
+def _plate_progress(event: str, data: object) -> None:
+    if event == "progress" and isinstance(data, dict):
+        typer.echo(f"  step {data.get('step')}/{data.get('total')}", err=True)
+    elif event in ("preflight", "queued", "scan"):
+        typer.echo(f"  {event}", err=True)
+
+
+@plate_app.command("generate")
+def plate_generate(
+    directory: Path = Argument(..., help="Where the plate goes; its name is the plate's (e.g. scenes/garden)"),
+    prompt: str = Option(..., "--prompt", help="The setting, with no people, real places, brands or artists"),
+    title: str = Option(..., "--title", help="What the plate shows, in a few words"),
+    checkpoint: str = Option("flux/flux1-schnell-fp8-e4m3fn.safetensors", "--checkpoint"),
+    license_: str = Option("", "--license", help="The checkpoint's output licence, if not a known one"),
+    seed: int | None = Option(None, "--seed", min=0, help="Default: a random one, recorded"),
+    width: int = Option(1344, "--width", min=64, max=4096),
+    height: int = Option(768, "--height", min=64, max=4096),
+    steps: int = Option(4, "--steps", min=1),
+    cfg: float = Option(1.0, "--cfg"),
+    guidance: float | None = Option(3.5, "--guidance"),
+    sampler: str = Option("euler", "--sampler"),
+    scheduler: str = Option("simple", "--scheduler"),
+    negative: str = Option("", "--negative", help="For a checkpoint whose workflow takes one (FLUX's do not)"),
+    as_is: bool = Option(False, "--as-is", help="Send the prompt as given, without 'no people, no text, no logos'"),
+    tint: str = Option("#ffffff", "--tint", help="The scene's light, for the rim lights (#rrggbb)"),
+    drift: float = Option(0.5, "--drift", min=0, max=1),
+    sway: float = Option(0.0, "--sway", min=0, max=1),
+    dapple: float = Option(0.0, "--dapple", min=0, max=1),
+    pulse: float = Option(0.0, "--pulse", min=0, max=1),
+    soft: float = Option(0.4, "--soft", min=0, max=1, help="How far out of focus the plate is"),
+    exposure: float = Option(0.8, "--exposure", min=0.1, max=2),
+    depth: bool = Option(True, "--depth/--no-depth", help="Ask darkroom for a depth map (needs its /depth route)"),
+    darkroom: str = DARKROOM,
+) -> None:
+    """Generate a plate through darkroom: the picture, its depth map, and background.json with provenance."""
+    from pydantic import ValidationError
+
+    from argus_mask.backgrounds import Darkroom, PlateError, PlateRequest, make_plate
+    from argus_mask.models import PlateEffects
+
+    try:
+        effects = PlateEffects(drift=drift, sway=sway, dapple=dapple, pulse=pulse, soft=soft, exposure=exposure)
+        request = PlateRequest(
+            prompt=prompt,
+            checkpoint=checkpoint,
+            negative=negative,
+            seed=seed,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+            guidance=guidance,
+            sampler=sampler,
+            scheduler=scheduler,
+            as_is=as_is,
+        )
+        typer.echo(f"asking darkroom at {darkroom}: {request.final_prompt()}", err=True)
+        manifest = make_plate(
+            Darkroom(darkroom),
+            directory,
+            request,
+            title=title,
+            license=license_,
+            tint=tint,
+            effects=effects,
+            depth=depth,
+            on_event=_plate_progress,
+        )
+    except (PlateError, ValidationError) as exc:
+        raise _fail(str(exc)) from exc
+    assert manifest.darkroom is not None
+    typer.echo(f"wrote {directory}: darkroom record {manifest.darkroom.record_id}, seed {manifest.darkroom.seed}")
+    if manifest.depth is None:
+        typer.echo(f"no depth map yet: `argus-mask plate depth {directory}` adds darkroom's")
+
+
+@plate_app.command("depth")
+def plate_depth(
+    directory: Path = Argument(..., help="A darkroom plate made with --no-depth"),
+    darkroom: str = DARKROOM,
+) -> None:
+    """Add darkroom's depth map of the plate's record to a plate that has none."""
+    from argus_mask.backgrounds import Darkroom, PlateError, add_depth
+
+    try:
+        manifest = add_depth(Darkroom(darkroom), directory)
+    except PlateError as exc:
+        raise _fail(str(exc)) from exc
+    assert manifest.darkroom is not None and manifest.darkroom.depth is not None
+    typer.echo(
+        f"wrote {directory / 'depth.png'}: {manifest.darkroom.depth.model} ({manifest.darkroom.depth.model_license})"
+    )
+
+
+@plate_app.command("check")
+def plate_check(directories: list[Path] = Argument(..., help="Plate directories")) -> None:
+    """Check plates: the manifest, every file, its size and sha256, and provenance."""
+    from argus_mask.backgrounds import PlateError, check_plate
+
+    failed = False
+    for directory in directories:
+        try:
+            manifest = check_plate(directory)
+        except PlateError as exc:
+            typer.echo(str(exc), err=True)
+            failed = True
+            continue
+        cleared = "cleared" if manifest.provenance.cleared else "not cleared: personal use only"
+        typer.echo(f"{directory}: ok, {manifest.title!r}, {manifest.provenance.kind} ({cleared})")
+    if failed:
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

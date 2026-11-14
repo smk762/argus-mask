@@ -151,8 +151,9 @@ def test_record_knows_the_viewers_scenes() -> None:
     backdrop = (Path(record.__file__).parent / "viewer" / "backdrop.js").read_text()
     table = backdrop.split("export const SCENES = {", 1)[1].split("};", 1)[0]
     assert tuple(re.findall(r"^\s*([a-z][a-z0-9-]*):", table, re.M)) == record.SCENES
-    for name in record.SCENES:
-        assert (Path(record.__file__).parent / "viewer" / "scenes" / f"{name}.js").is_file()
+    scenes = Path(record.__file__).parent / "viewer" / "scenes"
+    for name in record.SCENES:  # a procedural scene's module, or a plate's directory
+        assert (scenes / f"{name}.js").is_file() or (scenes / name / "background.json").is_file()
 
 
 def test_the_viewer_is_asked_for_the_scene(server, tmp_path: Path, monkeypatch) -> None:
@@ -190,13 +191,17 @@ def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> No
 
 
 @pytest.mark.skipif(not _can_render(), reason="needs playwright with a browser, and ffmpeg")
-def test_two_recordings_of_one_take_match_at_high(server, tmp_path: Path) -> None:
+@pytest.mark.parametrize("scene", ["", *record.SCENES])
+def test_two_recordings_of_one_take_match_at_high(server, tmp_path: Path, scene: str) -> None:
     # high adds film grain, whose noise once followed the composer's wall clock: how long the browser took (#81).
+    # A backdrop runs on the posed frame's time too, a plate's images loaded before the first pose.
     async def run():
         pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
         rec = await record.capture(server, "test-head")
         await pushed
-        page = f"{server}/?face=test-head&record=1&hud=0&display=flat&quality=high"
+        page = f"{server}/?face=test-head&record=1&hud=0&display=flat&quality=high" + (
+            f"&scene={scene}" if scene else ""
+        )
         try:
             for n in ("a", "b"):
                 await record.render_frames(page, rec, tmp_path / n, width=160, height=120)

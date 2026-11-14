@@ -10,8 +10,12 @@
 // show the same backdrop in the same place.
 
 // The built-in scenes. A name is looked up here before any import, so ?scene= never names a file.
+// A procedural scene is a module (scenes/<name>.js); a plate is a still image and its background.json in
+// scenes/<name>/, animated by scenes/plate.js.
+const plate = (name) => () => import('./scenes/plate.js').then((m) => m.load(name));
 export const SCENES = {
   ftl: () => import('./scenes/ftl.js'),
+  garden: plate('garden'),
 };
 
 // Per profile: the longest side the backdrop draws at, and how often it redraws. It is soft and far, so
@@ -27,15 +31,17 @@ export class Backdrop {
     const load = Object.hasOwn(SCENES, name) ? SCENES[name] : null;
     if (!load) throw new Error(`Unknown scene "${name}". Scenes: ${Object.keys(SCENES).join(', ')}.`);
     const module = await load();
-    return new Backdrop(THREE, renderer, name, module, BUDGET[quality] || BUDGET.medium, options);
+    // A plate's material loads its images first: a recording must not pose a frame before they are in.
+    const material = await module.material(THREE, options);
+    return new Backdrop(THREE, renderer, name, module.meta, material, BUDGET[quality] || BUDGET.medium);
   }
 
-  constructor(THREE, renderer, name, module, budget, options) {
+  constructor(THREE, renderer, name, meta, material, budget) {
     this.name = name;
-    this.meta = module.meta;
+    this.meta = meta;
     this.renderer = renderer;
     this.budget = budget;
-    this.material = module.material(THREE, options);
+    this.material = material;
     // Half float: the scene writes linear light, and 8 bits of dark linear values band into rings.
     this.target = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false, type: THREE.HalfFloatType });
     this.scene = new THREE.Scene();

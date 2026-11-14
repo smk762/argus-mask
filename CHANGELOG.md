@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Plates: backdrops from a still image** (#55). `argus-mask plate generate` asks argus-darkroom for a picture
+  under its SFW policy, then for darkroom's depth map of the same record (Depth Anything V2 Small), checks
+  both against darkroom's sha256, and writes `background.json` with provenance (`PlateManifest`, wire contract
+  1.4). `plate depth` adds the depth map to a plate made without one, and `plate check` checks one. The viewer's
+  `scenes/plate.js` animates a plate with built-in effects: drift with parallax over the depth map, sway,
+  dappled light, a light pulse, softness and exposure, all functions of the scene's time.
+- **`?scene=garden`**: an overgrown glass conservatory, the first plate, from FLUX.1 schnell (Apache-2.0)
+  through darkroom. `argus-mask record --scene garden` too.
+
 ### Fixed
 
 - **Two recordings of one take match at `high`** (#81). Film grain's noise followed the post chain's wall clock, so

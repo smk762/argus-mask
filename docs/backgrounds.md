@@ -1,7 +1,8 @@
 # Backgrounds
 
 A screen can show a backdrop behind the face instead of a plain colour: `?scene=ftl` on the viewer, or
-`argus-mask record --scene ftl`. Backdrops are cosmetic and belong to the viewer, like idle life at rest. They
+`argus-mask record --scene ftl`. A backdrop is either a procedural scene (a shader of our own) or a plate (a
+still image from argus-darkroom, brought to life by built-in effects). Backdrops are cosmetic and belong to the viewer, like idle life at rest. They
 are never in a take, so the engine's determinism is untouched.
 
 Built in today:
@@ -9,6 +10,7 @@ Built in today:
 | Scene | What it is | Parameters |
 |---|---|---|
 | `ftl` | Stars streaking past a window at faster-than-light speed, from a point behind the head. Procedural. | `scene.speed` (0.1 to 4, default 1), `scene.density` (0.2 to 1, default 0.6), `scene.tint` (a CSS colour) |
+| `garden` | An overgrown glass conservatory: the camera drifts, fronds sway, light dapples. A plate from argus-darkroom (FLUX.1 schnell, Apache-2.0). | `scene.speed`, `scene.tint` |
 
 Where a backdrop does not apply: `display=hld` keeps its subject on black, `bg=transparent` shows what is behind
 the page, and a splat face draws its own background, so it refuses a scene rather than ignore it.
@@ -23,8 +25,8 @@ lights toward its own light (`meta.tint`), so the head's edges seem lit from the
 nothing.
 
 **Time.** Live, a backdrop runs on the page's clock. In a recording, its clock is the posed frame's `t_ms`,
-so two recordings of the same take show the same backdrop. The `high` profile's film grain is not yet
-reproducible, so compare two recordings with `grain=0`.
+so two recordings of the same take show the same backdrop, film grain included (a test records each scene
+twice and compares the frames).
 
 ## Adding a procedural scene
 
@@ -54,5 +56,66 @@ draws at. The rules:
 
 Then check it by eye: run the server, open `/?scene=<name>` on each `quality`, and `argus-mask push` a WAV.
 
-Not built yet (#55): video loops and still plates (from argus-darkroom) served from the assets directory with
-provenance, a face's default backdrop chosen on Saved faces, and backdrops on the editor's previews.
+## Adding a plate
+
+A plate is a still picture with a little motion added by the viewer: the camera drifts across it (with
+parallax, given a depth map), leaves sway, light dapples, lights pulse. It needs no shader of your own: the
+picture comes from argus-darkroom, which checks the prompt and the image and keeps a record of both, and
+`viewer/scenes/plate.js` animates it.
+
+**1. Generate it.** With darkroom running (`--darkroom`, or `ARGUS_MASK_DARKROOM_URL`, default
+`http://localhost:8106`):
+
+```bash
+argus-mask plate generate src/argus_mask/viewer/scenes/<name> \
+  --title "Conservatory garden" \
+  --prompt "inside an overgrown glass conservatory, lush ferns and palm fronds in the foreground at the edges, \
+soft diffuse daylight through the glass roof, quiet calm open space in the middle, shallow depth of field" \
+  --tint "#f3e6c8" --drift 0.6 --sway 0.5 --dapple 0.4 --soft 0.5 --exposure 0.65
+```
+
+The directory's name is the plate's (`?scene=<name>`), and an existing plate is never written over. Mask
+asks darkroom for the picture under its SFW `default` policy, with no prompt expansion, and adds "no people,
+no text, no logos" to the prompt (`--as-is` leaves it off). It then asks for darkroom's depth map of the
+same record (`POST /depth/{id}`: Depth Anything V2 Small, Apache-2.0), checks every file against darkroom's
+sha256, and writes:
+
+- `plate.png`: darkroom's image, byte for byte, so anyone can match it to darkroom's record.
+- `depth.png`: 8-bit greyscale, near is light. `--no-depth` leaves it out; `argus-mask plate depth <dir>`
+  adds it later.
+- `background.json` (`PlateManifest` in `models.py`): the title, the light it suggests (`tint`), the
+  effects, provenance (`synthetic`, the checkpoint's licence, and the model, seed and prompt as `generator`),
+  and the darkroom record id with the render settings.
+
+The default checkpoint is FLUX.1 schnell, whose Apache-2.0 licence lets its output ship. For any other
+checkpoint, `--license` states its output licence: check the model's terms first, since this is your claim.
+
+**2. Tune the effects** in `background.json` (each 0 to 1), and check by eye as for a procedural scene:
+
+| Effect | What it does | Notes |
+|---|---|---|
+| `drift` | The camera drifts slowly across the plate, on a 47 s by 61 s path. With a depth map, near things move more. | The plate is cropped 5% on each side so the drift never shows an edge. |
+| `sway` | A gusting breeze moves the plate locally. | Where `sway_mask` is light; without a mask, by depth (near more than far). Without either, everywhere: then keep it low. |
+| `dapple` | Soft patches of light drift over what is already lit. | |
+| `pulse` | Lights breathe on a 5.3 s cycle. | Only where `light_mask` is light. |
+| `soft` | Out of focus, through the plate's mipmaps. | Default 0.4. The face should stand clear of it. |
+| `exposure` | Brightness, before the vignette. | Default 0.8. Below 1 sets it back behind the face. |
+
+Masks are optional greyscale PNGs the size of the plate, painted by hand (light means on). Add them to
+`background.json` as `sway_mask` and `light_mask` (`file`, `sha256`, `width`, `height`).
+
+**3. Check it and list it.** `argus-mask plate check <dir>` checks the manifest, each file's sha256 and size,
+and provenance. Then add the name to `SCENES` in `backdrop.js` (`<name>: plate('<name>')`) and in
+`record.py`.
+
+**Rules.**
+- **Cleared only in the repo.** A shipped plate is `synthetic` from a model whose licence allows it, and
+  names its darkroom record (a test checks every plate under `scenes/`).
+- **No one in it.** No people, real places, brands, artists' names or text in the prompt; the face is the
+  only person on screen. A plate cannot be `consented`, and `curated` is refused.
+- **Small.** At most 4 MB per image and 6 MB per plate. A 1344x768 plate is about 2 MB.
+- **Soft and dark in the middle**, as for any scene: the face is the subject.
+
+Not built yet (#55): plates and video loops served from the assets directory (made with
+`argus-mask plate generate` into your own assets), a face's default backdrop chosen on Saved faces, and
+backdrops on the editor's previews.

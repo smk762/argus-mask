@@ -1,0 +1,50 @@
+{
+  "mask_version": "1.4",
+  "name": "garden",
+  "title": "Conservatory garden",
+  "kind": "plate",
+  "tint": "#f3e6c8",
+  "plate": {
+    "file": "plate.png",
+    "sha256": "b28f06cbd24806d25996ee663bd342b22d191ed0ab5877ec9dc49664a77d0872",
+    "width": 1344,
+    "height": 768
+  },
+  "effects": {
+    "drift": 0.6,
+    "sway": 0.5,
+    "dapple": 0.4,
+    "pulse": 0.0,
+    "exposure": 0.65,
+    "soft": 0.5
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "source": "argus-darkroom record efa5c9598f814f338738ef3d2c061f85",
+    "license": "Apache-2.0",
+    "notes": "A still generated through argus-darkroom under its SFW policy, with no person in the prompt.",
+    "subject": "",
+    "generator": {
+      "model": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+      "seed": 758768726,
+      "prompt": "inside an overgrown glass conservatory, lush ferns and palm fronds in the foreground at the edges, soft diffuse daylight through the glass roof, quiet calm open space in the middle, gentle green and warm tones, shallow depth of field, photographic, no people, no text, no logos"
+    },
+    "cleared": true
+  },
+  "darkroom": {
+    "record_id": "efa5c9598f814f338738ef3d2c061f85",
+    "darkroom_version": "0.1.dev92+gef97403d5",
+    "outcome": "passed",
+    "enforcing_policy": "default",
+    "checkpoint": "flux/flux1-schnell-fp8-e4m3fn.safetensors",
+    "seed": 758768726,
+    "prompt": "inside an overgrown glass conservatory, lush ferns and palm fronds in the foreground at the edges, soft diffuse daylight through the glass roof, quiet calm open space in the middle, gentle green and warm tones, shallow depth of field, photographic, no people, no text, no logos",
+    "negative_prompt": "",
+    "workflow": "flux",
+    "sampler": "euler",
+    "scheduler": "simple",
+    "steps": 4,
+    "cfg": 1.0,
+    "guidance": 3.5
+  }
+}
