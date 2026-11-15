@@ -33,6 +33,7 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 import { Backdrop } from './backdrop.js';
+import { HeadTurn } from './rig.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -188,8 +189,7 @@ let targets = new Map();   // blendshape name -> [{ influences, index }]
 let motion = new Motion();  // the lip budget, the rest set and idle life (motion.js)
 // ?life= over the rest set's own life; absent or not a number, the set's.
 const LIFE = (() => { const v = Number.parseFloat(params.get('life')); return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : null; })();
-let headBone = null;
-let headRest = null;
+let headTurn = null;       // a rigged head's neck and head bones (rig.js); an unrigged one turns whole (pivot)
 
 async function loadFace() {
   let faceId = params.get('face');
@@ -218,9 +218,8 @@ async function loadFace() {
         targets.get(name).push({ influences: node.morphTargetInfluences, index });
       }
     }
-    if (node.isBone && !headBone && /^head$/i.test(node.name)) headBone = node;
   });
-  if (headBone) headRest = headBone.quaternion.clone();
+  headTurn = new HeadTurn(THREE, gltf.scene);
   motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
   await loadRest(faceId);
@@ -503,12 +502,11 @@ function applyWeights(weights, order) {
 }
 
 const euler = new THREE.Euler();
-const turn = new THREE.Quaternion();
 function applyHead() {
+  if (headTurn && headTurn.rigged) { headTurn.apply(head.pitch, head.yaw, head.roll); return; }
   const rad = Math.PI / 180;
   euler.set(head.pitch * rad, head.yaw * rad, head.roll * rad, 'YXZ');
-  if (headBone) headBone.quaternion.copy(headRest).multiply(turn.setFromEuler(euler));
-  else pivot.rotation.copy(euler);
+  pivot.rotation.copy(euler);
 }
 
 let lastDraw = performance.now();

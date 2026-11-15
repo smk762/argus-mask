@@ -74,7 +74,7 @@ argus-mask inspect assets/stock-01/head.glb --write-manifest \
     --notes "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out."
 ```
 
-`--distance` and `--height` set the camera framing; the default (0.6 m) is too close for a bust. The model's origin is on the centre line at eye height, halfway through the skull, and the face looks down +Z. A rebuild changes the model's sha256, so write the manifest again after each one.
+`--distance` and `--height` set the camera framing; the default (0.6 m) is too close for a bust. The model's origin is on the centre line at eye height, halfway through the skull, and the face looks down +Z. Every head is skinned to MPFB's `game_engine` rig (53 bones, Unreal-style names: `pelvis`, `spine_01`…`03`, `neck_01`, `head`, …), so screens turn the head at the neck while the shoulders stay still. A rebuild changes the model's sha256, so write the manifest again after each one.
 
 `assets/` is gitignored: model files are never committed.
 

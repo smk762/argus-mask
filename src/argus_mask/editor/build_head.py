@@ -59,6 +59,9 @@ CLOTHES = "clothes"
 MOVING_PARTS = ("eyes", "eyebrows", "eyelashes", "teeth", "tongue")
 PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", "cupsize", "firmness")
 RACE_KEYS = ("asian", "caucasian", "african")
+# MPFB's rig for every head: 53 bones, Unreal-style names (pelvis, spine_01..03, neck_01, head, ...).
+RIG = "game_engine"
+
 # Modelling targets a preset may set under ``targets``: the allow-list in modifiers.json beside this
 # script (generated from MPFB's catalogue by scripts/make_modifiers.py; the editor reads the same file).
 # Each names its negative and positive files under MPFB's data/targets; one with no negative files is
@@ -210,11 +213,13 @@ def apply_modifiers(mpfb, targets, basemesh, values: dict) -> dict[str, float]:
 
 
 def mesh_children(basemesh) -> dict[str, object]:
-    """The body-part and garment objects hanging off the basemesh: body parts by part name, garments
-    by asset name (tagged when the garment is added, not read back from MPFB's object name)."""
+    """The body-part and garment objects hanging off the basemesh, or off its rig (MPFB parents them to the
+    armature when there is one): body parts by part name, garments by asset name (tagged when the garment is
+    added, not read back from MPFB's object name)."""
     found = {}
+    owners = {basemesh, basemesh.parent} - {None}
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and obj is not basemesh and obj.parent is basemesh:
+        if obj.type == "MESH" and obj is not basemesh and obj.parent in owners:
             kind = str(obj.get("argus_garment") or obj.get("MPFB_GEN_object_type") or "").lower() or obj.name
             if kind in found:
                 raise RecipeError(f"two parts are both called {kind!r}")
@@ -757,6 +762,13 @@ def build(preset: dict, out: str) -> dict:
 
     shaped = apply_modifiers(mpfb, targets, basemesh, preset.get("targets") or {})
 
+    # The rig, before anything is fitted to the body: MPFB weights the skin, body parts and clothes to it
+    # as they are added, so the whole bust is skinned. The viewer turns the head through neck_01 and head,
+    # and the shoulders stay put; a wider framing (#62) poses the rest.
+    rig = human.add_builtin_rig(basemesh, RIG, import_weights=True)
+    if rig is None:
+        raise RecipeError(f"MPFB has no {RIG!r} rig")
+
     assets = preset["assets"]
     human.set_character_skin(
         resolve_asset(services, assets["skin"]), basemesh, skin_type="GAMEENGINE", material_instances=False
@@ -791,20 +803,21 @@ def build(preset: dict, out: str) -> dict:
     export.bake_modifiers_remove_helpers(
         basemesh, bake_masks=True, bake_subdiv=False, remove_helpers=True, also_proxy=True
     )
-    for modifier in list(basemesh.modifiers):
-        basemesh.modifiers.remove(modifier)
+    keep_only_armature(basemesh)
 
     parts = mesh_children(basemesh)
     objects = [basemesh, *parts.values()]
     bpy.ops.object.select_all(action="DESELECT")
     for obj in objects:
         obj.select_set(True)
-        for modifier in list(obj.modifiers):
-            obj.modifiers.remove(modifier)
+        keep_only_armature(obj)
     bpy.context.view_layer.objects.active = basemesh
     bpy.ops.object.parent_clear(type="CLEAR_KEEP_TRANSFORM")
     bpy.context.view_layer.update()
 
+    # The armature's transform is applied with the meshes', so its bones and the skinned vertices stay in
+    # one frame (the rig is in its rest pose: the meshes are not deformed by it while this happens).
+    rig.select_set(True)
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
     # Landmarks, in Blender's frame: Z up, the face looking down -Y.
@@ -823,11 +836,11 @@ def build(preset: dict, out: str) -> dict:
         basemesh.matrix_world @ v.co for v in basemesh.data.vertices if (basemesh.matrix_world @ v.co).z > eye_z - 0.03
     ]
     centre_y = (min(p.y for p in skull) + max(p.y for p in skull)) / 2
-    for obj in objects:
+    for obj in (*objects, rig):
         obj.location.y -= centre_y
         obj.location.z -= eye_z
     bpy.ops.object.select_all(action="DESELECT")
-    for obj in objects:
+    for obj in (*objects, rig):
         obj.select_set(True)
     bpy.context.view_layer.objects.active = basemesh
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
@@ -854,7 +867,16 @@ def build(preset: dict, out: str) -> dict:
         )
     wet = wet_line(basemesh, parts["eyes"]) if "eyes" in parts else {"made": False}
     if wet.get("made"):
-        objects.append(wet.pop("object"))
+        strip = wet.pop("object")
+        strip.vertex_groups.new(name="head").add(range(len(strip.data.vertices)), 1.0, "REPLACE")
+        objects.append(strip)
+    # Every mesh is the armature's child, skinned by its Armature modifier: what the glTF exporter wants
+    # to write a skin. Both are at the origin with no transform, so no parent inverse is needed.
+    rig.name = rig.data.name = "rig"
+    for obj in objects:
+        keep_only_armature(obj, rig)
+        obj.parent = rig
+        obj.matrix_parent_inverse.identity()
     for obj in objects:
         for polygon in obj.data.polygons:
             polygon.use_smooth = True
@@ -911,7 +933,9 @@ def build(preset: dict, out: str) -> dict:
             export_morph_normal=False,
             export_morph_tangent=False,
             export_try_sparse_sk=True,
-            export_skins=False,
+            export_skins=True,
+            export_def_bones=False,
+            export_rest_position_armature=True,
             export_animations=False,
             export_cameras=False,
             export_lights=False,
@@ -938,6 +962,7 @@ def build(preset: dict, out: str) -> dict:
         "assets": assets,
         "triangles": counts,
         "triangles_total": total,
+        "rig": {"name": RIG, "bones": len(rig.data.bones)},
         "shapes": {name: len(names) for name, names in shapes.items()},
         "parts_without_shapes": still,
         "mouth": mouth_report,
@@ -959,6 +984,17 @@ def build(preset: dict, out: str) -> dict:
         "extent_m": {"below_eyes": round(-lowest, 3), "above_eyes": round(highest, 3)},
         "bytes": os.path.getsize(out),
     }
+
+
+def keep_only_armature(obj, rig=None) -> None:
+    """Remove every modifier but the Armature, which skins the mesh; with *rig*, make sure there is one, on it."""
+    for modifier in list(obj.modifiers):
+        if modifier.type != "ARMATURE":
+            obj.modifiers.remove(modifier)
+    if rig is None:
+        return
+    armature = next((m for m in obj.modifiers if m.type == "ARMATURE"), None) or obj.modifiers.new("rig", "ARMATURE")
+    armature.object = rig
 
 
 def read_mpfb_version(mpfb) -> str:

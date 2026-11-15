@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rigged heads: the head turns at the neck** (#62, step 1). The recipe skins every head to MPFB's `game_engine`
+  rig (53 bones): skin, body parts and clothes, with the face shapes unchanged. The viewer and the editor's
+  previews turn a rigged head through `neck_01` and `head` (40/60, about world axes), so the shoulders stay put
+  where the whole bust used to swing. A head without the bones turns whole, as before. About 0.3 MB more per head.
 - **Backdrops behind splat faces.** A LAM head now shows `?scene=`, its own default and `record --scene`: the splat
   renderer draws the backdrop behind the head on the same canvas, so recordings stay frame-exact. Over a backdrop
   the camera moves in to a head-and-shoulders shot that ends above LAM's fade at the collarbone, so the head does
@@ -34,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The look finds a rigged head's parts.** three.js renames a mesh that shares its name with a bone (`head` →
+  `head_1`), which lost the skin treatment; parts are now matched by the name in the file.
 - **A splat face from `inspect` kept the wide shot over a backdrop.** `inspect` writes LAM's standard framing into the
   manifest, which counted as the face's own, so the close head-and-shoulders shot never applied. LAM's standard
   framing now counts as not set.

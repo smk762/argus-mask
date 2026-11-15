@@ -818,9 +818,18 @@ def test_the_viewer_dresses_the_parts_the_recipe_names() -> None:
     # look.js finds parts by name; a rename on either side would silently lose the wet line or the skin maps.
     recipe = SCRIPT.read_text()
     look = (SCRIPT.parent.parent / "viewer" / "look.js").read_text()
-    assert 'WET_LINE = "wetline"' in recipe and "mesh.name === 'wetline'" in look
-    assert 'basemesh.name = basemesh.data.name = "head"' in recipe and "mesh.name === 'head'" in look
+    assert 'WET_LINE = "wetline"' in recipe and "part === 'wetline'" in look
+    assert 'basemesh.name = basemesh.data.name = "head"' in recipe and "part === 'head'" in look
     assert "SKIN_DETAIL" in recipe and "const baked = Boolean(m.normalMap)" in look
+
+
+def test_the_viewer_turns_the_bones_the_recipe_rigs() -> None:
+    # rig.js turns the head through MPFB's game_engine bones; another rig, or renamed bones, and the whole bust
+    # would turn again (no error: an unrigged head turns whole).
+    recipe = SCRIPT.read_text()
+    rig = (SCRIPT.parent.parent / "viewer" / "rig.js").read_text()
+    assert 'RIG = "game_engine"' in recipe and "export_skins=True" in recipe
+    assert "[['neck_01', 0.4], ['head', 0.6]]" in rig
 
 
 # ---- from the editor to a screen --------------------------------------------------------------
