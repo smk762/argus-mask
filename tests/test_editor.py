@@ -810,13 +810,6 @@ def test_editor_settings_from_env(monkeypatch, tmp_path) -> None:
     assert os.environ["ARGUS_MASK_BLENDER_USER"] == str(tmp_path)
 
 
-def test_the_triangle_budget_is_45k() -> None:
-    assert Preset.model_validate(preset(max_triangles=45_000)).max_triangles == 45_000
-    assert Preset.model_validate(preset()).max_triangles == 45_000  # the default is the whole budget
-    with pytest.raises(ValidationError, match="max_triangles"):
-        Preset.model_validate(preset(max_triangles=45_001))
-
-
 def test_the_viewer_dresses_the_parts_the_recipe_names() -> None:
     # look.js finds parts by name; a rename on either side would silently lose the wet line or the skin maps.
     recipe = SCRIPT.read_text()
@@ -1423,3 +1416,15 @@ def test_the_recipe_paints_colourways_and_thins_garments_to_the_budget() -> None
     assert 'preset.get("garment_colours")' in recipe and "base_colour_images(garment)" in recipe
     assert 'hair_colour.solid if mode == "solid"' in recipe
     assert "thin_garments(" in recipe and "GARMENT_MIN_RATIO = 0.4" in recipe
+
+
+def test_a_preset_may_ask_for_more_than_the_weak_screen_budget() -> None:
+    from argus_mask.editor.preset import Preset  # noqa: PLC0415
+    from argus_mask.faces import MAX_TRIANGLES, WEAK_SCREEN_TRIANGLES  # noqa: PLC0415
+
+    assert Preset.model_validate(preset()).max_triangles == WEAK_SCREEN_TRIANGLES == 45_000
+    assert Preset.model_validate(preset(max_triangles=100_000)).max_triangles == 100_000
+    with pytest.raises(ValidationError):
+        Preset.model_validate(preset(max_triangles=MAX_TRIANGLES + 1))
+    # build_head.py runs in Blender and cannot import the package: it carries the same ceiling.
+    assert f"MAX_TRIANGLES = {MAX_TRIANGLES:_}" in SCRIPT.read_text()

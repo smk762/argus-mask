@@ -66,6 +66,8 @@ RIG = "game_engine"
 FRAMINGS = ("head", "waist")
 WAIST_BELOW_HIPS_M = 0.04
 WAIST_BUDGET_FACTOR = 1.5
+# The most any model may have (faces.py: MAX_TRIANGLES; a test holds the two together).
+MAX_TRIANGLES = 120_000
 # A garment over the budget is thinned (Decimate), but never below this share of its triangles.
 GARMENT_MIN_RATIO = 0.4
 
@@ -922,7 +924,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     total = sum(counts.values())
     budget = int(preset.get("max_triangles", 45000))
     if framing == "waist":  # arms and hands are dense: the waist has half as much again, within the global cap
-        budget = min(int(budget * WAIST_BUDGET_FACTOR), 45000)
+        budget = min(int(budget * WAIST_BUDGET_FACTOR), MAX_TRIANGLES)
     decimated = {}
     if total > budget:
         decimated = thin_garments([o for o in objects if o.get("argus_garment")], total - budget)
