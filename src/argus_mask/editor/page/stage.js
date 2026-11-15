@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { Backdrop } from './backdrop.js';
-import { ARMS_DOWN, BodyLife, HeadTurn, setPose } from './rig.js';
+import { ARMS_DOWN, BodyLife, HeadTurn, STANDING, contactShadow, setPose } from './rig.js';
 import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
@@ -117,8 +117,9 @@ export class Stage {
   // A face's model: a .glb (format "gltf", the default) or a LAM splat head's .zip ("lam-splat").
   // Loads may overlap (a quick second click): only the latest one shows; an earlier one that finishes later is
   // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
-  // *armsDown*: the model shows the arms (a waist-up framing), which stand down from the A-pose they are built in.
-  async load(modelUrl, framing = {}, format = 'gltf', { armsDown = false } = {}) {
+  // *body*: the model shows the body ('waist' or 'full'): its arms stand down from the A-pose they are built in,
+  // and a full body stands on the floor.
+  async load(modelUrl, framing = {}, format = 'gltf', { body = null } = {}) {
     const gen = (this.loads = (this.loads || 0) + 1);
     if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
@@ -130,9 +131,10 @@ export class Stage {
     this.pivot.add(gltf.scene);
     this.look.apply(gltf.scene);
     this.body = null;
-    if (armsDown) {
-      setPose(THREE, gltf.scene, ARMS_DOWN);
+    if (body) {
+      setPose(THREE, gltf.scene, body === 'full' ? STANDING : ARMS_DOWN);
       this.body = new BodyLife(THREE, gltf.scene);   // breathing and weight shifts, as on a screen
+      if (body === 'full') contactShadow(THREE, gltf.scene, this.pivot);   // turns with the turntable
     }
     this.neck = new HeadTurn(THREE, gltf.scene);   // a rigged head turns at the neck; the pivot is the turntable
     gltf.scene.traverse((node) => {

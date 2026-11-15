@@ -196,7 +196,7 @@ async function openReview(row, place = main(row), framing = 'head') {
   const framed = framing !== 'head' && manifest.framings?.[framing];
   const shown = framed || { model: manifest.model, framing: manifest.framing };
   await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${shown.model.sha256}`, framed ? framing : 'head'),
-    shown.framing || {}, manifest.model.format, { armsDown: Boolean(framed) });
+    shown.framing || {}, manifest.model.format, { body: framed ? framing : null });
   // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
   const keep = place === 'export' ? async (name) => {
     try {
@@ -216,9 +216,9 @@ async function openReview(row, place = main(row), framing = 'head') {
       which.append(b);
     }
   }
-  // The framings this copy has (#62): the head, and the waist up if it was built.
+  // The framings this copy has (#62): the head, and the waist up and full body if they were built.
   for (const f of ['head', ...Object.keys(manifest.framings || {})].filter((f, _, all) => all.length > 1)) {
-    const b = el('button', { type: 'button', textContent: f === 'head' ? 'head' : `${f} up`, className: f === (framed ? framing : 'head') ? 'on' : '' });
+    const b = el('button', { type: 'button', textContent: { head: 'head', waist: 'waist up', full: 'full body' }[f] || f, className: f === (framed ? framing : 'head') ? 'on' : '' });
     b.onclick = () => openReview(row, place, f);
     which.append(b);
   }

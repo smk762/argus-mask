@@ -181,7 +181,7 @@ def test_a_changed_waist_model_is_refused_like_a_changed_head(tmp_path: Path) ->
     ("change", "match"),
     [
         (lambda m: m["framings"]["waist"]["model"].update(file="head.glb"), "its own model file"),
-        (lambda m: m["framings"].update(full=m["framings"]["waist"]), "framings"),
+        (lambda m: m["framings"].update(knees=m["framings"]["waist"]), "framings"),
         (lambda m: m["model"].update(format="lam-splat", file="head.zip"), "splat head is a head only"),
     ],
 )

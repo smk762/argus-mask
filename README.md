@@ -91,7 +91,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 A face is a directory under the assets root holding a model and a `manifest.json`. The model is a `.glb` (a mesh) or a LAM Gaussian-splat head's `.zip` (see [Splat heads](#splat-heads)).
 
 - **Model:** glTF 2.0 binary, with morph targets named for the 52 ARKit blendshapes (`jawOpen`, `eyeBlinkLeft`, …). Missing shapes are reported and ignored. Textures must be PNG or JPEG; the viewer loads no KTX2 or meshopt decoder.
-- **Manifest:** id, name, the model's file name, sha256 and `format` (`gltf`, the default, or `lam-splat`), the shapes found, camera framing, and provenance. Optionally `framings`: the same face at another framing (`waist`, from the hips up), each its own rigged `.glb` beside the head with its own camera, checked like the head (in the face's directory, matching its sha256).
+- **Manifest:** id, name, the model's file name, sha256 and `format` (`gltf`, the default, or `lam-splat`), the shapes found, camera framing, and provenance. Optionally `framings`: the same face at another framing (`waist`, from the hips up, or `full`, head to shoes), each its own rigged `.glb` beside the head with its own camera, checked like the head (in the face's directory, matching its sha256).
 - **Provenance is required.** A face with no provenance is not served. `kind` is one of:
   - `personal`: your own use. Needs only a `source` saying what it is. This is `inspect`'s default.
   - `stock` or `synthetic`: a published asset, or a generated face with no real person or owned character going in. Needs a `source` and a `license`.
@@ -188,7 +188,7 @@ Audio2Face's weights are tuned for its own character. On another head, the shape
 | `face` | a face id; default: the first one the server lists |
 | `display` | `flat` (default), or `hld` for a Looking Glass HLD: 1080×1920 portrait on black |
 | `bg` | a CSS colour, or `transparent` (flat tier) |
-| `framing` | `waist`: the face from the hips up, arms down, if it was built with that framing (the editor's **Waist-up too**, or a manifest's `framings`); otherwise its head, as `head` (the default) shows. `argus-mask record --framing waist` too. |
+| `framing` | `waist`: the face from the hips up, arms down; `full`: head to shoes, standing, a shadow under the feet. Each if it was built with that framing (the editor's **Waist-up too** and **Full body too**, or a manifest's `framings`); otherwise its head, as `head` (the default) shows. `argus-mask record --framing waist` (or `full`) too. |
 | `scene` | a backdrop with a little life in it, drawn behind the face instead of `bg`: `ftl` (stars streaking past at warp), `garden`, `lake`, or a plate of your own (`GET /scenes`); `none` for a plain background over the face's own default. Flat tier only; `hld` stays black. Tune it with `scene.speed` (default 1), `scene.density` (0.2 to 1) and `scene.tint` (a CSS colour). See [docs/backgrounds.md](https://github.com/smk762/argus-mask/blob/main/docs/backgrounds.md). |
 | `hud` | `0` hides the status line |
 | `kiosk` | `1` for a dedicated screen: no status line, no cursor, full screen on the first tap |

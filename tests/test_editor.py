@@ -47,7 +47,7 @@ if mode == "silent":
     sys.exit(0)
 out.write_bytes(pathlib.Path(os.environ["FAKE_BLENDER_GLB"]).read_bytes())
 framing = rest[rest.index("--framing") + 1] if "--framing" in rest else "head"
-extent = {{"above_eyes": 0.13, "below_eyes": 0.74 if framing == "waist" else 0.32}}
+extent = {{"above_eyes": 0.13, "below_eyes": {{"waist": 0.74, "full": 1.62}}.get(framing, 0.32)}}
 recipe = {{"blender": "4.5.15 LTS", "mpfb": "2.0.18", "triangles_total": 1, "bytes": out.stat().st_size, "framing": framing,
           "extent_m": extent}}
 out.with_suffix(".recipe.json").write_text(json.dumps(recipe))
@@ -335,10 +335,10 @@ def test_the_library_offers_only_assets_with_a_stated_licence(tmp_path) -> None:
     assert library.has_faceunits()
 
 
-def test_clothes_are_outfits_and_hats_and_never_shoes(tmp_path) -> None:
+def test_clothes_are_outfits_hats_and_shoes(tmp_path) -> None:
     found = AssetLibrary(make_library(tmp_path)).scan()["clothes"]
-    assert [(a.name, a.slot) for a in found] == [("hat1", "hat"), ("top1", "outfit")]
-    assert found[1].ref == "clothes/top1/top1.mhclo" and found[1].public()["slot"] == "outfit"
+    assert [(a.name, a.slot) for a in found] == [("hat1", "hat"), ("shoes1", "shoes"), ("top1", "outfit")]
+    assert found[2].ref == "clothes/top1/top1.mhclo" and found[2].public()["slot"] == "outfit"
 
 
 def test_clothes_are_each_listed_once_and_few() -> None:
@@ -458,7 +458,9 @@ def test_clothes_go_into_the_build_and_the_credits(client, rig) -> None:
     assert sent["assets"]["clothes"] == body["assets"]["clothes"]
 
 
-@pytest.mark.parametrize("ref", ["clothes/shoes1/shoes1.mhclo", "clothes/nothere/nothere.mhclo", "hair/h1/h1.mhclo"])
+@pytest.mark.parametrize(
+    "ref", ["clothes/shoes1/shoes1.mhclo", "clothes/nothere/nothere.mhclo", "hair/h1/h1.mhclo"]
+)  # shoes alone: undressed
 def test_clothes_not_in_the_library_never_reach_blender(client, rig, ref) -> None:
     body = preset()
     body["assets"]["clothes"] = [ref]
@@ -738,8 +740,8 @@ def test_library_routes(client) -> None:
     assert [a["name"] for a in library["hair"]] == ["h1", "h2"]
     assert client.get("/library/hair/h1/thumb").content.startswith(b"\x89PNG")
     assert client.get("/library/clothes/top1/thumb").status_code == 200
-    assert client.get("/library/clothes/shoes1/thumb").status_code == 404
-    assert [a["slot"] for a in library["clothes"]] == ["hat", "outfit"]
+    assert client.get("/library/clothes/shoes1/thumb").status_code == 200
+    assert [a["slot"] for a in library["clothes"]] == ["hat", "shoes", "outfit"]
     for bad in ["/library/hair/rogue/thumb", "/library/nope/h1/thumb", "/library/hair/..%2F..%2Fpacks/thumb"]:
         assert client.get(bad).status_code == 404
 
@@ -1310,6 +1312,31 @@ def test_a_preset_can_build_the_waist_up_too(client, rig) -> None:
     assert client.post("/export/my-face").status_code == 200
     exported = FaceStore(rig["assets"]).load("my-face")[0]
     assert "waist" in exported.framings and (rig["assets"] / "my-face" / "waist.glb").is_file()
+
+
+def test_a_full_body_wears_shoes(client, rig) -> None:
+    body = preset(framings=["waist", "full"])
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 422 and "shoes" in reply.json()["detail"]
+    assert calls(rig) == []
+    body["assets"]["clothes"].append("clothes/shoes1/shoes1.mhclo")
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 200, reply.text
+    assert [a[a.index("--framing") + 1] for a in (c["argv"] for c in calls(rig))] == ["head", "waist", "full"]
+    manifest = FaceStore(rig["assets"] / ".preview").load("my-face")[0]
+    assert set(manifest.framings) == {"waist", "full"} and manifest.framings["full"].model.file == "full.glb"
+    assert client.get("/face/my-face/model?from=preview&framing=full").status_code == 200
+    with pytest.raises(ValidationError, match="twice"):
+        Preset.model_validate(preset(framings=["full", "full"]))
+
+
+def test_the_recipe_cuts_each_framing_and_budgets_it() -> None:
+    from argus_mask.models import FRAMINGS  # noqa: PLC0415
+
+    recipe = SCRIPT.read_text()
+    built = re.search(r"^FRAMINGS = \((.*)\)$", recipe, re.M).group(1)
+    assert tuple(re.findall(r'"(\w+)"', built)) == FRAMINGS, "the recipe builds every framing the contract names"
+    assert 'BUDGET_FACTOR = {"head": 1.0, "waist": 1.5, "full": 2.0}' in recipe
 
 
 def test_a_head_only_preset_runs_blender_once(client, rig) -> None:

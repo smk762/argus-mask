@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.3: ``Provenance.generator`` and the derived ``disclosure``; ``SourceHello.disclose`` and
 #      ``StreamHeader.disclosure`` (a real, consenting person's voice); ``ConsentVerdict``.
 # 1.4: ``PlateManifest``, a backdrop made from a still image (``background.json``).
-# 1.5: ``FaceManifest.framings``: the same face's other framings (waist up), each its own model and camera.
+# 1.5: ``FaceManifest.framings``: the same face's other framings (waist up, full body), each its own model and camera.
 MASK_VERSION = "1.5"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
@@ -230,9 +230,10 @@ class Framing(BaseModel):
     fov: float = Field(30.0, gt=1, lt=120)
 
 
-# How much of the body a model shows (#62): the head (and shoulders: ``model``), or the waist up.
-FramingName = Literal["head", "waist"]
-FRAMINGS: tuple[str, ...] = ("head", "waist")
+# How much of the body a model shows (#62): the head (and shoulders: ``model``), the waist up, or all of it.
+FramingName = Literal["head", "waist", "full"]
+FRAMINGS: tuple[str, ...] = ("head", "waist", "full")
+BodyFraming = Literal["waist", "full"]
 
 
 class FramedModel(BaseModel):
@@ -248,7 +249,7 @@ class FaceManifest(_Versioned):
     """``manifest.json`` in a face's directory.
 
     ``model`` and ``framing`` are the face's head, which every screen can show. ``framings`` holds the same face at
-    other framings (``waist``), each a model of its own beside it; a screen asks for one with ``?framing=``.
+    other framings (``waist``, ``full``), each a model of its own beside it; a screen asks for one with ``?framing=``.
     """
 
     id: str = Field(..., pattern=FACE_ID_PATTERN)
@@ -256,7 +257,7 @@ class FaceManifest(_Versioned):
     model: ModelFile
     blendshapes: list[str] = Field(default_factory=list)
     framing: Framing = Field(default_factory=Framing)
-    framings: dict[Literal["waist"], FramedModel] = Field(default_factory=dict)
+    framings: dict[BodyFraming, FramedModel] = Field(default_factory=dict)
     provenance: Provenance
 
     @model_validator(mode="after")
