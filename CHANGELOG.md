@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rigged stock heads:** `stock-01` revision 5 and `stock-02` revision 2, built with the rigged recipe and
+  published on the `stock-heads` release; `make head` and `fetch_stock_head.py` fetch them.
 - **Rigged heads: the head turns at the neck** (#62, step 1). The recipe skins every head to MPFB's `game_engine`
   rig (53 bones): skin, body parts and clothes, with the face shapes unchanged. The viewer and the editor's
   previews turn a rigged head through `neck_01` and `head` (40/60, about world axes), so the shoulders stay put
