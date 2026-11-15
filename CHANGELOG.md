@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Garment colourways** (#61). A preset's `garment_colours` recolours a garment at build time: `tint` keeps the
+  fabric's shading and detail, `solid` paints it one colour and so removes print the texture carries (logos, emblems).
+  The editor's Clothes panel has a Colour row for the outfit worn.
+- **Heavier garments fit the budget** (#61). Over the triangle budget, the recipe thins the clothes alone (Blender's
+  Decimate, one ratio, never below 40%), carrying a garment's own shapes (a collar's `jawOpen`) over, so the community
+  coverall and duty uniform build waist-up within 45,000 triangles.
 - **Waist-up stock heads.** `stock-01` and `stock-02` come with a `waist.glb` beside the head (published on the
   `stock-heads` release, same revisions); a lock file lists each extra framing's url and size, and
   `fetch_stock_head.py` downloads and checks every model before writing any.

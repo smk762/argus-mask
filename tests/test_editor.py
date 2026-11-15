@@ -1398,3 +1398,28 @@ def test_every_bone_the_viewer_moves_is_in_the_rig() -> None:
         named |= {f"{finger}_0{joint}_{side}" for joint in (1, 2, 3) for side in "lr"}
     assert {"upperarm_l", "lowerarm_r", "index_03_l", "spine_03", "clavicle_r", "pelvis", "neck_01", "head"} <= named
     assert named <= GAME_ENGINE_BONES, named - GAME_ENGINE_BONES
+
+
+def test_a_garment_colourway_reaches_blender_and_only_for_clothes_worn(client, rig) -> None:
+    top = "clothes/top1/top1.mhclo"
+    body = preset(garment_colours={top: {"colour": "#1d2b4f", "mode": "solid"}})
+    reply = client.post("/build", json=body)
+    assert reply.status_code == 200, reply.text
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
+    assert sent["garment_colours"] == {top: {"colour": "#1d2b4f", "mode": "solid"}}
+    # Another colour is another build: the cache does not hand back the navy one.
+    assert (
+        client.post("/build", json=preset(garment_colours={top: {"colour": "#7a1c1c"}})).json().get("cached")
+        is not True
+    )
+    stray = client.post("/build", json=preset(garment_colours={"clothes/hat1/hat1.mhclo": {"colour": "#000000"}}))
+    assert stray.status_code == 422 and "does not wear" in stray.text
+    assert client.post("/build", json=preset(garment_colours={top: {"colour": "navy"}})).status_code == 422
+
+
+def test_the_recipe_paints_colourways_and_thins_garments_to_the_budget() -> None:
+    # build_head.py runs only inside Blender: hold its contract with the preset by its text.
+    recipe = SCRIPT.read_text()
+    assert 'preset.get("garment_colours")' in recipe and "base_colour_images(garment)" in recipe
+    assert 'hair_colour.solid if mode == "solid"' in recipe
+    assert "thin_garments(" in recipe and "GARMENT_MIN_RATIO = 0.4" in recipe

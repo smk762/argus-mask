@@ -43,6 +43,7 @@ const DEFAULT = {
   max_alpha_texture_px: 1024,
   max_triangles: 45000,
   framings: [],
+  garment_colours: {},
 };
 
 // How each value reads: in the units it means, not MakeHuman's 0..1 or -1..+1.
@@ -220,6 +221,9 @@ function picker(library, [key, title, part, optional, slot, enlarge]) {
     ? (ref) => {
       const rest = (preset.assets.clothes || []).filter((r) => slotOf.get(r) !== slot);
       preset.assets.clothes = ref ? [...rest, ref] : rest;
+      // A colourway belongs to a garment worn: drop those of clothes taken off (the server refuses them).
+      const worn = new Set(preset.assets.clothes);
+      preset.garment_colours = Object.fromEntries(Object.entries(preset.garment_colours || {}).filter(([r]) => worn.has(r)));
     }
     : (ref) => { preset.assets[part] = ref; };
   const entry = panel(key, title);
@@ -256,9 +260,42 @@ function picker(library, [key, title, part, optional, slot, enlarge]) {
     entry.rows.push({ el: tile, text: `${asset ? asset.name.replaceAll('_', ' ') : 'none'} ${title}`.toLowerCase() });
   }
   if (!choices.length) entry.body.append(el('div', { className: 'hint', textContent: 'Nothing installed. See scripts/README.md for the asset packs.' }));
+  if (slot === 'outfit') entry.body.append(colourway(current));
   entry.body.append(grid);
   const syncTiles = () => { const c = current(); for (const t of tiles) t.tile.classList.toggle('on', c === t.ref); };
   controls.push({ sync: syncTiles });
+}
+
+// The outfit's colourway (#61): its own colours, tinted (its shading and detail kept) or one solid colour, which also
+// hides print the garment's texture carries (a logo, an emblem). Baked into the texture at build time.
+function colourway(current) {
+  const mode = el('select', { ariaLabel: 'Colourway' },
+    el('option', { value: '', textContent: 'own colours' }),
+    el('option', { value: 'tint', textContent: 'tinted' }),
+    el('option', { value: 'solid', textContent: 'solid (hides print)' }));
+  const colour = el('input', { type: 'color', value: '#1d2b4f', ariaLabel: 'Colourway colour' });
+  const row = el('label', { className: 'row', title: 'Recolour the outfit: tinted keeps its fabric and detail; solid paints it one colour, print and all' },
+    el('span', { textContent: 'Colour' }), mode, colour);
+  const apply = () => {
+    const ref = current();
+    if (!ref) return;
+    const colours = { ...(preset.garment_colours || {}) };
+    if (mode.value) colours[ref] = { colour: colour.value, mode: mode.value }; else delete colours[ref];
+    preset.garment_colours = colours;
+    colour.disabled = !mode.value;
+    changed();
+  };
+  mode.addEventListener('change', apply);
+  colour.addEventListener('change', apply);   // on release, not every step of the drag: each change is a build
+  fields.set('garment_colours', { label: 'Outfit colour', show: (v) => Object.values(v || {}).map((c) => `${c.mode} ${c.colour}`).join(', ') || 'own' });
+  const sync = () => {
+    const spec = (preset.garment_colours || {})[current()];
+    mode.value = spec ? spec.mode : '';
+    if (spec) colour.value = spec.colour;
+    colour.disabled = !spec;
+  };
+  controls.push({ sync, paint: sync });   // paint too: picking another outfit shows its own colourway
+  return row;
 }
 
 // ---- hair colour ------------------------------------------------------------------------------

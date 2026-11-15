@@ -119,6 +119,18 @@ class Mouth(_Strict):
     cavity_shade: float | None = Field(None, ge=0.0, le=1.0)
 
 
+class GarmentColour(_Strict):
+    """A garment's colourway (#61), baked into its colour texture at build time.
+
+    ``tint`` keeps the fabric's own shading and detail (one garment, a colour per division); ``solid`` paints it one
+    flat colour, which also removes print the texture carries (a logo, an emblem), leaving the shading to the normal
+    map and the light.
+    """
+
+    colour: str = Field(..., pattern=r"^#[0-9a-fA-F]{6}$")
+    mode: Literal["tint", "solid"] = "tint"
+
+
 class HairColour(_Strict):
     """A colour for the hair, baked into its texture by the recipe (``hair_colour.py``).
 
@@ -168,6 +180,8 @@ class Preset(_Strict):
     blend_parts: list[Literal["eyebrows", "eyelashes"]] = Field(default_factory=list)
     # None: the hair keeps its texture's own colour.
     hair_colour: HairColour | None = None
+    # Colourways for the garments worn, by their reference in assets.clothes.
+    garment_colours: dict[str, GarmentColour] = Field(default_factory=dict)
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
@@ -181,6 +195,12 @@ class Preset(_Strict):
         if value in RESERVED_FACE_IDS:
             raise ValueError(f"{value!r} is reserved: pick another id")
         return value
+
+    @model_validator(mode="after")
+    def _colours_worn(self) -> Preset:
+        if stray := sorted(set(self.garment_colours) - set(self.assets.clothes)):
+            raise ValueError(f"garment_colours names clothes the preset does not wear: {', '.join(stray)}")
+        return self
 
     @field_validator("targets")
     @classmethod
