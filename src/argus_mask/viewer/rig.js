@@ -50,28 +50,38 @@ export class HeadTurn {
 }
 
 // A rest pose for a framing that shows the arms: MakeHuman builds in an A-pose (arms out at about 45 degrees),
-// and a waist-up figure stands with its arms down. Degrees about world axes, as (x, y, z): +x pitches forward,
-// z swings a limb in the picture plane. Applied once, after loading, to the bones the model has.
+// and a waist-up figure stands relaxed, arms down. Each bone takes any of:
+//   world  [x, y, z] degrees about world axes (+x pitches forward, z swings a limb in the picture plane);
+//   twist  degrees about the bone's own length (a forearm turning the palm in);
+//   bend   degrees about the bone's own x axis (a finger curling).
+// Applied once, after loading, to the bones the model has; a plain [x, y, z] is a world turn.
+const FINGERS = ['index', 'middle', 'ring', 'pinky'];
+const curl = (side, deg) => Object.fromEntries(FINGERS.flatMap((f) => [1, 2, 3].map((j) => [`${f}_0${j}_${side}`, { bend: deg * (j === 1 ? 0.6 : 1) }])));
 export const ARMS_DOWN = {
-  upperarm_l: [0, 0, -42],
-  upperarm_r: [0, 0, 42],
-  lowerarm_l: [-14, 0, 0],
-  lowerarm_r: [-14, 0, 0],
+  upperarm_l: { world: [-4, 0, -42] },
+  upperarm_r: { world: [-4, 0, 42] },
+  lowerarm_l: { world: [-20, 0, 0], twist: 30 },
+  lowerarm_r: { world: [-20, 0, 0], twist: -30 },
+  ...curl('l', 20),
+  ...curl('r', 20),
 };
 
-// Set a pose: each named bone turned by its (x, y, z) degrees about world axes, from its rest, parents first
-// (the order of *pose*). Each bone's world rotation at rest is read before any is moved, so a child's turn is
-// about the world's axes at rest, carried along by its parent's.
+// Set a pose (see ARMS_DOWN), parents first (the order of *pose*). Each bone's world rotation at rest is read
+// before any is moved, so a child's turn is about the axes at rest, carried along by its parent's.
 export function setPose(THREE, root, pose) {
   const bones = new Map();
   root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
   root.updateMatrixWorld(true);
   const rad = Math.PI / 180;
-  const plan = Object.entries(pose).filter(([name]) => bones.has(name)).map(([name, [x, y, z]]) => {
+  const axisOf = (bone, local) => local.clone().applyQuaternion(bone.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  const plan = Object.entries(pose).filter(([name]) => bones.has(name)).map(([name, spec]) => {
     const bone = bones.get(name);
-    const world = bone.getWorldQuaternion(new THREE.Quaternion());
+    const { world: [x, y, z] = [0, 0, 0], twist = 0, bend = 0 } = Array.isArray(spec) ? { world: spec } : spec;
+    const W = bone.getWorldQuaternion(new THREE.Quaternion());
     const turn = new THREE.Quaternion().setFromEuler(new THREE.Euler(x * rad, y * rad, z * rad, 'YXZ'));
-    return { bone, local: world.clone().invert().multiply(turn).multiply(world) };
+    if (twist) turn.multiply(new THREE.Quaternion().setFromAxisAngle(axisOf(bone, new THREE.Vector3(0, 1, 0)), twist * rad));
+    if (bend) turn.multiply(new THREE.Quaternion().setFromAxisAngle(axisOf(bone, new THREE.Vector3(1, 0, 0)), bend * rad));
+    return { bone, local: W.clone().invert().multiply(turn).multiply(W) };
   });
   for (const { bone, local } of plan) bone.quaternion.multiply(local);
   root.updateMatrixWorld(true);
@@ -88,6 +98,14 @@ export const BODY = {
   breath: { spine_02: [-0.35, 0, 0], spine_03: [-0.7, 0, 0], clavicle_l: [0, 0, 1.4], clavicle_r: [0, 0, -1.4] },
   shift: { pelvis: [0, 0.4, 1.0], spine_01: [0, 0, -0.55], spine_03: [0, 0, -0.3] },
   nod: { spine_03: 0.12 },            // the share of the head's pitch the chest follows
+  // Each arm drifts on its own: a degree or so at the shoulder and elbow, on periods that share no rhythm, so the
+  // arms never move in step and never quite repeat.
+  arms: {
+    upperarm_l: { amp: [0.9, 0, 1.1], period: 6.7 },
+    upperarm_r: { amp: [0.9, 0, -1.1], period: 8.3 },
+    lowerarm_l: { amp: [-1.6, 0, 0], period: 5.9 },
+    lowerarm_r: { amp: [-1.6, 0, 0], period: 7.7 },
+  },
 };
 
 export class BodyLife {
@@ -96,7 +114,7 @@ export class BodyLife {
     const bones = new Map();
     root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
     root.updateMatrixWorld(true);
-    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod)]);
+    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod), ...Object.keys(BODY.arms)]);
     this.bones = new Map([...names].filter((n) => bones.has(n)).map((n) => {
       const bone = bones.get(n);
       const world = bone.getWorldQuaternion(new THREE.Quaternion());
@@ -105,6 +123,7 @@ export class BodyLife {
     // Each face breathes and sways in its own phase, from its seed.
     const phase = (k) => ((Math.imul(seed ^ Math.imul(k, 0x9e3779b9), 2654435761) >>> 0) % 6283) / 1000;
     this.phases = [phase(1), phase(2), phase(3)];
+    this.armPhases = Object.keys(BODY.arms).map((_, i) => phase(10 + i));
     this.euler = new THREE.Euler();
     this.turn = new THREE.Quaternion();
     this.local = new THREE.Quaternion();
@@ -127,6 +146,12 @@ export class BodyLife {
     add(BODY.breath, breath);
     add(BODY.shift, shift);
     for (const [name, share] of Object.entries(BODY.nod)) { const b = this.bones.get(name); if (b) b.angle[0] += share * pitch; }
+    Object.entries(BODY.arms).forEach(([name, { amp, period }], i) => {
+      const b = this.bones.get(name);
+      if (!b) return;
+      const k = Math.sin(tau * t / period + this.armPhases[i]);
+      b.angle[0] += amp[0] * k; b.angle[1] += amp[1] * k; b.angle[2] += amp[2] * k;
+    });
     const rad = Math.PI / 180;
     for (const b of this.bones.values()) {
       this.turn.setFromEuler(this.euler.set(b.angle[0] * rad, b.angle[1] * rad, b.angle[2] * rad, 'YXZ'));
