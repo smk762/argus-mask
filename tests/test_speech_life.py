@@ -149,3 +149,21 @@ async def test_a_spoken_clip_nods_on_its_stresses_and_still_gives_the_same_take(
     _, quiet, _ = await perform(np.zeros_like(audio), 24000, build_driver("energy"), fps=FPS, seed=9)
     nod = [a.head.pitch - b.head.pitch for a, b in zip(frames, quiet, strict=True)]
     assert max(nod) > 1.0
+
+
+async def test_frames_carry_the_cues_that_began_on_them_and_no_others() -> None:
+    from argus_mask.take import line  # noqa: PLC0415
+
+    pcm = speech([(0.3, 1.6), (2.4, 3.8)])
+    _, frames, _ = await perform(pcm, DRIVER_RATE, build_driver("energy"), fps=FPS, seed=3)
+    expected = cues(pcm)
+    for frame, cue in zip(frames, expected, strict=False):
+        began = cue.stress > 0 or cue.phrase_start or cue.phrase_end
+        assert (frame.cue is not None) == began, frame.seq
+        assert ('"cue"' in line(frame)) == began, "a frame with no cue has no cue key"
+        if began:
+            assert frame.cue.stress == round(cue.stress, 3)
+            assert frame.cue.phrase == ("start" if cue.phrase_start else "end" if cue.phrase_end else None)
+    phrases = [f.cue.phrase for f in frames if f.cue and f.cue.phrase]
+    assert phrases == ["start", "end", "start", "end"]
+    assert any(f.cue and f.cue.stress for f in frames), "the stressed syllables are on the wire"

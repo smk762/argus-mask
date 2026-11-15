@@ -35,7 +35,7 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 import { Backdrop } from './backdrop.js';
-import { ARMS_DOWN, BodyLife, HeadTurn, STANDING, contactShadow, setPose } from './rig.js';
+import { ARMS_DOWN, BodyLife, Gestures, HeadTurn, STANDING, contactShadow, setPose } from './rig.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -94,6 +94,15 @@ function fail(text) { state.error = text; notice(text); }
 let posed = null;
 let posedResolve = null;
 // tMs, the frame's own time on the take, sets the backdrop's clock: a recording never reads the wall clock.
+// cues(): the whole take's cues ([t_ms, cue] pairs) and its last frame's time, before the first pose: the arms
+// gesture by them (rig.js Gestures), as a live screen's do by the frames' own.
+state.cues = (pairs, lastMs) => {
+  if (!gestures) return 0;
+  gestures.reset();
+  for (const [tMs, cue] of pairs) gestures.add(tMs, cue);
+  gestures.end(lastMs);
+  return pairs.length;
+};
 state.pose = (weights, headTurn, blendshapes, tMs) => new Promise((resolve) => {
   if (blendshapes) names = blendshapes;   // the stream's order, from its header
   posed = { weights: Float32Array.from(weights), head: headTurn, t: Number.isFinite(tMs) ? tMs / 1000 : 0 };
@@ -194,6 +203,8 @@ let motion = new Motion();  // the lip budget, the rest set and idle life (motio
 // ?life= over the rest set's own life; absent or not a number, the set's.
 const LIFE = (() => { const v = Number.parseFloat(params.get('life')); return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : null; })();
 let body = null;           // life below the neck, for a framing that shows the body (rig.js BodyLife)
+let gestures = null;       // and its arms' gestures, from the stream's cues (rig.js Gestures)
+let gestureT = 0;          // the stream time (ms) the gestures were last posed at
 let headTurn = null;       // a rigged head's neck and head bones (rig.js); an unrigged one turns whole (pivot)
 
 async function loadFace() {
@@ -234,6 +245,7 @@ async function loadFace() {
   if (framed) {
     setPose(THREE, gltf.scene, asked === 'full' ? STANDING : ARMS_DOWN);
     body = new BodyLife(THREE, gltf.scene, faceSeed(manifest.id));
+    gestures = new Gestures(faceSeed(manifest.id));
     if (asked === 'full') state.shadow = contactShadow(THREE, gltf.scene, scene);
   }
   headTurn = new HeadTurn(THREE, gltf.scene);
@@ -431,6 +443,7 @@ function onHeader(header) {
   // The stream goes on meanwhile, and the reloaded page joins it where it has got to.
   if (header.face_id && state.faceShown && header.face_id !== state.faceShown && reloadOnce(header.session_id)) return;
   names = header.blendshapes;
+  gestures?.reset();   // a new stream: the last one's cues are done with
   sampleRate = header.audio.sample_rate;
   queue = [];
   passed = null;
@@ -455,10 +468,13 @@ function onMessage(event) {
   else if (message.type === 'frame') {
     if (!anchor) anchor = { clock: clockNow() + BUFFER_S + DELAY_S, t: message.t_ms };   // frames before any audio
     queue.push(message);
+    gestures?.add(message.t_ms, message.cue);
     state.frames += 1;
     state.lastSeq = message.seq;
   } else if (message.type === 'end') {
     ended = true;
+    const last = queue.at(-1);
+    if (last) gestures?.end(last.t_ms);
     state.streamsEnded += 1;
     if (labels.stream) labelTimer = setTimeout(() => { labels.stream = null; showDisclosure(); }, 4000);
   }
@@ -586,7 +602,10 @@ function draw() {
     splat.step(wall / 1000);
   } else {
     applyWeights(shown.weights, order);
-    body?.apply(posed ? posed.t : wall / 1000, head.pitch);   // a recording's body follows the frame's time
+    // The gestures' clock is the stream's (a recording's: the posed frame's); between streams it runs on, so a
+    // raised hand comes down.
+    gestureT = posed ? posed.t * 1000 : t !== null ? t : gestureT + dt * 1000;
+    body?.apply(posed ? posed.t : wall / 1000, head.pitch, gestures?.pose(gestureT));   // a recording's body follows the frame's time
     applyHead();
     if (backdrop) {
       if (posed) backdrop.update(posed.t, { exact: true });

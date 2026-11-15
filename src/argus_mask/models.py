@@ -22,7 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.3: ``Provenance.generator`` and the derived ``disclosure``; ``SourceHello.disclose`` and
 #      ``StreamHeader.disclosure`` (a real, consenting person's voice); ``ConsentVerdict``.
 # 1.4: ``PlateManifest``, a backdrop made from a still image (``background.json``).
-# 1.5: ``FaceManifest.framings``: the same face's other framings (waist up, full body), each its own model and camera.
+# 1.5: ``FaceManifest.framings``: the same face's other framings (waist up, full body), each its own model and camera;
+#      ``Frame.cue``: a stress or a phrase edge that began on the frame, for gestures.
 MASK_VERSION = "1.5"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
@@ -89,14 +90,26 @@ class Head(BaseModel):
     roll: float = 0.0
 
 
+class SpeechCue(BaseModel):
+    """What began in the voice on a frame (prosody.py): a stressed syllable, how strong (0..1), and a phrase's start
+    or end. A screen that shows the body gestures by them; the face has already taken its nods and brows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stress: float = Field(0.0, ge=0.0, le=1.0)
+    phrase: Literal["start", "end"] | None = None
+
+
 class Frame(BaseModel):
-    """One animation frame. ``t_ms`` is its time on the audio timeline."""
+    """One animation frame. ``t_ms`` is its time on the audio timeline. ``cue`` is there only on a frame where a
+    stress or a phrase edge began."""
 
     type: Literal["frame"] = "frame"
     seq: int = Field(..., ge=0)
     t_ms: int = Field(..., ge=0)
     weights: list[float]
     head: Head = Field(default_factory=Head)
+    cue: SpeechCue | None = None
 
 
 class StreamEnd(BaseModel):

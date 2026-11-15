@@ -397,8 +397,19 @@
       "type": "object"
     },
     "Frame": {
-      "description": "One animation frame. ``t_ms`` is its time on the audio timeline.",
+      "description": "One animation frame. ``t_ms`` is its time on the audio timeline. ``cue`` is there only on a frame where a\nstress or a phrase edge began.",
       "properties": {
+        "cue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpeechCue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "head": {
           "$ref": "#/$defs/Head"
         },
@@ -1065,6 +1076,37 @@
         "sample_rate"
       ],
       "title": "SourceHello",
+      "type": "object"
+    },
+    "SpeechCue": {
+      "additionalProperties": false,
+      "description": "What began in the voice on a frame (prosody.py): a stressed syllable, how strong (0..1), and a phrase's start\nor end. A screen that shows the body gestures by them; the face has already taken its nods and brows.",
+      "properties": {
+        "phrase": {
+          "anyOf": [
+            {
+              "enum": [
+                "start",
+                "end"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phrase"
+        },
+        "stress": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Stress",
+          "type": "number"
+        }
+      },
+      "title": "SpeechCue",
       "type": "object"
     },
     "StreamEnd": {
