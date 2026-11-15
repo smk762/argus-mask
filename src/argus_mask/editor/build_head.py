@@ -61,13 +61,18 @@ PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", 
 RACE_KEYS = ("asian", "caucasian", "african")
 # MPFB's rig for every head: 53 bones, Unreal-style names (pelvis, spine_01..03, neck_01, head, ...).
 RIG = "game_engine"
-# How much of the body a model keeps: head (the bust, cut by the preset's bust settings) or waist (down to the hips,
-# arms and all). Each framing is its own model, built from the same preset (#62).
-FRAMINGS = ("head", "waist")
+# How much of the body a model keeps: head (the bust, cut by the preset's bust settings), waist (down to the hips,
+# arms and all) or full (head to shoes, nothing cut). Each framing is its own model, built from the same preset (#62).
+FRAMINGS = ("head", "waist", "full")
 WAIST_BELOW_HIPS_M = 0.04
-WAIST_BUDGET_FACTOR = 1.5
+# More body, more triangles: a framing's share of the preset's budget, within MAX_TRIANGLES.
+BUDGET_FACTOR = {"head": 1.0, "waist": 1.5, "full": 2.0}
 # The most any model may have (faces.py: MAX_TRIANGLES; a test holds the two together).
 MAX_TRIANGLES = 120_000
+# Skin under a garment is deleted (hide_covered_skin): cloth this far out along the skin's normal covers it, and so
+# does cloth this far in (skin that has pushed through).
+COVER_OUT_M = 0.03
+COVER_IN_M = 0.012
 # A garment over the budget is thinned (Decimate), but never below this share of its triangles.
 GARMENT_MIN_RATIO = 0.4
 
@@ -852,6 +857,9 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     rig.select_set(True)
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
+    neck_base = rig.data.bones["neck_01"].head_local.z
+    covered = hide_covered_skin(basemesh, [o for o in parts.values() if o.get("argus_garment")], neck_base)
+
     # Landmarks, in Blender's frame: Z up, the face looking down -Y.
     top = max((basemesh.matrix_world @ v.co).z for v in basemesh.data.vertices)
     eyes = parts.get("eyes")
@@ -866,6 +874,8 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         # Waist up: cut a little below the hip joints (the thigh bones' heads), arms and all.
         hips = min(rig.data.bones[name].head_local.z for name in ("thigh_l", "thigh_r"))
         cut_to_bust(objects, hips - WAIST_BELOW_HIPS_M, None)
+    elif framing == "full":
+        pass  # head to shoes: nothing is cut
     else:
         raise RecipeError(f"framing {framing!r}: choose from {', '.join(FRAMINGS)}")
 
@@ -925,8 +935,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     counts = {obj.name: triangles(obj) for obj in objects}
     total = sum(counts.values())
     budget = int(preset.get("max_triangles", 45000))
-    if framing == "waist":  # arms and hands are dense: the waist has half as much again, within the global cap
-        budget = min(int(budget * WAIST_BUDGET_FACTOR), MAX_TRIANGLES)
+    budget = min(int(budget * BUDGET_FACTOR[framing]), MAX_TRIANGLES)  # arms, hands and legs are dense
     decimated = {}
     if total > budget:
         decimated = thin_garments([o for o in objects if o.get("argus_garment")], total - budget)
@@ -1020,6 +1029,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         "triangles_total": total,
         "rig": {"name": RIG, "bones": len(rig.data.bones)},
         "decimated": decimated,
+        "skin_covered_faces": covered,
         "accessories": [report for _, report in placed],
         "garment_colours": preset.get("garment_colours") or {},
         "shapes": {name: len(names) for name, names in shapes.items()},
@@ -1159,6 +1169,47 @@ def metal(name: str, colour: str):
     bsdf.inputs["Metallic"].default_value = 0.85
     bsdf.inputs["Roughness"].default_value = 0.32
     return material
+
+
+def hide_covered_skin(basemesh, garments, below_z: float) -> int:
+    """Delete the skin a garment covers, and so the skin that pokes through it; return the faces deleted.
+
+    MPFB hides skin under clothes by each garment's delete group, which is drawn loosely: under a coverall the
+    shins showed through at the knees. Here a skin vertex is covered when a garment is within COVER_OUT_M along
+    its normal (the cloth over it) or within COVER_IN_M against it (cloth the skin has pushed through). A face goes
+    when all its vertices are covered. At a garment's edge (a cuff, a collar) the rays miss, so the skin there stays.
+    Only skin below *below_z* is considered (the base of the neck): under the chin a ray could reach a high collar,
+    and a head that tilts up would show the hole. Objects must have their transforms applied.
+    """
+    if not garments:
+        return 0
+    trees = []
+    for garment in garments:
+        cloth = bmesh.new()
+        cloth.from_mesh(garment.data)
+        trees.append(BVHTree.FromBMesh(cloth))
+        cloth.free()
+
+    def hit(origin, direction, reach) -> bool:
+        return any(tree.ray_cast(origin, direction, reach)[0] is not None for tree in trees)
+
+    skin = bmesh.new()
+    skin.from_mesh(basemesh.data)
+    covered = set()
+    for vert in skin.verts:
+        normal = vert.normal
+        if vert.co.z >= below_z or normal.length < 0.5:
+            continue
+        if hit(vert.co, normal, COVER_OUT_M) or hit(vert.co, -normal, COVER_IN_M):
+            covered.add(vert.index)
+    gone = [face for face in skin.faces if all(v.index in covered for v in face.verts)]
+    bmesh.ops.delete(skin, geom=gone, context="FACES_ONLY")
+    loose = [v for v in skin.verts if not v.link_faces]
+    bmesh.ops.delete(skin, geom=loose, context="VERTS")
+    skin.to_mesh(basemesh.data)
+    skin.free()
+    basemesh.data.update()
+    return len(gone)
 
 
 def thin_garments(garments, excess: int) -> dict[str, float]:

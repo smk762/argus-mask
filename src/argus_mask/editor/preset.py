@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MAX_TRIANGLES, WEAK_SCREEN_TRIANGLES
-from argus_mask.models import FACE_ID_PATTERN, RESERVED_FACE_IDS
+from argus_mask.models import FACE_ID_PATTERN, RESERVED_FACE_IDS, BodyFraming
 
 # The youngest a head may be: 18 years on MakeHuman's scale. Below 0.5 the age macro maps to years as
 # 1 + 48 * age, so 18 years is 17/48 (0.35417); this is that, rounded up. build_head.py holds the same.
@@ -196,14 +196,22 @@ class Preset(_Strict):
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(WEAK_SCREEN_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
     # Framings to build besides the head (#62): "waist" is the same character from the hips up, arms and all, with
-    # half as much again of the triangle budget. Each is a model of its own beside head.glb.
-    framings: list[Literal["waist"]] = Field(default_factory=list, max_length=1)
+    # half as much again of the triangle budget; "full" is all of it, head to shoes (it must wear shoes), with twice
+    # the budget. Each is a model of its own beside head.glb.
+    framings: list[BodyFraming] = Field(default_factory=list, max_length=2)
 
     @field_validator("id")
     @classmethod
     def _not_reserved(cls, value: str) -> str:
         if value in RESERVED_FACE_IDS:
             raise ValueError(f"{value!r} is reserved: pick another id")
+        return value
+
+    @field_validator("framings")
+    @classmethod
+    def _each_framing_once(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("a framing is listed twice")
         return value
 
     @field_validator("accessories")

@@ -321,7 +321,7 @@
       "type": "object"
     },
     "FaceManifest": {
-      "description": "``manifest.json`` in a face's directory.\n\n``model`` and ``framing`` are the face's head, which every screen can show. ``framings`` holds the same face at\nother framings (``waist``), each a model of its own beside it; a screen asks for one with ``?framing=``.",
+      "description": "``manifest.json`` in a face's directory.\n\n``model`` and ``framing`` are the face's head, which every screen can show. ``framings`` holds the same face at\nother framings (``waist``, ``full``), each a model of its own beside it; a screen asks for one with ``?framing=``.",
       "properties": {
         "blendshapes": {
           "items": {
@@ -338,7 +338,10 @@
             "$ref": "#/$defs/FramedModel"
           },
           "propertyNames": {
-            "const": "waist"
+            "enum": [
+              "waist",
+              "full"
+            ]
           },
           "title": "Framings",
           "type": "object"

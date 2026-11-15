@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Full body** (#62). A preset's `framings` may ask for `full`: the same character head to shoes, nothing cut, with
+  twice the triangle budget. It must wear shoes: they are their own slot in the library and the editor (**Shoes**, and
+  **Full body too** under Advanced), and a full-body preset without them is refused. Screens show it with
+  `?framing=full` (and `record --framing full`): feet together from MakeHuman's A-pose, the soles flat, the same
+  breathing and weight shifts as waist-up with the thighs taking back the hips' sway so the feet stay planted, and a
+  soft contact shadow under the feet (no shadow map, so on every profile).
+
+### Changed
+
+- **Skin under clothes is hidden by the recipe** (#62). Below the neck, skin a garment covers (cloth within 3 cm out
+  along its normal) or pokes through (cloth within 12 mm in) is deleted: under the coverall the shins showed through
+  at the knees. Every framing has fewer triangles for it.
+
 - **Accessories** (#61). A preset's `accessories` adds small metallic pieces the recipe makes itself (CC0) and
   places on the dressed body: a `badge` on the chest, collar `pins`, an `earpiece` at the ear, each on the wearer's
   left or right, in a colour, riding on a bone (so the earpiece turns with the head and the badge breathes with the

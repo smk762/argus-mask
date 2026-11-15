@@ -86,6 +86,7 @@ const ADVANCED = [
 const PICKERS = [
   ['skin', 'Skin', 'skin', false, null, true], ['hair', 'Hair', 'hair', true, null, true],
   ['outfit', 'Clothes', 'clothes', false, 'outfit', true], ['hat', 'Hat', 'clothes', true, 'hat', true],
+  ['shoes', 'Shoes (full body)', 'clothes', true, 'shoes', true],
   ['eyebrows', 'Eyebrows', 'eyebrows', false, null, true], ['eyelashes', 'Eyelashes', 'eyelashes', false, null, true],
   ['eyes', 'Eyeballs', 'eyes', false, null, true], ['teeth', 'Teeth', 'teeth', false, null, true],
   ['tongue', 'Tongue', 'tongue', false, null, true],
@@ -434,15 +435,22 @@ function buildPanels(library, catalogue) {
     resetTo: () => { for (const k of ['mouth', 'shape_scale', 'texture_gain', 'bust', 'max_triangles', 'framings']) preset[k] = structuredClone(DEFAULT[k]); },
   });
   adv.body.prepend(el('div', { className: 'hint', textContent: 'The recipe’s fixes for speech. The defaults suit every head so far.' }));
-  // A second model of the same face from the hips up (#62): a second Blender run, so each build takes twice as long.
-  const waist = el('input', { type: 'checkbox' });
-  const waistRow = el('label', { className: 'row', title: 'Also build the face from the hips up, arms and all: screens show it with ?framing=waist. Each build takes twice as long.' },
-    el('span', { textContent: 'Waist-up too' }), waist, el('output'));
-  waist.addEventListener('change', () => { preset.framings = waist.checked ? ['waist'] : []; changed(); });
-  adv.body.append(waistRow);
-  adv.rows?.push({ el: waistRow, text: 'waist up framing body arms' });
+  // More models of the same face (#62): from the hips up, and head to shoes. A Blender run each, so each adds a build's time.
+  const framingBox = (name, label, hint, words) => {
+    const box = el('input', { type: 'checkbox' });
+    const row = el('label', { className: 'row', title: hint }, el('span', { textContent: label }), box, el('output'));
+    box.addEventListener('change', () => {
+      const others = (preset.framings || []).filter((f) => f !== name);
+      preset.framings = ['waist', 'full'].filter((f) => f === name ? box.checked : others.includes(f));
+      changed();
+    });
+    adv.body.append(row);
+    adv.rows?.push({ el: row, text: words });
+    controls.push({ sync: () => { box.checked = (preset.framings || []).includes(name); } });
+  };
+  framingBox('waist', 'Waist-up too', 'Also build the face from the hips up, arms and all: screens show it with ?framing=waist. Each build takes longer.', 'waist up framing body arms');
+  framingBox('full', 'Full body too', 'Also build the face head to shoes (pick Shoes under Clothes): screens show it with ?framing=full. Each build takes longer.', 'full body framing legs shoes standing');
   fields.set('framings', { label: 'Framings', show: (v) => ['head', ...(v || [])].join(', ') });
-  controls.push({ sync: () => { waist.checked = (preset.framings || []).includes('waist'); } });
 }
 
 function syncForm() {

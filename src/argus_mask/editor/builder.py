@@ -348,7 +348,7 @@ class Builder:
                 build_manifest, model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
             )
             framed = {}
-            for name in preset.framings:  # the same preset, from the hips up: a second Blender run
+            for name in preset.framings:  # the same preset, from the hips up or head to shoes: a Blender run each
                 await self._run_blender(work / PRESET_NAME, work / f"{name}.glb", framing=name)
                 framed[name] = await asyncio.to_thread(self._framed, work, name)
             if framed:

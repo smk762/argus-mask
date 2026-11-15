@@ -19,8 +19,8 @@ from argus_mask.editor.preset import CLOTHES_DIR, PART_DIRS, Preset
 
 FACEUNITS_PACK = "faceunits01"
 CLOTHES = "clothes"  # the library's part name for everything worn
-# Clothes a bust never shows.
-_UNSEEN_TAGS = {"shoes"}
+# Clothes tagged as shoes go on the feet: only a full-body framing shows them, and it needs them.
+_SHOE_TAGS = {"shoes"}
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Pack licences as SPDX ids. Anything else is kept as the pack states it.
 _SPDX = {"CC0": "CC0-1.0", "CC-0": "CC0-1.0", "CC0-1.0": "CC0-1.0"}
@@ -43,10 +43,12 @@ class Asset:
 
     @property
     def slot(self) -> str:
-        """For clothes, where it goes: ``hat`` or ``outfit``. Empty for body parts."""
+        """For clothes, where it goes: ``hat``, ``shoes`` or ``outfit``. Empty for body parts."""
         if self.part != CLOTHES:
             return ""
-        return "hat" if {"hats", "hat"} & set(self.tags) else "outfit"
+        if {"hats", "hat"} & set(self.tags):
+            return "hat"
+        return "shoes" if _SHOE_TAGS & set(self.tags) else "outfit"
 
     def public(self) -> dict:
         out = {"part": self.part, "name": self.name, "ref": self.ref, "license": self.license, "author": self.author}
@@ -166,8 +168,6 @@ class AssetLibrary:
                         continue
                     thumb = sub / f"{sub.name}.thumb"
                     tags = _tags(sub / f"{sub.name}{ext}") if part == CLOTHES else ()
-                    if _UNSEEN_TAGS & set(tags):
-                        continue
                     found.append(
                         Asset(
                             part=part,
@@ -189,7 +189,7 @@ class AssetLibrary:
     def resolve(self, preset: Preset) -> dict[str, Asset]:
         """The installed asset behind each part and each item of clothing, or :class:`LibraryError` naming the first that is not.
 
-        A preset with no outfit among its clothes is refused too.
+        A preset with no outfit among its clothes is refused too, and one with a full-body framing and no shoes.
 
         Keys are the part names, and ``clothes <name>`` for each item of clothing.
         """
@@ -203,6 +203,8 @@ class AssetLibrary:
             resolved[f"{CLOTHES} {asset.name}" if part == CLOTHES else part] = asset
         if not any(a.slot == "outfit" for a in resolved.values()):
             raise LibraryError(f"{CLOTHES}: every head is dressed; choose an outfit, not only a hat")
+        if "full" in preset.framings and not any(a.slot == "shoes" for a in resolved.values()):
+            raise LibraryError(f"{CLOTHES}: a full-body framing shows the feet; choose shoes")
         return resolved
 
 

@@ -66,6 +66,16 @@ export const ARMS_DOWN = {
   ...curl('r', 10),
 };
 
+// A full-body model stands as well: MakeHuman's legs are built apart, so the thighs come in a little and the feet
+// turn back by as much, soles flat on the floor.
+export const STANDING = {
+  ...ARMS_DOWN,
+  thigh_l: { world: [0, 0, -3.5] },
+  thigh_r: { world: [0, 0, 3.5] },
+  foot_l: { world: [0, 0, 3.5] },
+  foot_r: { world: [0, 0, -3.5] },
+};
+
 // Set a pose (see ARMS_DOWN), parents first (the order of *pose*). Each bone's world rotation at rest is read
 // before any is moved, so a child's turn is about the axes at rest, carried along by its parent's.
 export function setPose(THREE, root, pose) {
@@ -98,6 +108,8 @@ export const BODY = {
   breath: { spine_02: [-0.35, 0, 0], spine_03: [-0.7, 0, 0], clavicle_l: [0, 0, 1.4], clavicle_r: [0, 0, -1.4] },
   shift: { pelvis: [0, 0.4, 1.0], spine_01: [0, 0, -0.55], spine_03: [0, 0, -0.3] },
   nod: { spine_03: 0.12 },            // the share of the head's pitch the chest follows
+  // A full-body model's thighs take back the pelvis's turn, so the hips sway over feet that stay where they stand.
+  plant: ['thigh_l', 'thigh_r'],
   // Each arm drifts on its own: a degree or so at the shoulder and elbow, on periods that share no rhythm, so the
   // arms never move in step and never quite repeat.
   arms: {
@@ -114,7 +126,7 @@ export class BodyLife {
     const bones = new Map();
     root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
     root.updateMatrixWorld(true);
-    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod), ...Object.keys(BODY.arms)]);
+    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod), ...Object.keys(BODY.arms), ...BODY.plant]);
     this.bones = new Map([...names].filter((n) => bones.has(n)).map((n) => {
       const bone = bones.get(n);
       const world = bone.getWorldQuaternion(new THREE.Quaternion());
@@ -153,10 +165,67 @@ export class BodyLife {
       b.angle[0] += amp[0] * k; b.angle[1] += amp[1] * k; b.angle[2] += amp[2] * k;
     });
     const rad = Math.PI / 180;
-    for (const b of this.bones.values()) {
-      this.turn.setFromEuler(this.euler.set(b.angle[0] * rad, b.angle[1] * rad, b.angle[2] * rad, 'YXZ'));
+    const pelvis = this.bones.get('pelvis');
+    const planted = new Set(BODY.plant);
+    for (const [name, b] of this.bones) {
+      if (planted.has(name)) {
+        if (!pelvis) continue;
+        // The pelvis's own turn, undone: in world terms the thigh ends where it was at rest.
+        const [x, y, z] = pelvis.angle;
+        this.turn.setFromEuler(this.euler.set(x * rad, y * rad, z * rad, 'YXZ')).invert();
+      } else {
+        this.turn.setFromEuler(this.euler.set(b.angle[0] * rad, b.angle[1] * rad, b.angle[2] * rad, 'YXZ'));
+      }
       this.local.copy(b.inverse).multiply(this.turn).multiply(b.world);
       b.bone.quaternion.copy(b.rest).multiply(this.local);
     }
   }
+}
+
+// Where a full-body model meets the floor: a soft shadow under it, broad around the stance and dark under each
+// foot, so it stands on the floor (plain or a backdrop's) rather than floating in front of it. No shadow map: it
+// is a flat, see-through card at the soles' height, the same on every profile, and a function of the pose alone.
+// Call after setPose. Returns the card (added to *parent*), or null if the model has no feet.
+export function contactShadow(THREE, root, parent, { strength = 0.8 } = {}) {
+  const bones = new Map();
+  root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
+  if (!bones.has('foot_l') || !bones.has('foot_r')) return null;
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root, true);
+  const feet = ['foot_l', 'foot_r'].map((n) => bones.get(n).getWorldPosition(new THREE.Vector3()));
+  const floor = box.min.y + 0.002;   // just above the soles: never under them, never z-fighting
+  const centre = new THREE.Vector3((feet[0].x + feet[1].x) / 2, floor, (feet[0].z + feet[1].z) / 2 + 0.03);
+  const width = Math.max(0.6, Math.abs(feet[0].x - feet[1].x) + 0.5);
+  const depth = 0.55;
+  // The card lies flat (turned -90 degrees about x), so its v runs toward -z.
+  const local = (p) => new THREE.Vector2((p.x - centre.x) / width + 0.5, (centre.z - p.z) / depth + 0.5);
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    uniforms: { uFeet: { value: feet.map((f) => local(new THREE.Vector3(f.x, 0, f.z + 0.05))) }, uStrength: { value: strength },
+      uAspect: { value: width / depth } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform vec2 uFeet[2];
+      uniform float uStrength;
+      uniform float uAspect;
+      float blob(vec2 p, vec2 at, vec2 size) { vec2 d = (p - at) / size; return exp(-dot(d, d)); }
+      void main() {
+        vec2 p = vUv;
+        float broad = blob(p, vec2(0.5), vec2(0.36, 0.36)) * 0.6;
+        float soles = 0.0;
+        for (int i = 0; i < 2; i++) soles += blob(p, uFeet[i], vec2(0.13, 0.13 * uAspect));
+        float edge = 1.0 - smoothstep(0.42, 0.5, max(abs(p.x - 0.5), abs(p.y - 0.5)));   // nothing at the card's edge
+        gl_FragColor = vec4(0.0, 0.0, 0.0, clamp(broad + 0.8 * soles, 0.0, 1.0) * uStrength * edge);
+      }`,
+  });
+  const card = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), material);
+  card.rotation.x = -Math.PI / 2;
+  card.position.copy(centre);
+  card.renderOrder = -1;   // before the model, so its blend sits under the shoes
+  card.name = 'contact-shadow';
+  parent.add(card);
+  return card;
 }
