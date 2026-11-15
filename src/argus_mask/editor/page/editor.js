@@ -80,7 +80,7 @@ const ADVANCED = [
   ['shape_scale.mouthPucker', 'Pucker strength', 0, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.5],
   ['texture_gain.teeth', 'Teeth brightness', 0.2, 3, 0.05, (v) => `× ${Number(v).toFixed(2)}`, 1.3],
   ['bust.height_m', 'Bust height', 0.2, 0.6, 0.01, (v) => `${Math.round(v * 100)} cm`, 0.4],
-  ['max_triangles', 'Triangle budget', 1000, 45000, 500, (v) => Number(v).toLocaleString(), 45000],
+  ['max_triangles', 'Triangle budget', 1000, 120000, 1000, (v) => `${Number(v).toLocaleString()}${v > 45000 ? ' (over the weak-screen budget)' : ''}`, 45000],
 ];
 // Asset pickers: [key, title, library part, optional, clothes slot, enlarge on hover]
 const PICKERS = [

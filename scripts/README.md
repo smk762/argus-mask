@@ -92,7 +92,7 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | `bust` | Where the body is cut: `height_m` below the top of the head, `half_width_m` either side of the centre line. |
 | `max_texture_px` | Cap for opaque textures, stored as JPEG. |
 | `max_alpha_texture_px` | Cap for textures with real transparency (hair, lashes, brows), stored as PNG. |
-| `max_triangles` | The build fails above this, after the garments have been thinned: when a build is over budget, the recipe decimates the clothes alone, all by one ratio, never below 40% of their triangles (the face, hands and hair keep every one; a garment's own shapes, such as a collar's `jawOpen`, are carried over). The recipe report says what was thinned (`decimated`). |
+| `max_triangles` | Default 45,000 (the budget for weak screens, which `inspect` warns about), up to 120,000. The build fails above it, after the garments have been thinned: when a build is over budget, the recipe decimates the clothes alone, all by one ratio, never below 40% of their triangles (the face, hands and hair keep every one; a garment's own shapes, such as a collar's `jawOpen`, are carried over). The recipe report says what was thinned (`decimated`). |
 | `mouth.tongue_flatten` | Squashes the tongue's rest shape toward its underside: 1 leaves it, 0.6 makes it 60% as tall. Setting this (or `tongue_drop_mm`) also makes the whole tongue drop with its tip under `jawOpen`. |
 | `mouth.tongue_drop_mm` | Lowers the tongue's rest shape by this much more. |
 | `mouth.upper_teeth_drop_mm` | Lowers the upper teeth, so their edge shows below the upper lip in an open mouth. |
