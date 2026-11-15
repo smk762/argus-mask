@@ -58,12 +58,12 @@ export class HeadTurn {
 const FINGERS = ['index', 'middle', 'ring', 'pinky'];
 const curl = (side, deg) => Object.fromEntries(FINGERS.flatMap((f) => [1, 2, 3].map((j) => [`${f}_0${j}_${side}`, { bend: deg * (j === 1 ? 0.6 : 1) }])));
 export const ARMS_DOWN = {
-  upperarm_l: { world: [-4, 0, -42] },
-  upperarm_r: { world: [-4, 0, 42] },
-  lowerarm_l: { world: [-20, 0, 0], twist: 30 },
-  lowerarm_r: { world: [-20, 0, 0], twist: -30 },
-  ...curl('l', 20),
-  ...curl('r', 20),
+  upperarm_l: { world: [4, 0, -40] },
+  upperarm_r: { world: [4, 0, 40] },
+  lowerarm_l: { world: [-6, 0, 0], twist: 25 },
+  lowerarm_r: { world: [-6, 0, 0], twist: -25 },
+  ...curl('l', 10),
+  ...curl('r', 10),
 };
 
 // Set a pose (see ARMS_DOWN), parents first (the order of *pose*). Each bone's world rotation at rest is read
