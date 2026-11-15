@@ -1,4 +1,4 @@
-# Dragonhound shared design layer (dh-shared v1, currently 1.2.6)
+# Dragonhound shared design layer (dh-shared v1, currently 1.2.7)
 
 The one source of truth for what the Dragonhound Labs sites share: dragonhound.dev (this repo,
 the reference look), Studio, Lightbox, Atlas, Cull, Realms, Safelight, Assay and Sightline. Each repo vendors a pinned copy, so there is no
@@ -232,7 +232,7 @@ CI snippet for a target repo (GitHub Actions):
 
 ## Changelog
 
-- **1.2.6**
+- **1.2.7**
   - `dh-strip.mjs`: Mask (`mask`, https://mask.dragonhound.dev/, argus-mask) joins the strip after Sightline: Lightbox,
     Studio, Atlas, Cull, Realms, Safelight, Assay, Sightline, Mask. `dh-strip.html`, the current-site rules in
     `dh-strip.css` and the `DhSite` type follow.
@@ -242,7 +242,14 @@ CI snippet for a target repo (GitHub Actions):
     width from 320 to 999 px and at 1280 and 1440 px, both suffixes, each site current: no page or bar overflow,
     "Live demo" always on screen, the current link always in view, links at least 25 px wide.
   - `dh-theme.js` and the landing's external-link rule: comments name the new site. The test page has the new link
-    (20/20 above 664 px, 22/22 below).
+    and the new phone width. The README's header names the current version again (it still said 1.2.5 in 1.2.6).
+
+- **1.2.6**
+  - `dh-strip.css`: `.dh-strip` is `position: relative`. Below 880 px the name and the label suffix are visually
+    hidden with `position: absolute`. In an unpositioned bar they escaped its scroll box, sitting where the bar's
+    content ends, so the whole page scrolled sideways whenever that content was a few px wider than the screen
+    (between 600 and 879 px, depending on the browser's fonts: 6 px at 604 px in CI's Chrome). The test page checks
+    the bar is positioned.
 
 - **1.2.5**
   - `dh-strip.mjs`: Safelight (`safelight`, https://safelight.dragonhound.dev/, argus-darkroom), Assay (`assay`,
