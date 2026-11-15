@@ -1,4 +1,4 @@
-# Dragonhound shared design layer (dh-shared v1, currently 1.2.5)
+# Dragonhound shared design layer (dh-shared v1, currently 1.2.6)
 
 The one source of truth for what the Dragonhound Labs sites share: dragonhound.dev (this repo,
 the reference look), Studio, Lightbox, Atlas, Cull, Realms, Safelight, Assay and Sightline. Each repo vendors a pinned copy, so there is no
@@ -121,7 +121,7 @@ One source, two forms: `dh-strip.mjs` exports the links, labels and mark (`strip
 `dh-strip.html` is generated from it by `npm run shared:stamp`, and the build fails if the two drift.
 
 - **Static HTML:** paste `dh-strip.html` as the first element in `<body>` after the skip link, include `dh-strip.css`
-  after the tokens, and say which site this is with **`data-dh-site="studio"`** (or `lightbox`, `atlas`, `cull`, `realms`, `safelight`, `assay`, `sightline`) on `<html>`
+  after the tokens, and say which site this is with **`data-dh-site="studio"`** (or `lightbox`, `atlas`, `cull`, `realms`, `safelight`, `assay`, `sightline`, `mask`) on `<html>`
   or on the `<nav class="dh-strip">`. Don't edit the markup: `dh-strip.css` shows the current link from that
   attribute (no JS needed), and `dh-theme.js` adds `aria-current="page"` to it, also for strips mounted later.
   A hand-set `aria-current` still works.
@@ -231,6 +231,18 @@ CI snippet for a target repo (GitHub Actions):
 9. Verify: 390 px and 1440 px in both themes, toggle on one subdomain and reload another (cookie `Domain=.dragonhound.dev`), zero CSP errors, Lighthouse unchanged or better.
 
 ## Changelog
+
+- **1.2.6**
+  - `dh-strip.mjs`: Mask (`mask`, https://mask.dragonhound.dev/, argus-mask) joins the strip after Sightline: Lightbox,
+    Studio, Atlas, Cull, Realms, Safelight, Assay, Sightline, Mask. `dh-strip.html`, the current-site rules in
+    `dh-strip.css` and the `DhSite` type follow.
+  - `dh-strip.css`: nine links, the current one semibold, and the longer suffix need about 961 px, so the phone layout
+    (mark only, short label) applies below 968 px (was 880 px), and the link list scrolls sideways below 664 px (was
+    600 px), where nine links stop fitting. The 420 px and 360 px tightening is unchanged. Measured in Chromium at every
+    width from 320 to 999 px and at 1280 and 1440 px, both suffixes, each site current: no page or bar overflow,
+    "Live demo" always on screen, the current link always in view, links at least 25 px wide.
+  - `dh-theme.js` and the landing's external-link rule: comments name the new site. The test page has the new link
+    (20/20 above 664 px, 22/22 below).
 
 - **1.2.5**
   - `dh-strip.mjs`: Safelight (`safelight`, https://safelight.dragonhound.dev/, argus-darkroom), Assay (`assay`,
