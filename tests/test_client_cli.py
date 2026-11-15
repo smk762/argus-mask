@@ -99,6 +99,49 @@ def test_push_plays_a_file_into_a_running_server(server, tmp_path) -> None:
     assert refused.exit_code == 1 and "no face 'nobody'" in refused.output
 
 
+class _ClosedSocket:
+    """A source socket the server has already closed with *reason*: sends fail after *sends_ok* of them, as when the
+    server refused before the client spoke (sends_ok=0) or failed mid-stream."""
+
+    def __init__(self, reason: str, sends_ok: int) -> None:
+        self.reason, self.sends_ok, self.sent = reason, sends_ok, 0
+
+    def _closed(self):  # noqa: ANN202
+        from websockets.exceptions import ConnectionClosedError  # noqa: PLC0415
+        from websockets.frames import Close  # noqa: PLC0415
+
+        return ConnectionClosedError(Close(1008, self.reason), Close(1008, self.reason), True)
+
+    async def __aenter__(self):  # noqa: ANN204
+        return self
+
+    async def __aexit__(self, *exc) -> None:  # noqa: ANN002
+        return None
+
+    async def send(self, data) -> None:  # noqa: ANN001
+        if self.sent >= self.sends_ok:
+            raise self._closed()
+        self.sent += 1
+
+    async def recv(self) -> str:
+        return json.dumps({"type": "ready", "session_id": "s"})
+
+
+@pytest.mark.parametrize("sends_ok", [0, 2], ids=["refused-before-hello", "closed-mid-stream"])
+def test_push_says_why_the_server_closed_whenever_it_closes(tmp_path, monkeypatch, sends_ok) -> None:
+    """The server closing with a reason reaches the user as that reason, whichever send meets the closed socket."""
+    import websockets  # noqa: PLC0415
+
+    socket = _ClosedSocket("no face 'nobody'", sends_ok)
+    monkeypatch.setattr(websockets, "connect", lambda *a, **k: socket)
+    wav = write_wav(tmp_path / "hello.wav", tone(1.0))
+    refused = runner.invoke(app, ["push", str(wav), "--face", "nobody", "--url", "http://127.0.0.1:9"])
+    assert refused.exit_code == 1 and "no face 'nobody'" in refused.output
+    assert not isinstance(refused.exception, websockets.ConnectionClosed), (
+        "a closed socket is a ClientError, said plainly"
+    )
+
+
 async def test_a_source_paces_from_its_first_chunk_not_from_connecting(tmp_path, monkeypatch) -> None:
     """A TTS model is slow to produce its first audio; the rest must still go out at the speed of speech."""
     import time
