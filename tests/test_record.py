@@ -217,3 +217,23 @@ def test_two_recordings_of_one_take_match_at_high(server, tmp_path: Path, scene:
     assert len(names) == 6
     for name in names:
         assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes(), name
+
+
+def test_the_viewer_is_asked_for_the_framing(server, tmp_path: Path, monkeypatch) -> None:
+    urls = []
+
+    async def render(page_url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003 - stands in for the browser
+        urls.append(page_url)
+
+    monkeypatch.setattr(record, "render_frames", render)
+    monkeypatch.setattr(record, "mux", lambda *a, **k: None)
+
+    async def run():
+        pushed = asyncio.create_task(_push_after(server, 0.5, 0.2))
+        await record.record(server, "test-head", tmp_path / "c.mp4", width=160, height=120, framing="waist")
+        await pushed
+
+    asyncio.run(run())
+    assert "framing=waist" in urls[0]
+    with pytest.raises(record.RecordError, match="framing 'feet'"):
+        asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / "c.mp4", framing="feet"))

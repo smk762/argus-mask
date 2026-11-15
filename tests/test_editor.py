@@ -46,7 +46,10 @@ if mode == "sleep":
 if mode == "silent":
     sys.exit(0)
 out.write_bytes(pathlib.Path(os.environ["FAKE_BLENDER_GLB"]).read_bytes())
-recipe = {{"blender": "4.5.15 LTS", "mpfb": "2.0.18", "triangles_total": 1, "bytes": out.stat().st_size}}
+framing = rest[rest.index("--framing") + 1] if "--framing" in rest else "head"
+extent = {{"above_eyes": 0.13, "below_eyes": 0.74 if framing == "waist" else 0.32}}
+recipe = {{"blender": "4.5.15 LTS", "mpfb": "2.0.18", "triangles_total": 1, "bytes": out.stat().st_size, "framing": framing,
+          "extent_m": extent}}
 out.with_suffix(".recipe.json").write_text(json.dumps(recipe))
 """
 
@@ -1297,3 +1300,26 @@ def test_the_editor_serves_what_a_preview_needs_for_a_backdrop(client) -> None:
     assert client.get("/backdrop.js").status_code == 200
     assert client.get("/scenes/plate.js").status_code == 200
     assert client.get("/scenes/garden/background.json").json()["name"] == "garden"
+
+
+def test_a_preset_can_build_the_waist_up_too(client, rig) -> None:
+    reply = client.post("/build", json=preset(framings=["waist"]))
+    assert reply.status_code == 200, reply.text
+    runs = [c["argv"] for c in calls(rig)]
+    assert [a[a.index("--framing") + 1] for a in runs] == ["head", "waist"]
+    preview = rig["assets"] / ".preview" / "my-face"
+    manifest = FaceStore(rig["assets"] / ".preview").load("my-face")[0]
+    waist = manifest.framings["waist"]
+    assert waist.model.file == "waist.glb" and (preview / "waist.glb").is_file()
+    assert waist.framing.distance > manifest.framing.distance and waist.framing.height < 0, "framed to show it all"
+    assert client.get("/face/my-face/model?from=preview&framing=waist").content == (preview / "waist.glb").read_bytes()
+    assert client.get("/face/my-face/model/waist.glb?from=preview").status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    exported = FaceStore(rig["assets"]).load("my-face")[0]
+    assert "waist" in exported.framings and (rig["assets"] / "my-face" / "waist.glb").is_file()
+
+
+def test_a_head_only_preset_runs_blender_once(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert len(calls(rig)) == 1
+    assert client.get("/face/my-face/model?from=preview&framing=waist").status_code == 404

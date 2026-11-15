@@ -52,11 +52,13 @@ from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
 from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
 from argus_mask.models import (
     FACE_ID_PATTERN,
+    FRAMINGS,
     VOICE_DISCLOSURE,
     DriverHealth,
     FaceManifest,
     FaceScene,
     Health,
+    ModelFile,
     PlateManifest,
     RestSet,
     SceneInfo,
@@ -368,11 +370,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face(face_id: str) -> FaceManifest:
         return face_or_404(face_id)[0]
 
-    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
+    def model_response(model: ModelFile, path: Path) -> FileResponse:
         # The sha256 in the manifest changes when the model does, so a viewer may cache by it.
-        return FileResponse(
-            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
-        )
+        return FileResponse(path, media_type=MEDIA_TYPES[model.format], headers={"ETag": f'"{model.sha256}"'})
 
     @app.get("/face/{face_id}/consent", response_model=ConsentVerdict)
     def face_consent(
@@ -391,16 +391,24 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         return found
 
     @app.get("/face/{face_id}/model")
-    def face_model(face_id: str) -> FileResponse:
-        return model_response(*face_or_404(face_id))
+    def face_model(
+        face_id: str, framing: str = Query("head", pattern="^(" + "|".join(FRAMINGS) + ")$")
+    ) -> FileResponse:
+        """The face's model: its head, or the model for another framing it has (``?framing=waist``)."""
+        manifest, path = face_or_404(face_id)
+        found = manifest.framed(framing)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"face {face_id!r} has no {framing} framing")
+        return model_response(found[0], path.parent / found[0].file)
 
     @app.get("/face/{face_id}/model/{file}")
     def face_model_named(face_id: str, file: str) -> FileResponse:
-        """The model under its own name: only the manifest's file, never a path the request makes up."""
+        """A model under its own name: only a file the manifest names, never a path the request makes up."""
         manifest, path = face_or_404(face_id)
-        if file != manifest.model.file:
+        models = {m.file: m for m in (manifest.model, *(f.model for f in manifest.framings.values()))}
+        if file not in models:
             raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
-        return model_response(manifest, path)
+        return model_response(models[file], path.parent / file)
 
     add_scene_routes(app, plates)
 

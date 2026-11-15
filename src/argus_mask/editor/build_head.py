@@ -61,6 +61,11 @@ PHENOTYPE_KEYS = ("gender", "age", "muscle", "weight", "proportions", "height", 
 RACE_KEYS = ("asian", "caucasian", "african")
 # MPFB's rig for every head: 53 bones, Unreal-style names (pelvis, spine_01..03, neck_01, head, ...).
 RIG = "game_engine"
+# How much of the body a model keeps: head (the bust, cut by the preset's bust settings) or waist (down to the hips,
+# arms and all). Each framing is its own model, built from the same preset (#62).
+FRAMINGS = ("head", "waist")
+WAIST_BELOW_HIPS_M = 0.04
+WAIST_BUDGET_FACTOR = 1.5
 
 # Modelling targets a preset may set under ``targets``: the allow-list in modifiers.json beside this
 # script (generated from MPFB's catalogue by scripts/make_modifiers.py; the editor reads the same file).
@@ -231,14 +236,17 @@ def triangles(obj) -> int:
     return sum(len(p.vertices) - 2 for p in obj.data.polygons)
 
 
-def cut_to_bust(objects, z_cut: float, half_width: float) -> None:
-    """Cut away everything below *z_cut* and further than *half_width* from the centre line.
+def cut_to_bust(objects, z_cut: float, half_width: float | None) -> None:
+    """Cut away everything below *z_cut* and further than *half_width* from the centre line (None: no side cuts,
+    for a framing that keeps the arms).
 
     Three plane cuts, so the bust ends in clean edges. bmesh carries the shape keys through the
     cut: the new vertices on the cut line get every face shape, interpolated.
     Objects must have their transforms applied (local coordinates are world coordinates).
     """
-    planes = (((0, 0, z_cut), (0, 0, 1)), ((half_width, 0, 0), (-1, 0, 0)), ((-half_width, 0, 0), (1, 0, 0)))
+    planes = [((0, 0, z_cut), (0, 0, 1))]
+    if half_width is not None:
+        planes += [((half_width, 0, 0), (-1, 0, 0)), ((-half_width, 0, 0), (1, 0, 0))]
     for obj in objects:
         mesh = bmesh.new()
         mesh.from_mesh(obj.data)
@@ -734,7 +742,7 @@ def patch_glb(path: str, blended: set[str]) -> dict:
     return doc
 
 
-def build(preset: dict, out: str) -> dict:
+def build(preset: dict, out: str, framing: str = "head") -> dict:
     mpfb = find_mpfb()
     services = importlib.import_module(mpfb.__name__ + ".services")
     human, targets, faces, export = (
@@ -827,8 +835,15 @@ def build(preset: dict, out: str) -> dict:
         raise RecipeError("the eyes did not load, so the head cannot be centred")
     eye_points = [eyes.matrix_world @ v.co for v in eyes.data.vertices]
     eye_z = sum(p.z for p in eye_points) / len(eye_points)
-    bust = preset.get("bust") or {}
-    cut_to_bust(objects, top - float(bust.get("height_m", 0.40)), float(bust.get("half_width_m", 0.23)))
+    if framing == "head":
+        bust = preset.get("bust") or {}
+        cut_to_bust(objects, top - float(bust.get("height_m", 0.40)), float(bust.get("half_width_m", 0.23)))
+    elif framing == "waist":
+        # Waist up: cut a little below the hip joints (the thigh bones' heads), arms and all.
+        hips = min(rig.data.bones[name].head_local.z for name in ("thigh_l", "thigh_r"))
+        cut_to_bust(objects, hips - WAIST_BELOW_HIPS_M, None)
+    else:
+        raise RecipeError(f"framing {framing!r}: choose from {', '.join(FRAMINGS)}")
 
     # Origin: on the centre line, at eye height, halfway through the skull. The viewer turns the head
     # about the origin, and looks at it from +Z (glTF) with the camera the manifest's framing describes.
@@ -884,6 +899,8 @@ def build(preset: dict, out: str) -> dict:
     counts = {obj.name: triangles(obj) for obj in objects}
     total = sum(counts.values())
     budget = int(preset.get("max_triangles", 45000))
+    if framing == "waist":  # arms and hands are dense: the waist has half as much again, within the global cap
+        budget = min(int(budget * WAIST_BUDGET_FACTOR), 45000)
     if total > budget:
         raise RecipeError(f"{total} triangles is over the budget of {budget}: {counts}")
 
@@ -961,6 +978,7 @@ def build(preset: dict, out: str) -> dict:
         "age_years": round(age_years(phenotype["age"])),
         "assets": assets,
         "triangles": counts,
+        "framing": framing,
         "triangles_total": total,
         "rig": {"name": RIG, "bones": len(rig.data.bones)},
         "shapes": {name: len(names) for name, names in shapes.items()},
@@ -1014,9 +1032,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="build_head.py", description=__doc__.split("\n\n")[0])
     parser.add_argument("--preset", required=True, help="a recipe under scripts/stock_heads/")
     parser.add_argument("--out", required=True, help="the .glb to write")
+    parser.add_argument("--framing", default="head", choices=FRAMINGS, help="how much of the body to keep")
     args = parser.parse_args(argv)
     try:
-        recipe = build(load_preset(args.preset), args.out)
+        recipe = build(load_preset(args.preset), args.out, args.framing)
     except RecipeError as exc:
         print(f"build_head: {exc}", file=sys.stderr)
         sys.exit(2)

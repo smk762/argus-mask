@@ -499,17 +499,24 @@ class FaceStore:
             why = refusal(self.consents.check_face(manifest.provenance, use=use, at=self.clock()))
             if why is not None:
                 raise FaceError(f"consent: {why}")
-        model = directory / manifest.model.file
-        # The file name is pattern-checked, so it has no separators; a symlink could still point out.
-        if not model.is_file() or model.resolve().parent != directory.resolve():
-            raise FaceError(f"the model {manifest.model.file} is not in the face's directory")
-        if self._sha256(model) != manifest.model.sha256:
-            raise FaceError("the model's sha256 does not match the manifest")
+        model = self._model(directory, manifest.model, "the model")
+        for name, framed in manifest.framings.items():  # each framing is checked as the head is
+            self._model(directory, framed.model, f"the {name} model")
         if manifest.model.format == "lam-splat":
             report = self._splat(model)
             if unknown := [n for n in manifest.blendshapes if n not in report.present]:
                 raise FaceError(f"the manifest names shapes the head's skin.glb does not have: {', '.join(unknown)}")
         return manifest, model
+
+    def _model(self, directory: Path, model: ModelFile, what: str) -> Path:
+        """A model file of the face, refused unless it is in the face's directory and matches its sha256."""
+        path = directory / model.file
+        # The file name is pattern-checked, so it has no separators; a symlink could still point out.
+        if not path.is_file() or path.resolve().parent != directory.resolve():
+            raise FaceError(f"{what} {model.file} is not in the face's directory")
+        if self._sha256(path) != model.sha256:
+            raise FaceError(f"{what}'s sha256 does not match the manifest")
+        return path
 
     def _splat(self, path: Path) -> SplatReport:
         """The archive's report, checked once per version of the file; :class:`FaceError` if it is refused."""

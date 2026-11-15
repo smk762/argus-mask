@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -32,7 +33,7 @@ from argus_mask import __version__
 from argus_mask.editor.library import AssetLibrary, credits, licence_expression
 from argus_mask.editor.preset import Preset
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb, sha256_file
-from argus_mask.models import FACE_ID_PATTERN, FaceManifest, Framing, Provenance
+from argus_mask.models import FACE_ID_PATTERN, FaceManifest, FramedModel, Framing, ModelFile, Provenance
 
 log = structlog.get_logger(__name__)
 
@@ -51,6 +52,20 @@ TRASH_DIR = ".trash"  # deleted faces go here, not away: the server skips it, an
 PLACES = ("export", "preview")
 # Where the stock heads put the camera: a bust, not a face filling the screen.
 FRAMING = Framing(distance=0.9, height=-0.08)
+FRAME_FOV = 30.0
+FRAME_MARGIN = 1.12  # room above the hair and below the cut
+
+
+def frame_extent(above_eyes: float, below_eyes: float, fov: float = FRAME_FOV) -> Framing:
+    """A camera that shows a model from *below_eyes* under the eyes to *above_eyes* over them (metres), centred."""
+    half = (above_eyes + below_eyes) * FRAME_MARGIN / 2
+    return Framing(
+        distance=round(half / math.tan(math.radians(fov / 2)), 3),
+        height=round((above_eyes - below_eyes) / 2, 3),
+        fov=fov,
+    )
+
+
 _ERROR_CHARS = 2000
 _FACE_ID = re.compile(FACE_ID_PATTERN)
 
@@ -332,6 +347,12 @@ class Builder:
             manifest = await asyncio.to_thread(
                 build_manifest, model, face_id=preset.id, name=preset.name, provenance=provenance, framing=FRAMING
             )
+            framed = {}
+            for name in preset.framings:  # the same preset, from the hips up: a second Blender run
+                await self._run_blender(work / PRESET_NAME, work / f"{name}.glb", framing=name)
+                framed[name] = await asyncio.to_thread(self._framed, work, name)
+            if framed:
+                manifest = manifest.model_copy(update={"framings": framed})
             (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
             try:
                 await asyncio.to_thread(self._keep, work, key)
@@ -345,7 +366,25 @@ class Builder:
         log.info("face_built", face=preset.id, seconds=seconds, triangles=recipe.get("triangles_total"))
         return BuildResult(manifest=manifest, recipe=recipe, seconds=seconds, key=key)
 
-    async def _run_blender(self, preset_path: Path, out: Path) -> None:
+    @staticmethod
+    def _framed(work: Path, name: str) -> FramedModel:
+        """The model Blender wrote for framing *name*, checked, with a camera that shows all of it."""
+        path = work / f"{name}.glb"
+        if not path.is_file():
+            raise BuildError(f"Blender finished but wrote no {name} model")
+        report = inspect_glb(path)
+        if report.missing:
+            raise BuildError(f"the {name} model is missing {len(report.missing)} of the 52 ARKit shapes")
+        try:
+            extent = json.loads((work / f"{name}.recipe.json").read_text(encoding="utf-8"))["extent_m"]
+        except (OSError, ValueError, KeyError) as exc:
+            raise BuildError(f"the {name} build wrote no extent: {exc}") from exc
+        return FramedModel(
+            model=ModelFile(file=path.name, sha256=sha256_file(path)),
+            framing=frame_extent(extent["above_eyes"], extent["below_eyes"]),
+        )
+
+    async def _run_blender(self, preset_path: Path, out: Path, framing: str = "head") -> None:
         env = dict(os.environ)
         if self.blender_user is not None:
             env["BLENDER_USER_RESOURCES"] = str(self.blender_user)
@@ -354,7 +393,7 @@ class Builder:
             raise BuildError(f"Blender not found: {self.blender!r}")
         # --python-exit-code: without it Blender exits 0 when the script raises.
         argv = [blender, "-b", "--python-exit-code", "3", "-P", str(SCRIPT), "--"]
-        argv += ["--preset", str(preset_path), "--out", str(out)]
+        argv += ["--preset", str(preset_path), "--out", str(out), "--framing", framing]
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,

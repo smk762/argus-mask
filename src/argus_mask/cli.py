@@ -376,6 +376,7 @@ def record(
         "--scene",
         help="A backdrop behind the face, flat display only: ftl, garden, lake, a plate in the assets (GET /scenes), or none. Default: the face's own",
     ),
+    framing: str = Option("head", "--framing", help="head, or waist: the face from the hips up, if it has that model"),
     quality: str = Option("high", "--quality", help="The viewer's look: low, medium or high (lighting, shadows, post)"),
     keep: bool = Option(False, "--keep-frames", help="Keep the rendered PNG frames beside the clip"),
 ) -> None:
@@ -408,6 +409,7 @@ def record(
                 display=display,
                 bg=bg,
                 scene=scene,
+                framing=framing,
                 quality=quality,
                 keep=keep,
                 on_wait=lambda: typer.echo(f"waiting for a session on {face_id} (run say or push now)", err=True),

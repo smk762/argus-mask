@@ -42,6 +42,7 @@ const DEFAULT = {
   max_texture_px: 2048,
   max_alpha_texture_px: 1024,
   max_triangles: 45000,
+  framings: [],
 };
 
 // How each value reads: in the units it means, not MakeHuman's 0..1 or -1..+1.
@@ -356,9 +357,18 @@ function buildPanels(library, catalogue) {
     sliderPanel(`m:${group}`, title, specs, { resetTo: () => { for (const m of mods) delete preset.targets[m.name]; } });
   }
   const adv = sliderPanel('advanced', 'Advanced: mouth fixes and budgets', ADVANCED, {
-    resetTo: () => { for (const k of ['mouth', 'shape_scale', 'texture_gain', 'bust', 'max_triangles']) preset[k] = structuredClone(DEFAULT[k]); },
+    resetTo: () => { for (const k of ['mouth', 'shape_scale', 'texture_gain', 'bust', 'max_triangles', 'framings']) preset[k] = structuredClone(DEFAULT[k]); },
   });
   adv.body.prepend(el('div', { className: 'hint', textContent: 'The recipe’s fixes for speech. The defaults suit every head so far.' }));
+  // A second model of the same face from the hips up (#62): a second Blender run, so each build takes twice as long.
+  const waist = el('input', { type: 'checkbox' });
+  const waistRow = el('label', { className: 'row', title: 'Also build the face from the hips up, arms and all: screens show it with ?framing=waist. Each build takes twice as long.' },
+    el('span', { textContent: 'Waist-up too' }), waist, el('output'));
+  waist.addEventListener('change', () => { preset.framings = waist.checked ? ['waist'] : []; changed(); });
+  adv.body.append(waistRow);
+  adv.rows?.push({ el: waistRow, text: 'waist up framing body arms' });
+  fields.set('framings', { label: 'Framings', show: (v) => ['head', ...(v || [])].join(', ') });
+  controls.push({ sync: () => { waist.checked = (preset.framings || []).includes('waist'); } });
 }
 
 function syncForm() {

@@ -22,7 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.3: ``Provenance.generator`` and the derived ``disclosure``; ``SourceHello.disclose`` and
 #      ``StreamHeader.disclosure`` (a real, consenting person's voice); ``ConsentVerdict``.
 # 1.4: ``PlateManifest``, a backdrop made from a still image (``background.json``).
-MASK_VERSION = "1.4"
+# 1.5: ``FaceManifest.framings``: the same face's other framings (waist up), each its own model and camera.
+MASK_VERSION = "1.5"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -229,15 +230,52 @@ class Framing(BaseModel):
     fov: float = Field(30.0, gt=1, lt=120)
 
 
+# How much of the body a model shows (#62): the head (and shoulders: ``model``), or the waist up.
+FramingName = Literal["head", "waist"]
+FRAMINGS: tuple[str, ...] = ("head", "waist")
+
+
+class FramedModel(BaseModel):
+    """Another framing of the same face: its own model (a rigged ``.glb`` from the same preset) and camera."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: ModelFile
+    framing: Framing
+
+
 class FaceManifest(_Versioned):
-    """``manifest.json`` in a face's directory."""
+    """``manifest.json`` in a face's directory.
+
+    ``model`` and ``framing`` are the face's head, which every screen can show. ``framings`` holds the same face at
+    other framings (``waist``), each a model of its own beside it; a screen asks for one with ``?framing=``.
+    """
 
     id: str = Field(..., pattern=FACE_ID_PATTERN)
     name: str
     model: ModelFile
     blendshapes: list[str] = Field(default_factory=list)
     framing: Framing = Field(default_factory=Framing)
+    framings: dict[Literal["waist"], FramedModel] = Field(default_factory=dict)
     provenance: Provenance
+
+    @model_validator(mode="after")
+    def _framings(self) -> FaceManifest:
+        files = [self.model.file, *(f.model.file for f in self.framings.values())]
+        if len(set(files)) != len(files):
+            raise ValueError("each framing is its own model file")
+        if self.framings and (
+            self.model.format != "gltf" or any(f.model.format != "gltf" for f in self.framings.values())
+        ):
+            raise ValueError("framings are built meshes (gltf): a splat head is a head only")
+        return self
+
+    def framed(self, name: str) -> tuple[ModelFile, Framing] | None:
+        """The model and camera for framing *name*: the head's for ``head``, None if the face has no such framing."""
+        if name == "head":
+            return self.model, self.framing
+        found = self.framings.get(name)  # type: ignore[call-overload]
+        return (found.model, found.framing) if found else None
 
 
 class DriverHealth(BaseModel):

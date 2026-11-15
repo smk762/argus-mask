@@ -48,3 +48,32 @@ export class HeadTurn {
     }
   }
 }
+
+// A rest pose for a framing that shows the arms: MakeHuman builds in an A-pose (arms out at about 45 degrees),
+// and a waist-up figure stands with its arms down. Degrees about world axes, as (x, y, z): +x pitches forward,
+// z swings a limb in the picture plane. Applied once, after loading, to the bones the model has.
+export const ARMS_DOWN = {
+  upperarm_l: [0, 0, -42],
+  upperarm_r: [0, 0, 42],
+  lowerarm_l: [-14, 0, 0],
+  lowerarm_r: [-14, 0, 0],
+};
+
+// Set a pose: each named bone turned by its (x, y, z) degrees about world axes, from its rest, parents first
+// (the order of *pose*). Each bone's world rotation at rest is read before any is moved, so a child's turn is
+// about the world's axes at rest, carried along by its parent's.
+export function setPose(THREE, root, pose) {
+  const bones = new Map();
+  root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
+  root.updateMatrixWorld(true);
+  const rad = Math.PI / 180;
+  const plan = Object.entries(pose).filter(([name]) => bones.has(name)).map(([name, [x, y, z]]) => {
+    const bone = bones.get(name);
+    const world = bone.getWorldQuaternion(new THREE.Quaternion());
+    const turn = new THREE.Quaternion().setFromEuler(new THREE.Euler(x * rad, y * rad, z * rad, 'YXZ'));
+    return { bone, local: world.clone().invert().multiply(turn).multiply(world) };
+  });
+  for (const { bone, local } of plan) bone.quaternion.multiply(local);
+  root.updateMatrixWorld(true);
+  return plan.length;
+}
