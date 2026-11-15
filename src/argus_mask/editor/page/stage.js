@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { Backdrop } from './backdrop.js';
-import { HeadTurn } from './rig.js';
+import { ARMS_DOWN, HeadTurn, setPose } from './rig.js';
 import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
@@ -45,10 +45,12 @@ export { talkReady };
 
 // Where a face's model is fetched from: a splat head by its own file name (the splat renderer wants a URL
 // ending .zip). *query*: the page's own (from=, v=).
-export function modelUrl(faceId, manifest, query = '') {
+// *framing*: another framing the face has (waist), else its head.
+export function modelUrl(faceId, manifest, query = '', framing = 'head') {
   const splat = manifest.model && manifest.model.format === 'lam-splat';
   const path = `/face/${encodeURIComponent(faceId)}/model${splat ? `/${encodeURIComponent(manifest.model.file)}` : ''}`;
-  return query ? `${path}?${query}` : path;
+  const all = [query, framing !== 'head' ? `framing=${encodeURIComponent(framing)}` : ''].filter(Boolean).join('&');
+  return all ? `${path}?${all}` : path;
 }
 
 // The rest sets and each face's choice (GET /expressions), fetched once per page; fresh() after a change.
@@ -115,7 +117,8 @@ export class Stage {
   // A face's model: a .glb (format "gltf", the default) or a LAM splat head's .zip ("lam-splat").
   // Loads may overlap (a quick second click): only the latest one shows; an earlier one that finishes later is
   // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
-  async load(modelUrl, framing = {}, format = 'gltf') {
+  // *armsDown*: the model shows the arms (a waist-up framing), which stand down from the A-pose they are built in.
+  async load(modelUrl, framing = {}, format = 'gltf', { armsDown = false } = {}) {
     const gen = (this.loads = (this.loads || 0) + 1);
     if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
@@ -126,6 +129,7 @@ export class Stage {
     this.targets = new Map();
     this.pivot.add(gltf.scene);
     this.look.apply(gltf.scene);
+    if (armsDown) setPose(THREE, gltf.scene, ARMS_DOWN);
     this.neck = new HeadTurn(THREE, gltf.scene);   // a rigged head turns at the neck; the pivot is the turntable
     gltf.scene.traverse((node) => {
       if (node.isMesh && node.morphTargetDictionary) {

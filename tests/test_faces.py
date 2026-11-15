@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, inspect_glb, read_glb
-from argus_mask.models import FACE_DISCLOSURE, Provenance
+from argus_mask.models import FACE_DISCLOSURE, FaceManifest, Provenance
 from tests.helpers import RELEASE, make_face, make_glb, write_consent
 
 
@@ -136,3 +138,72 @@ def test_a_manifest_from_a_newer_major_is_refused(tmp_path) -> None:
     data["mask_version"] = "2.0"
     (directory / MANIFEST_NAME).write_text(json.dumps(data))
     assert "future" in FaceStore(tmp_path).scan()[1]
+
+
+# ---- framings (#62) --------------------------------------------------------------------------------------
+
+
+def _add_waist(directory: Path, data: bytes | None = None) -> dict:
+    """Give a face a waist-up model beside its head; returns the manifest as written."""
+    import hashlib  # noqa: PLC0415
+
+    waist = data if data is not None else make_glb()
+    (directory / "waist.glb").write_bytes(waist)
+    manifest = json.loads((directory / MANIFEST_NAME).read_text())
+    manifest["framings"] = {
+        "waist": {
+            "model": {"file": "waist.glb", "sha256": hashlib.sha256(waist).hexdigest()},
+            "framing": {"distance": 1.75, "height": -0.3, "fov": 30},
+        }
+    }
+    (directory / MANIFEST_NAME).write_text(json.dumps(manifest))
+    return manifest
+
+
+def test_a_face_carries_its_waist_up_model_beside_its_head(tmp_path: Path) -> None:
+    _add_waist(make_face(tmp_path, "framed"))
+    manifest = FaceStore(tmp_path).load("framed")[0]
+    model, framing = manifest.framed("waist")
+    assert model.file == "waist.glb" and framing.distance == 1.75
+    assert manifest.framed("head") == (manifest.model, manifest.framing)
+    assert make_face(tmp_path, "plain") and FaceStore(tmp_path).load("plain")[0].framed("waist") is None
+
+
+def test_a_changed_waist_model_is_refused_like_a_changed_head(tmp_path: Path) -> None:
+    directory = make_face(tmp_path, "framed")
+    _add_waist(directory)
+    (directory / "waist.glb").write_bytes(make_glb(("jawOpen",)))
+    with pytest.raises(FaceError, match="the waist model's sha256 does not match"):
+        FaceStore(tmp_path).load("framed")
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        (lambda m: m["framings"]["waist"]["model"].update(file="head.glb"), "its own model file"),
+        (lambda m: m["framings"].update(full=m["framings"]["waist"]), "framings"),
+        (lambda m: m["model"].update(format="lam-splat", file="head.zip"), "splat head is a head only"),
+    ],
+)
+def test_framings_that_do_not_hold_up_are_refused(tmp_path: Path, change, match: str) -> None:  # noqa: ANN001
+    manifest = _add_waist(make_face(tmp_path, "framed"))
+    change(manifest)
+    with pytest.raises(ValidationError, match=match):
+        FaceManifest.model_validate(manifest)
+
+
+def test_the_server_serves_the_framing_asked_for(tmp_path: Path) -> None:
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    from argus_mask.config import Settings  # noqa: PLC0415
+    from argus_mask.server.app import create_app  # noqa: PLC0415
+
+    directory = make_face(tmp_path, "framed")
+    _add_waist(directory, make_glb(("jawOpen", "mouthClose")))
+    make_face(tmp_path, "plain")
+    with TestClient(create_app(Settings(assets_dir=tmp_path))) as c:
+        assert c.get("/face/framed/model?framing=waist").content == (directory / "waist.glb").read_bytes()
+        assert c.get("/face/framed/model").content == (directory / "head.glb").read_bytes()
+        assert c.get("/face/framed/model/waist.glb").status_code == 200
+        assert c.get("/face/plain/model?framing=waist").status_code == 404
+        assert c.get("/face/framed/model?framing=feet").status_code == 422

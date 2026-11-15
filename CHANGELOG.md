@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Waist-up framing** (#62, step 2a). A preset's `framings: ["waist"]` (the editor's Advanced → **Waist-up too**)
+  builds the same face again from the hips up, arms and all, as `waist.glb` beside `head.glb`, with a camera from the
+  build's extent; the manifest lists it under `framings` (wire contract 1.5) and the store checks it like the head.
+  Screens show it with `?framing=waist` (arms posed down from the A-pose; the head still turns at the neck), and
+  `record --framing waist` records it. Saved faces → Review has head / waist up buttons.
 - **Rigged stock heads:** `stock-01` revision 5 and `stock-02` revision 2, built with the rigged recipe and
   published on the `stock-heads` release; `make head` and `fetch_stock_head.py` fetch them.
 - **Rigged heads: the head turns at the neck** (#62, step 1). The recipe skins every head to MPFB's `game_engine`

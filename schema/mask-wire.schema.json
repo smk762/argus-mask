@@ -321,7 +321,7 @@
       "type": "object"
     },
     "FaceManifest": {
-      "description": "``manifest.json`` in a face's directory.",
+      "description": "``manifest.json`` in a face's directory.\n\n``model`` and ``framing`` are the face's head, which every screen can show. ``framings`` holds the same face at\nother framings (``waist``), each a model of its own beside it; a screen asks for one with ``?framing=``.",
       "properties": {
         "blendshapes": {
           "items": {
@@ -333,13 +333,23 @@
         "framing": {
           "$ref": "#/$defs/Framing"
         },
+        "framings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FramedModel"
+          },
+          "propertyNames": {
+            "const": "waist"
+          },
+          "title": "Framings",
+          "type": "object"
+        },
         "id": {
           "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
           "title": "Id",
           "type": "string"
         },
         "mask_version": {
-          "default": "1.4",
+          "default": "1.5",
           "title": "Mask Version",
           "type": "string"
         },
@@ -419,6 +429,24 @@
         "weights"
       ],
       "title": "Frame",
+      "type": "object"
+    },
+    "FramedModel": {
+      "additionalProperties": false,
+      "description": "Another framing of the same face: its own model (a rigged ``.glb`` from the same preset) and camera.",
+      "properties": {
+        "framing": {
+          "$ref": "#/$defs/Framing"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelFile"
+        }
+      },
+      "required": [
+        "model",
+        "framing"
+      ],
+      "title": "FramedModel",
       "type": "object"
     },
     "Framing": {
@@ -751,7 +779,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.4",
+          "default": "1.5",
           "title": "Mask Version",
           "type": "string"
         },
@@ -1103,7 +1131,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.4",
+          "default": "1.5",
           "title": "Mask Version",
           "type": "string"
         },

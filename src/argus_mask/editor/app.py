@@ -78,7 +78,7 @@ from argus_mask.editor.voices import (
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
 from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
-from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FaceManifest
+from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FRAMINGS, FaceManifest, ModelFile
 from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
@@ -362,22 +362,29 @@ def create_editor_app(
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
 
-    def model_response(manifest: FaceManifest, path: Path) -> FileResponse:
-        return FileResponse(
-            path, media_type=MEDIA_TYPES[manifest.model.format], headers={"ETag": f'"{manifest.model.sha256}"'}
-        )
+    def model_response(model: ModelFile, path: Path) -> FileResponse:
+        return FileResponse(path, media_type=MEDIA_TYPES[model.format], headers={"ETag": f'"{model.sha256}"'})
 
     @app.get("/face/{face_id}/model")
-    def face_model(face_id: str, where: str | None = Query(None, alias="from")) -> FileResponse:
-        return model_response(*find_face(face_id, where))
+    def face_model(
+        face_id: str,
+        where: str | None = Query(None, alias="from"),
+        framing: str = Query("head", pattern="^(" + "|".join(FRAMINGS) + ")$"),
+    ) -> FileResponse:
+        manifest, path = find_face(face_id, where)
+        found = manifest.framed(framing)
+        if found is None:
+            raise HTTPException(404, f"face {face_id!r} has no {framing} framing")
+        return model_response(found[0], path.parent / found[0].file)
 
     @app.get("/face/{face_id}/model/{file}")
     def face_model_named(face_id: str, file: str, where: str | None = Query(None, alias="from")) -> FileResponse:
-        # The model under its own name, for the splat renderer (it wants a URL ending .zip): only the manifest's file.
+        # A model under its own name (the splat renderer wants a URL ending .zip): only a file the manifest names.
         manifest, path = find_face(face_id, where)
-        if file != manifest.model.file:
+        models = {m.file: m for m in (manifest.model, *(f.model for f in manifest.framings.values()))}
+        if file not in models:
             raise HTTPException(404, f"face {face_id!r} has no file {file!r}")
-        return model_response(manifest, path)
+        return model_response(models[file], path.parent / file)
 
     @app.post("/build")
     async def build(preset: Preset) -> dict:

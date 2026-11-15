@@ -171,6 +171,9 @@ class Preset(_Strict):
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
+    # Framings to build besides the head (#62): "waist" is the same character from the hips up, arms and all, with
+    # half as much again of the triangle budget. Each is a model of its own beside head.glb.
+    framings: list[Literal["waist"]] = Field(default_factory=list, max_length=1)
 
     @field_validator("id")
     @classmethod

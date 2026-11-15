@@ -30,7 +30,7 @@ import numpy as np
 
 from argus_mask.backgrounds import BUILT_IN_SCENES, NO_SCENE
 from argus_mask.client import ClientError, view_url
-from argus_mask.models import Frame, StreamEnd, StreamHeader
+from argus_mask.models import FRAMINGS, Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
@@ -283,6 +283,7 @@ async def record(
     display: str = "flat",
     bg: str = "",
     scene: str = "",
+    framing: str = "head",
     quality: str = "high",
     keep: bool = False,
     on_wait: Callable[[], None] | None = None,
@@ -293,6 +294,8 @@ async def record(
     """Capture the next session on *face_id* and write *out*, with the take and WAV beside it."""
     if width % 2 or height % 2:
         raise RecordError(f"{width}x{height}: the clip's width and height must be even (4:2:0 video)")
+    if framing not in FRAMINGS:
+        raise RecordError(f"framing {framing!r}: choose from {', '.join(FRAMINGS)}")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
     # No scene: the face's own default, as on a screen; `none`: a plain background whatever the default.
@@ -318,6 +321,7 @@ async def record(
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
     params |= {"scene": scene} if scene else {}
+    params |= {"framing": framing} if framing != "head" else {}
     # A real person's voice is labelled in the clip as on a screen (the face's own label comes with its manifest).
     params |= {"disclosure": recording.header.disclosure} if recording.header.disclosure else {}
     try:

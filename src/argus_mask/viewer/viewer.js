@@ -5,6 +5,7 @@
 //   ?face=<id>       which face (default: the first the server lists)
 //   ?display=flat    flat (default) | hld (1080x1920 portrait on black) | go (not built yet)
 //   ?bg=<css colour> background for the flat tier, or "transparent"
+//   ?framing=waist   the face from the hips up, if it has that model (manifest framings); default head
 //   ?scene=ftl       a backdrop with a little life in it (ftl, garden, lake, a plate of your own: GET /scenes), flat tier,
 //                    mesh faces, over ?bg=. Without it, the face's own (Saved faces); ?scene=none for none
 //                    ?scene.speed=1 ?scene.density=0.6 ?scene.tint=<css colour> tune it
@@ -33,7 +34,7 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 import { Backdrop } from './backdrop.js';
-import { HeadTurn } from './rig.js';
+import { ARMS_DOWN, HeadTurn, setPose } from './rig.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -71,6 +72,8 @@ const state = window.__mask = {
   look: null,   // the profile and effects in use: see look.js
   scene: null,  // the backdrop on show (backdrop.js), or null for a plain background
   sceneError: null,  // why the face's default backdrop was not shown, if it was not
+  framing: null,     // head or waist: the framing shown (?framing=)
+  framingNote: null, // why the framing asked for was not shown, if it was not
   screenReady: false, kiosk: KIOSK,   // connected and heard (or, sound external, connected); a dedicated screen
   sound: EXTERNAL ? 'external' : 'local', delayMs: DELAY_S * 1000,
 };
@@ -208,7 +211,13 @@ async function loadFace() {
   SCENE = await sceneFor(faceId);
   await meshScene();
   resize();
-  const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model`);
+  // The framing: the page's ?framing=, if the face has it; else its head. A waist-up model stands with its arms down.
+  const asked = params.get('framing') || 'head';
+  const framed = asked !== 'head' && manifest.framings && manifest.framings[asked];
+  if (asked !== 'head' && !framed) state.framingNote = `${manifest.id} has no ${asked} framing: showing its head`;
+  state.framing = framed ? asked : 'head';
+  const query = framed ? `?framing=${encodeURIComponent(asked)}` : '';
+  const gltf = await new GLTFLoader().loadAsync(`/face/${encodeURIComponent(faceId)}/model${query}`);
   pivot.add(gltf.scene);
   look.apply(gltf.scene);
   gltf.scene.traverse((node) => {
@@ -219,11 +228,12 @@ async function loadFace() {
       }
     }
   });
+  if (framed) setPose(THREE, gltf.scene, ARMS_DOWN);
   headTurn = new HeadTurn(THREE, gltf.scene);
   motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
   await loadRest(faceId);
-  const framing = manifest.framing || {};
+  const framing = (framed ? framed.framing : manifest.framing) || {};
   camera.fov = framing.fov || 30;
   camera.position.set(0, framing.height || 0, framing.distance || 0.6);
   camera.lookAt(0, framing.height || 0, 0);
