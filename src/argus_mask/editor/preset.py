@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from argus_mask.arkit import ARKIT_52
-from argus_mask.faces import MAX_TRIANGLES
+from argus_mask.faces import MAX_TRIANGLES, WEAK_SCREEN_TRIANGLES
 from argus_mask.models import FACE_ID_PATTERN, RESERVED_FACE_IDS
 
 # The youngest a head may be: 18 years on MakeHuman's scale. Below 0.5 the age macro maps to years as
@@ -184,7 +184,7 @@ class Preset(_Strict):
     garment_colours: dict[str, GarmentColour] = Field(default_factory=dict)
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
-    max_triangles: int = Field(MAX_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
+    max_triangles: int = Field(WEAK_SCREEN_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
     # Framings to build besides the head (#62): "waist" is the same character from the hips up, arms and all, with
     # half as much again of the triangle budget. Each is a model of its own beside head.glb.
     framings: list[Literal["waist"]] = Field(default_factory=list, max_length=1)

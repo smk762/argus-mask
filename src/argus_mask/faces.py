@@ -46,7 +46,10 @@ MANIFEST_NAME = "manifest.json"
 # 45k: room for a dressed head (a uniform is ~5k triangles, MakeHuman's teeth 7k) with long hair or a hat.
 # The weakest panels (a Raspberry Pi, the Go's 66 views a frame) are not targets for now; when they are,
 # their faces will want a smaller budget of their own.
-MAX_TRIANGLES = 45_000
+# A face over WEAK_SCREEN_TRIANGLES is flagged by inspect, and it is the default budget; a preset may ask for up to
+# MAX_TRIANGLES (a big screen, a recording). The recipe hard-codes the same ceiling (build_head.py: MAX_TRIANGLES).
+WEAK_SCREEN_TRIANGLES = 45_000
+MAX_TRIANGLES = 120_000
 MAX_TEXTURE = 2048
 
 _GLB_MAGIC = 0x46546C67  # "glTF"
@@ -88,8 +91,8 @@ class GlbReport:
         out = []
         if self.missing:
             out.append(f"{len(self.missing)} of the 52 ARKit shapes are missing; they will be ignored")
-        if self.triangles > MAX_TRIANGLES:
-            out.append(f"{self.triangles} triangles is over the {MAX_TRIANGLES} budget for weak screens")
+        if self.triangles > WEAK_SCREEN_TRIANGLES:
+            out.append(f"{self.triangles} triangles is over the {WEAK_SCREEN_TRIANGLES} budget for weak screens")
         big = [f"{w}x{h}" for size in self.textures if size for w, h in [size] if max(w, h) > MAX_TEXTURE]
         if big:
             out.append(f"textures over {MAX_TEXTURE}px: {', '.join(big)}")

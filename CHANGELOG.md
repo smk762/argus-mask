@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **More triangles when asked for.** A preset's `max_triangles` (the editor's Triangle budget) now goes up to
+  120,000; 45,000 stays the default and the weak-screen budget `inspect` warns about. Waist-up gets 1.5x, within
+  the same ceiling. Garments are only thinned to fit whatever budget is set.
 - **Garment colourways** (#61). A preset's `garment_colours` recolours a garment at build time: `tint` keeps the
   fabric's shading and detail, `solid` paints it one colour and so removes print the texture carries (logos, emblems).
   The editor's Clothes panel has a Colour row for the outfit worn.
