@@ -1323,3 +1323,74 @@ def test_a_head_only_preset_runs_blender_once(client, rig) -> None:
     assert client.post("/build", json=preset()).status_code == 200
     assert len(calls(rig)) == 1
     assert client.get("/face/my-face/model?from=preview&framing=waist").status_code == 404
+
+
+# MPFB's game_engine rig, as the recipe builds it (53 bones; MPFB 2.0.18's rig.game_engine.json).
+GAME_ENGINE_BONES = set(
+    [
+        "Root",
+        "ball_l",
+        "ball_r",
+        "calf_l",
+        "calf_r",
+        "clavicle_l",
+        "clavicle_r",
+        "foot_l",
+        "foot_r",
+        "hand_l",
+        "hand_r",
+        "head",
+        "index_01_l",
+        "index_01_r",
+        "index_02_l",
+        "index_02_r",
+        "index_03_l",
+        "index_03_r",
+        "lowerarm_l",
+        "lowerarm_r",
+        "middle_01_l",
+        "middle_01_r",
+        "middle_02_l",
+        "middle_02_r",
+        "middle_03_l",
+        "middle_03_r",
+        "neck_01",
+        "pelvis",
+        "pinky_01_l",
+        "pinky_01_r",
+        "pinky_02_l",
+        "pinky_02_r",
+        "pinky_03_l",
+        "pinky_03_r",
+        "ring_01_l",
+        "ring_01_r",
+        "ring_02_l",
+        "ring_02_r",
+        "ring_03_l",
+        "ring_03_r",
+        "spine_01",
+        "spine_02",
+        "spine_03",
+        "thigh_l",
+        "thigh_r",
+        "thumb_01_l",
+        "thumb_01_r",
+        "thumb_02_l",
+        "thumb_02_r",
+        "thumb_03_l",
+        "thumb_03_r",
+        "upperarm_l",
+        "upperarm_r",
+    ]
+)
+
+
+def test_every_bone_the_viewer_moves_is_in_the_rig() -> None:
+    # rig.js skips a bone the model lacks (an unrigged head stays as it was), so a misspelt name would leave the
+    # body still with no error: hold the names to the rig.
+    rig = (SCRIPT.parent.parent / "viewer" / "rig.js").read_text()
+    named = set(re.findall(r"\b([a-z]+_0?\d?_?[lr]?|pelvis|head)\s*:\s*\[", rig)) | set(
+        re.findall(r"\['([a-z_0-9]+)', [0-9.]+\]", rig)
+    )
+    assert {"upperarm_l", "spine_03", "clavicle_r", "pelvis", "neck_01", "head"} <= named
+    assert named <= GAME_ENGINE_BONES, named - GAME_ENGINE_BONES

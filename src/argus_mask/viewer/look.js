@@ -20,6 +20,7 @@ import { SMAAPass } from './vendor/postprocessing/SMAAPass.js';
 import { BokehPass } from './vendor/postprocessing/BokehPass.js';
 import { UnrealBloomPass } from './vendor/postprocessing/UnrealBloomPass.js';
 import { FilmPass } from './vendor/postprocessing/FilmPass.js';
+import { SimplexNoise } from './vendor/math/SimplexNoise.js';
 import { OutputPass } from './vendor/postprocessing/OutputPass.js';
 
 // low: anything that renders, a Raspberry Pi included. medium: the default; shadows and skin, no
@@ -268,6 +269,30 @@ function cornea(mesh) {
   if (mesh.material.roughness !== undefined) mesh.material.roughness = Math.min(mesh.material.roughness, 0.3);  // wet whites
 }
 
+// GTAO's denoiser draws its noise texture from Math.random (SimplexNoise's default) when the pass is made, so two
+// page loads denoised the ambient occlusion differently and two recordings of one take differed in every shadowed
+// pixel. The same noise, from a seeded generator: a recording is a function of its take again.
+class SeededGTAOPass extends GTAOPass {
+  _generateNoise(size = 64) {
+    let seed = 11;
+    const simplex = new SimplexNoise({ random: () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; } });
+    const data = new Uint8Array(size * size * 4);
+    for (let i = 0; i < size; i += 1) {
+      for (let j = 0; j < size; j += 1) {
+        const k = (i * size + j) * 4;
+        data[k] = (simplex.noise(i, j) * 0.5 + 0.5) * 255;
+        data[k + 1] = (simplex.noise(i + size, j) * 0.5 + 0.5) * 255;
+        data[k + 2] = (simplex.noise(i, j + size) * 0.5 + 0.5) * 255;
+        data[k + 3] = (simplex.noise(i + size, j + size) * 0.5 + 0.5) * 255;
+      }
+    }
+    const noise = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+    noise.wrapS = noise.wrapT = THREE.RepeatWrapping;
+    noise.needsUpdate = true;
+    return noise;
+  }
+}
+
 // ---- the look ------------------------------------------------------------------------------------
 
 const WET = new Set(['head', 'eyes', 'teeth', 'tongue']);  // parts that keep the glTF's own roughness
@@ -395,7 +420,7 @@ export class Look {
       const c = new EffectComposer(this.renderer, target);
       c.addPass(new RenderPass(this.scene, this.camera));
       if (this.o.ao) {  // contact shadows: eyes, nostrils, lips, under the jaw. Radii in metres, a head's scale.
-        const ao = new GTAOPass(this.scene, this.camera, width, height);
+        const ao = new SeededGTAOPass(this.scene, this.camera, width, height);
         ao.updateGtaoMaterial({ radius: 0.025, distanceExponent: 1.4, thickness: 0.02, scale: 1.0, samples: 16 });
         ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
         ao.blendIntensity = 0.85;

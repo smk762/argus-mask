@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Life below the neck** (#62, step 2b). A waist-up figure breathes (chest and shoulders, a 4.4 s breath), shifts
+  its weight slowly (pelvis and spine, two unrelated periods, the head kept level) and lets its chest follow a nod.
+  Viewer-side (`rig.js` `BodyLife`), a function of the face's seed and the time: the posed frame's in a recording.
 - **Waist-up framing** (#62, step 2a). A preset's `framings: ["waist"]` (the editor's Advanced → **Waist-up too**)
   builds the same face again from the hips up, arms and all, as `waist.glb` beside `head.glb`, with a camera from the
   build's extent; the manifest lists it under `framings` (wire contract 1.5) and the store checks it like the head.
@@ -45,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two recordings of a real face differed in about 10,000 pixels.** GTAO's denoiser drew its noise texture from
+  `Math.random` on each page load, so the ambient occlusion around the eyes, mouth and collar changed between runs.
+  It is seeded now; what remains is a few pixels of blended hair, off by one level, from the GPU.
 - **The look finds a rigged head's parts.** three.js renames a mesh that shares its name with a bone (`head` →
   `head_1`), which lost the skin treatment; parts are now matched by the name in the file.
 - **A splat face from `inspect` kept the wide shot over a backdrop.** `inspect` writes LAM's standard framing into the

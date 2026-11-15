@@ -34,7 +34,7 @@ import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 import { Backdrop } from './backdrop.js';
-import { ARMS_DOWN, HeadTurn, setPose } from './rig.js';
+import { ARMS_DOWN, BodyLife, HeadTurn, setPose } from './rig.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -192,6 +192,7 @@ let targets = new Map();   // blendshape name -> [{ influences, index }]
 let motion = new Motion();  // the lip budget, the rest set and idle life (motion.js)
 // ?life= over the rest set's own life; absent or not a number, the set's.
 const LIFE = (() => { const v = Number.parseFloat(params.get('life')); return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : null; })();
+let body = null;           // life below the neck, for a framing that shows the body (rig.js BodyLife)
 let headTurn = null;       // a rigged head's neck and head bones (rig.js); an unrigged one turns whole (pivot)
 
 async function loadFace() {
@@ -228,7 +229,10 @@ async function loadFace() {
       }
     }
   });
-  if (framed) setPose(THREE, gltf.scene, ARMS_DOWN);
+  if (framed) {
+    setPose(THREE, gltf.scene, ARMS_DOWN);
+    body = new BodyLife(THREE, gltf.scene, faceSeed(manifest.id));
+  }
   headTurn = new HeadTurn(THREE, gltf.scene);
   motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
@@ -572,6 +576,7 @@ function draw() {
     splat.step(wall / 1000);
   } else {
     applyWeights(shown.weights, order);
+    body?.apply(posed ? posed.t : wall / 1000, head.pitch);   // a recording's body follows the frame's time
     applyHead();
     if (backdrop) {
       if (posed) backdrop.update(posed.t, { exact: true });
