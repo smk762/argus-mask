@@ -272,6 +272,14 @@ function cornea(mesh) {
 
 const WET = new Set(['head', 'eyes', 'teeth', 'tongue']);  // parts that keep the glTF's own roughness
 
+// A part's name as the recipe wrote it. three.js's loader makes names unique, so a rigged head's mesh may load as
+// "head_1" beside the bone "head"; the loader keeps the name from the file in userData.name. A mesh of several
+// primitives is a child of the named node, so look up the parents too.
+export function partName(mesh) {
+  for (let node = mesh; node; node = node.parent) if (node.userData && node.userData.name) return node.userData.name;
+  return mesh.name;
+}
+
 export class Look {
   constructor(renderer, scene, camera, options = lookOptions(new URLSearchParams())) {
     this.renderer = renderer;
@@ -339,19 +347,20 @@ export class Look {
     root.traverse((node) => { if (node.isMesh) meshes.push(node); });
     for (const mesh of meshes) {
       const m = mesh.material;
+      const part = partName(mesh);
       if (this.o.shadows) {
         mesh.receiveShadow = true;
         mesh.castShadow = !m.transparent;  // blended brows and lashes would shadow as solid cards
       }
-      if (mesh.name === 'head' && this.o.skin) { skinPores = this.o.pores !== false; skin(mesh, anisotropy); }
-      if (mesh.name === 'eyes' && this.o.cornea) cornea(mesh);
-      if (mesh.name === 'wetline') { wetLine(mesh); continue; }
+      if (part === 'head' && this.o.skin) { skinPores = this.o.pores !== false; skin(mesh, anisotropy); }
+      if (part === 'eyes' && this.o.cornea) cornea(mesh);
+      if (part === 'wetline') { wetLine(mesh); continue; }
       // Hair and cloth are matte: exported smooth, they mirror the room and the rim lights like plastic.
       // Not skin, eyes or the wet mouth.
-      if (!WET.has(mesh.name) && m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
+      if (!WET.has(part) && m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
       // Hair cards only: other cut-outs (the eyes' cornea layer, the teeth) are not edges to soften, and
       // partial coverage would draw the eyes' all-but-transparent cornea as a skin-coloured film.
-      if (mesh.name === 'hair' && m.alphaTest > 0 && !m.transparent) {
+      if (part === 'hair' && m.alphaTest > 0 && !m.transparent) {
         if (this.o.hair === 'blend') { twoPassHair(mesh); continue; }
         if (this.o.hair === 'a2c') m.alphaToCoverage = true;  // soft edges from MSAA's samples
         if (this.o.hair === 'hash') { m.alphaHash = true; m.alphaTest = 0; }  // dithered, smoothed by grain or AA

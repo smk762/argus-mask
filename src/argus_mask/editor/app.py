@@ -1041,6 +1041,11 @@ def create_editor_app(
         # LAM Gaussian-splat heads, driven as the viewer drives them: the previews of a splat face use it.
         return FileResponse(VIEWER_DIR / "splat.js", media_type="text/javascript")
 
+    @app.get("/rig.js")
+    def rig() -> FileResponse:
+        # A rigged head's turn at the neck, as the viewer does it.
+        return FileResponse(VIEWER_DIR / "rig.js", media_type="text/javascript")
+
     @app.get("/look.js")
     def look() -> FileResponse:
         # The viewer's lighting and materials, so the editor's previews look as the face will on a screen.
