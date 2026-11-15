@@ -46,7 +46,7 @@ def csp(page: str) -> str:
             f"script-src 'self' {hashes}",
             "style-src 'self'",
             "img-src 'self' data: blob:",  # the glTF loader decodes textures from blobs
-            "media-src 'self'",
+            "media-src 'self' blob:",  # the player plays each clip's audio from a blob, so it can seek
             "connect-src 'self' data: blob:",
             "worker-src 'self' blob:",
             "object-src 'none'",
