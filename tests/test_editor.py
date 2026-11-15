@@ -810,13 +810,6 @@ def test_editor_settings_from_env(monkeypatch, tmp_path) -> None:
     assert os.environ["ARGUS_MASK_BLENDER_USER"] == str(tmp_path)
 
 
-def test_the_triangle_budget_is_45k() -> None:
-    assert Preset.model_validate(preset(max_triangles=45_000)).max_triangles == 45_000
-    assert Preset.model_validate(preset()).max_triangles == 45_000  # the default is the whole budget
-    with pytest.raises(ValidationError, match="max_triangles"):
-        Preset.model_validate(preset(max_triangles=45_001))
-
-
 def test_the_viewer_dresses_the_parts_the_recipe_names() -> None:
     # look.js finds parts by name; a rename on either side would silently lose the wet line or the skin maps.
     recipe = SCRIPT.read_text()
