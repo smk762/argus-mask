@@ -1418,6 +1418,27 @@ def test_the_recipe_paints_colourways_and_thins_garments_to_the_budget() -> None
     assert "thin_garments(" in recipe and "GARMENT_MIN_RATIO = 0.4" in recipe
 
 
+def test_accessories_reach_blender_once_per_place(client, rig) -> None:
+    pieces = [{"kind": "badge", "side": "left", "colour": "#c9a227"}, {"kind": "earpiece", "side": "right"}]
+    reply = client.post("/build", json=preset(accessories=pieces))
+    assert reply.status_code == 200, reply.text
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
+    assert [(a["kind"], a["side"]) for a in sent["accessories"]] == [("badge", "left"), ("earpiece", "right")]
+    assert sent["accessories"][1]["colour"] == "#c9a227", "the default colour"
+    twice = preset(accessories=[{"kind": "pins"}, {"kind": "pins", "side": "left"}])
+    assert client.post("/build", json=twice).status_code == 422
+    assert client.post("/build", json=preset(accessories=[{"kind": "cape"}])).status_code == 422
+    assert client.post("/build", json=preset(accessories=[{"kind": "badge", "colour": "gold"}])).status_code == 422
+
+
+def test_the_recipe_places_accessories_on_bones_the_rig_has() -> None:
+    recipe = SCRIPT.read_text()
+    assert 'add_accessories(preset.get("accessories") or [], basemesh, rig)' in recipe
+    bones = dict(re.findall(r'"(\w+)": "(\w+)"', recipe.split("ACCESSORY_BONES = {", 1)[1].split("}", 1)[0]))
+    assert set(bones) == {"badge", "pins", "earpiece"}, "every kind the preset offers has a bone"
+    assert set(bones.values()) <= GAME_ENGINE_BONES
+
+
 def test_a_preset_may_ask_for_more_than_the_weak_screen_budget() -> None:
     from argus_mask.editor.preset import Preset  # noqa: PLC0415
     from argus_mask.faces import MAX_TRIANGLES, WEAK_SCREEN_TRIANGLES  # noqa: PLC0415

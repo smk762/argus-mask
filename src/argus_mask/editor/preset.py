@@ -131,6 +131,15 @@ class GarmentColour(_Strict):
     mode: Literal["tint", "solid"] = "tint"
 
 
+class Accessory(_Strict):
+    """A small rigid piece the recipe makes and places on the dressed body (#61), riding on one bone: a ``badge`` on
+    the chest, collar ``pins`` beside the throat, an ``earpiece`` at the ear. Made from primitives (our own, CC0)."""
+
+    kind: Literal["badge", "pins", "earpiece"]
+    side: Literal["left", "right"] = "left"
+    colour: str = Field("#c9a227", pattern=r"^#[0-9a-fA-F]{6}$")
+
+
 class HairColour(_Strict):
     """A colour for the hair, baked into its texture by the recipe (``hair_colour.py``).
 
@@ -182,6 +191,7 @@ class Preset(_Strict):
     hair_colour: HairColour | None = None
     # Colourways for the garments worn, by their reference in assets.clothes.
     garment_colours: dict[str, GarmentColour] = Field(default_factory=dict)
+    accessories: list[Accessory] = Field(default_factory=list, max_length=4)
     max_texture_px: int = Field(2048, ge=256, le=2048)
     max_alpha_texture_px: int = Field(1024, ge=256, le=2048)
     max_triangles: int = Field(WEAK_SCREEN_TRIANGLES, ge=1000, le=MAX_TRIANGLES)
@@ -194,6 +204,14 @@ class Preset(_Strict):
     def _not_reserved(cls, value: str) -> str:
         if value in RESERVED_FACE_IDS:
             raise ValueError(f"{value!r} is reserved: pick another id")
+        return value
+
+    @field_validator("accessories")
+    @classmethod
+    def _each_place_once(cls, value: list[Accessory]) -> list[Accessory]:
+        places = [(a.kind, a.side) for a in value]
+        if len(set(places)) != len(places):
+            raise ValueError("an accessory is listed twice in the same place")
         return value
 
     @model_validator(mode="after")

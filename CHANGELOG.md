@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Accessories** (#61). A preset's `accessories` adds small metallic pieces the recipe makes itself (CC0) and
+  places on the dressed body: a `badge` on the chest, collar `pins`, an `earpiece` at the ear, each on the wearer's
+  left or right, in a colour, riding on a bone (so the earpiece turns with the head and the badge breathes with the
+  chest). The editor has an Accessories panel.
 - **More triangles when asked for.** A preset's `max_triangles` (the editor's Triangle budget) now goes up to
   120,000; 45,000 stays the default and the weak-screen budget `inspect` warns about. Waist-up gets 1.5x, within
   the same ceiling. Garments are only thinned to fit whatever budget is set.
