@@ -1,10 +1,14 @@
 {
-  "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-02-r2.glb",
-  "size": 10612892,
+  "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-02-r3.glb",
+  "size": 10558712,
   "framings": {
     "waist": {
-      "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-02-r2-waist.glb",
-      "size": 11185256
+      "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-02-r3-waist.glb",
+      "size": 10985488
+    },
+    "full": {
+      "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-02-r3-full.glb",
+      "size": 11309264
     }
   },
   "manifest": {
@@ -13,7 +17,7 @@
     "name": "Stock head 02",
     "model": {
       "file": "head.glb",
-      "sha256": "e6999382d2914e1f25dcff97d31505de4949651cd98ab07afb6cd836b99a7a88"
+      "sha256": "aafedb7eb871dc697fa484de6c3c700652640f2f24dfa8031b9290aef2a08729"
     },
     "blendshapes": [
       "eyeBlinkLeft",
@@ -78,17 +82,28 @@
       "kind": "stock",
       "source": "Built with src/argus_mask/editor/build_head.py from scripts/stock_heads/stock-02.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets, faceunits01 and suits02",
       "license": "CC0-1.0",
-      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_female, hair short02, eyes high-poly (brown), eyebrow002, eyelashes02, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0); uniform thegreatengineer_galactic_warrior_uniform by TheGreatEngineer (suits02 pack, CC0). Phenotype: female, age macro 0.5 (about 25 years). A generated character, not a real person. The mouth settings, uniform, wet line and baked skin maps of stock-01 revision 4. Revision 2: skinned to MPFB's game_engine rig (53 bones), so the head turns at the neck and the shoulders stay still. Waist-up framing (waist.glb, same revision): the same build cut below the hips, arms and all."
+      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_female, hair short02, eyes high-poly (brown), eyebrow002, eyelashes02, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0); uniform thegreatengineer_galactic_warrior_uniform by TheGreatEngineer (suits02 pack, CC0). Phenotype: female, age macro 0.5 (about 25 years). A generated character, not a real person. The mouth settings, uniform, wet line and baked skin maps of stock-01 revision 4. Revision 2: skinned to MPFB's game_engine rig (53 bones), so the head turns at the neck and the shoulders stay still. Revision 3: wears shoes03 boots (makehuman_system_assets pack, CC0); skin a garment covers below the neck is removed, so none shows through. Other framings, same revision: waist.glb, the same build cut below the hips, arms and all; full.glb, head to shoes, nothing cut."
     },
     "framings": {
       "waist": {
         "model": {
           "file": "waist.glb",
-          "sha256": "c8311119e25f46a87ff3c47ab6edb91af25d5d3eb6f05d520f6b9b854c6197c3"
+          "sha256": "05859a5d3243834517982f108d956d75a6ba11fcd1eb73ca9f0430555bf47a36"
         },
         "framing": {
           "distance": 1.743,
           "height": -0.297,
+          "fov": 30.0
+        }
+      },
+      "full": {
+        "model": {
+          "file": "full.glb",
+          "sha256": "3361475f533c2f6f38c6ae69e8c71d889b4f6579fb33d44a9f0d8d6488e2ce39"
+        },
+        "framing": {
+          "distance": 3.407,
+          "height": -0.695,
           "fov": 30.0
         }
       }
