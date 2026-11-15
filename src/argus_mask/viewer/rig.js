@@ -77,3 +77,61 @@ export function setPose(THREE, root, pose) {
   root.updateMatrixWorld(true);
   return plan.length;
 }
+
+// Life below the neck for a framing that shows the body (#62): breathing, a slow shift of weight, and the chest
+// following a nod a little. Like the head's idle life, a function of the face's seed and the time (the posed
+// frame's in a recording), never the clock or a random draw: the same take records the same body.
+// Degrees about world axes from the posed rest: each bone's local rotation becomes rest * (W^-1 D W), as above.
+const BREATH_S = 4.4;                 // one breath at rest
+const SHIFT_S = [11.3, 7.1];          // two slow, unrelated periods: the sway never quite repeats
+export const BODY = {
+  breath: { spine_02: [-0.35, 0, 0], spine_03: [-0.7, 0, 0], clavicle_l: [0, 0, 1.4], clavicle_r: [0, 0, -1.4] },
+  shift: { pelvis: [0, 0.4, 1.0], spine_01: [0, 0, -0.55], spine_03: [0, 0, -0.3] },
+  nod: { spine_03: 0.12 },            // the share of the head's pitch the chest follows
+};
+
+export class BodyLife {
+  constructor(THREE, root, seed = 0) {
+    this.THREE = THREE;
+    const bones = new Map();
+    root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
+    root.updateMatrixWorld(true);
+    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod)]);
+    this.bones = new Map([...names].filter((n) => bones.has(n)).map((n) => {
+      const bone = bones.get(n);
+      const world = bone.getWorldQuaternion(new THREE.Quaternion());
+      return [n, { bone, rest: bone.quaternion.clone(), world, inverse: world.clone().invert(), angle: [0, 0, 0] }];
+    }));
+    // Each face breathes and sways in its own phase, from its seed.
+    const phase = (k) => ((Math.imul(seed ^ Math.imul(k, 0x9e3779b9), 2654435761) >>> 0) % 6283) / 1000;
+    this.phases = [phase(1), phase(2), phase(3)];
+    this.euler = new THREE.Euler();
+    this.turn = new THREE.Quaternion();
+    this.local = new THREE.Quaternion();
+  }
+
+  get alive() { return this.bones.size > 0; }
+
+  // The body at time *t* (seconds), the head pitched by *pitch* degrees (the chest follows a little).
+  apply(t, pitch = 0) {
+    const tau = 2 * Math.PI;
+    const breath = 0.5 - 0.5 * Math.cos(tau * t / BREATH_S + this.phases[0]);   // 0 out, 1 in
+    const shift = 0.7 * Math.sin(tau * t / SHIFT_S[0] + this.phases[1]) + 0.3 * Math.sin(tau * t / SHIFT_S[1] + this.phases[2]);
+    for (const b of this.bones.values()) b.angle.fill(0);
+    const add = (table, k) => {
+      for (const [name, [x, y, z]] of Object.entries(table)) {
+        const b = this.bones.get(name);
+        if (b) { b.angle[0] += x * k; b.angle[1] += y * k; b.angle[2] += z * k; }
+      }
+    };
+    add(BODY.breath, breath);
+    add(BODY.shift, shift);
+    for (const [name, share] of Object.entries(BODY.nod)) { const b = this.bones.get(name); if (b) b.angle[0] += share * pitch; }
+    const rad = Math.PI / 180;
+    for (const b of this.bones.values()) {
+      this.turn.setFromEuler(this.euler.set(b.angle[0] * rad, b.angle[1] * rad, b.angle[2] * rad, 'YXZ'));
+      this.local.copy(b.inverse).multiply(this.turn).multiply(b.world);
+      b.bone.quaternion.copy(b.rest).multiply(this.local);
+    }
+  }
+}

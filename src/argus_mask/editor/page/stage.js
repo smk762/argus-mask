@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 import { Look, lookOptions } from './look.js';
 import { Backdrop } from './backdrop.js';
-import { ARMS_DOWN, HeadTurn, setPose } from './rig.js';
+import { ARMS_DOWN, BodyLife, HeadTurn, setPose } from './rig.js';
 import { ARKIT, AXES, Motion, blend, lipBudget } from './motion.js';
 
 // Real speech for the preview: 12 s of Audio2Face weights (talk.json, no audio), looped with a pause, so a
@@ -129,7 +129,11 @@ export class Stage {
     this.targets = new Map();
     this.pivot.add(gltf.scene);
     this.look.apply(gltf.scene);
-    if (armsDown) setPose(THREE, gltf.scene, ARMS_DOWN);
+    this.body = null;
+    if (armsDown) {
+      setPose(THREE, gltf.scene, ARMS_DOWN);
+      this.body = new BodyLife(THREE, gltf.scene);   // breathing and weight shifts, as on a screen
+    }
     this.neck = new HeadTurn(THREE, gltf.scene);   // a rigged head turns at the neck; the pivot is the turntable
     gltf.scene.traverse((node) => {
       if (node.isMesh && node.morphTargetDictionary) {
@@ -252,6 +256,7 @@ export class Stage {
       return;
     }
     for (let i = 0; i < ARKIT.length; i += 1) this.weigh(ARKIT[i], weights[i]);
+    this.body?.apply(t, this.headTurn.pitch);
     if (this.neck?.rigged) {
       this.neck.apply(this.headTurn.pitch, this.headTurn.yaw, this.headTurn.roll);
       this.pivot.rotation.set(0, this.spin, 0);
