@@ -5,7 +5,11 @@
   </picture>
 </h1>
 
+<!-- Live demo: https://mask.dragonhound.dev -->
+
 A talking face for the Argus suite. Audio goes in; a stream of facial animation frames comes out; a browser page renders a rigged head from those frames, in step with the audio, on any screen on the LAN.
+
+**Demo:** [mask.dragonhound.dev](https://mask.dragonhound.dev), a face you can watch talk (see [Hosted demo](#hosted-demo)).
 
 Part of the [Argus suite](https://github.com/smk762?tab=repositories&q=argus). Mask sits off the main line, like argus-darkroom and argus-atlas. The design and build plan are in [spec.md](https://github.com/smk762/argus-mask/blob/main/spec.md).
 
@@ -379,6 +383,14 @@ curl -X POST http://127.0.0.1:8109/speak -H "Content-Type: application/json" \
 ```
 
 From Python, `argus_mask.client.push` and `say` drive the socket directly and report each step as it happens.
+
+## Hosted demo
+
+[mask.dragonhound.dev](https://mask.dragonhound.dev) replays a few recorded clips in the browser: each is a take (the frames argus-mask made) and its audio, drawn with the viewer's own modules, with pause, scrub and captions. No server or GPU runs while you watch. The faces are the stock heads and the voices are XTTS-v2 studio speakers (Coqui Public Model License, non-commercial): synthetic, with no one's likeness.
+
+- `demo/clips.json`: the clips (face, framing, backdrop, voice, seed and sentences). `python demo/make_clips.py` speaks them as `say` would, drives them with Audio2Face as `drive` does, and writes `demo/clips/<id>/` (`clip.json` with caption times and what made it, `take.ndjson`, `audio.m4a`). Commit the result.
+- `make demo` builds the site into `demo/out/`: the page, the viewer, the clips and the stock heads they show (from `assets/` if checked there, otherwise fetched from the release). `.github/workflows/pages.yml` builds and deploys it to Cloudflare Pages on every push to `main`.
+- The page shares the Dragonhound Labs design layer (`demo/vendor/dh`, dh-shared, vendored from dragonhound-site with `sync-shared.mjs` and checked by the deploy).
 
 ## Develop
 

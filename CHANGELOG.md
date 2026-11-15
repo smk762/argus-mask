@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hosted demo** (#118). `demo/`: a static page that replays recorded clips (a take and its audio) with the viewer's
+  own modules, with pause, scrub, captions and what made each clip; `demo/make_clips.py` makes the clips (TTS as
+  `say`, Audio2Face as `drive`), `make demo` builds the site, and `pages.yml` deploys it to mask.dragonhound.dev.
 - **Gestures** (#62). A waist-up or full-body face talks with its hands: over some phrases one hand or both come up
   in front of the waist, palms open, and strong stressed syllables stroke them down, landing on the syllable. Which
   phrases and which hand follow the face's seed, so a take gestures the same way every time and `record` reproduces

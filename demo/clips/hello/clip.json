@@ -1,0 +1,52 @@
+{
+  "id": "hello",
+  "title": "Hello",
+  "face": "stock-02",
+  "framing": "waist",
+  "scene": "lake",
+  "duration_ms": 14424,
+  "frames": 433,
+  "captions": [
+    {
+      "start_ms": 0,
+      "end_ms": 3381,
+      "text": "Hello. I'm a face made by argus-mask."
+    },
+    {
+      "start_ms": 3681,
+      "end_ms": 9484,
+      "text": "Give me any voice and I'll speak it, with my lips and jaw in step with every syllable."
+    },
+    {
+      "start_ms": 9784,
+      "end_ms": 14424,
+      "text": "Between words I blink, glance around and breathe, so I never freeze."
+    }
+  ],
+  "rest": {
+    "name": "warm",
+    "weights": {
+      "mouthSmileLeft": 0.32,
+      "mouthSmileRight": 0.32,
+      "cheekSquintLeft": 0.12,
+      "cheekSquintRight": 0.12,
+      "eyeSquintLeft": 0.05,
+      "eyeSquintRight": 0.05,
+      "eyeBlinkLeft": 0.1,
+      "eyeBlinkRight": 0.1,
+      "browInnerUp": 0.06
+    },
+    "life": 1.0
+  },
+  "made_with": {
+    "argus_mask": "v0.2.0-56-g0c6a9ec",
+    "driver": {
+      "name": "a2f",
+      "model": null
+    },
+    "fps": 30,
+    "seed": 2,
+    "voice": "Rosemary Okafor",
+    "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial), through agent-composer"
+  }
+}

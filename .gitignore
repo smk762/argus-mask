@@ -17,3 +17,6 @@ spec.orig.md
 /recordings/
 # Voices page: checked clips and each voice's record and clips (argus-mask editor --voices-dir)
 /voices/
+
+# The hosted demo's build (make demo)
+/demo/out/
