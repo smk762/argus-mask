@@ -104,7 +104,12 @@ async def _reply(ws, expect: str) -> dict:  # noqa: ANN001 - websockets is optio
             if message.get("type") == expect:
                 return message
     except websockets.ConnectionClosed as exc:
-        raise ClientError(f"the server closed the socket: {exc.reason or exc.code}") from exc
+        raise _closed(exc) from exc
+
+
+def _closed(exc) -> ClientError:  # noqa: ANN001 - websockets.ConnectionClosed; websockets is optional
+    """A socket the server closed, as the error to show: its reason (a refused face says which), else the code."""
+    return ClientError(f"the server closed the socket: {exc.reason or exc.code}")
 
 
 async def send(
@@ -146,6 +151,10 @@ async def send(
                     await asyncio.sleep(ahead)
             await ws.send(json.dumps({"type": "end"}))
             return await _reply(ws, "done")
+    except websockets.ConnectionClosed as exc:
+        # The server may close before it reads a word (a face it does not have: it refuses at once, so the hello's
+        # own send can fail) or mid-stream (its driver failed): either way, say why, as _reply does.
+        raise _closed(exc) from exc
     except (OSError, websockets.InvalidURI, websockets.InvalidHandshake) as exc:
         raise ClientError(f"cannot reach {base}: {exc}") from exc
 
