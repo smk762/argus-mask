@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -26,7 +28,7 @@ def server(tmp_path: Path):
         yield url
 
 
-async def _push_after(url: str, delay: float, seconds: float) -> dict:
+async def _push_after(url: str, delay: float, seconds: float, face: str = "test-head") -> dict:
     await asyncio.sleep(delay)
     pcm = tone(seconds, 16000)
 
@@ -34,7 +36,7 @@ async def _push_after(url: str, delay: float, seconds: float) -> dict:
         for start in range(0, pcm.size, 1600):
             yield pcm[start : start + 1600].astype("<f4").tobytes()
 
-    return await client.send(url, "test-head", AudioFormat(sample_rate=16000), chunks())
+    return await client.send(url, face, AudioFormat(sample_rate=16000), chunks())
 
 
 def test_capture_keeps_the_next_whole_session(server) -> None:
@@ -237,3 +239,52 @@ def test_the_viewer_is_asked_for_the_framing(server, tmp_path: Path, monkeypatch
     assert "framing=waist" in urls[0]
     with pytest.raises(record.RecordError, match="framing 'feet'"):
         asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / "c.mp4", framing="feet"))
+
+
+REAL_HEAD = Path(__file__).resolve().parent.parent / "assets" / "stock-01"
+
+
+@pytest.mark.skipif(not _can_render(), reason="needs playwright with a browser, and ffmpeg")
+@pytest.mark.skipif(not (REAL_HEAD / "manifest.json").is_file(), reason="needs a real head: make head (stock-01)")
+@pytest.mark.parametrize("framing", ["head", "waist"])
+def test_a_real_head_records_the_same_twice(tmp_path: Path, framing: str) -> None:
+    # The one-triangle fixture cannot show what a real head does: textures, alpha-tested and blended parts, a rig,
+    # a body (#108). The GPU still blends a few pixels of the blended layers (hair fringe, lashes, brows) one level
+    # apart between runs; anything more is a bug (a stale frame was hundreds of pixels, by up to 90).
+    assets = tmp_path / "assets"
+    shutil.copytree(REAL_HEAD, assets / "stock-01")
+    manifest = json.loads((assets / "stock-01" / "manifest.json").read_text())
+    if framing != "head" and framing not in manifest.get("framings", {}):
+        pytest.skip(f"stock-01 here has no {framing} framing: fetch it again (scripts/fetch_stock_head.py)")
+    with live_server(create_app(Settings(assets_dir=assets))) as url:
+
+        async def run():
+            pushed = asyncio.create_task(_push_after(url, 0.5, 1.2, face="stock-01"))
+            rec = await record.capture(url, "stock-01")
+            await pushed
+            page = f"{url}/?face=stock-01&record=1&hud=0&display=flat&quality=high&framing={framing}"
+            try:
+                for n in ("a", "b"):
+                    await record.render_frames(page, rec, tmp_path / n, width=640, height=480)
+            except record.RecordError as exc:
+                if "no browser" in str(exc):
+                    pytest.skip(str(exc))
+                raise
+            return rec
+
+        rec = asyncio.run(run())
+
+    def pixels(path: Path) -> np.ndarray:
+        raw = subprocess.run(
+            [record.find_ffmpeg(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        return np.frombuffer(raw, np.uint8).reshape(480, 640, 3).astype(int)
+
+    for frame in rec.frames:
+        name = f"{frame.seq:06d}.png"
+        diff = np.abs(pixels(tmp_path / "a" / name) - pixels(tmp_path / "b" / name)).max(axis=2)
+        assert diff.max() <= 2 and (diff > 0).sum() <= 50, (
+            f"{name}: {(diff > 0).sum()} pixels differ, by up to {diff.max()}"
+        )
