@@ -234,6 +234,7 @@ async function loadFace() {
     body = new BodyLife(THREE, gltf.scene, faceSeed(manifest.id));
   }
   headTurn = new HeadTurn(THREE, gltf.scene);
+
   motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
   await loadRest(faceId);
@@ -317,7 +318,13 @@ function splatPose(weights, headTurn, blendshapes, tMs) {
   const shown = motion.present(current, order, { live: true, t: 0, dt: 0 });
   state.weights = shown.weights;
   splat.set(shown.weights, order, head);
-  return splat.exact(Number.isFinite(tMs) ? tMs / 1000 : 0);   // the backdrop at the frame's own time
+  // The backdrop at the frame's own time; resolved once the frame is on screen, as for a mesh (#108).
+  return splat.exact(Number.isFinite(tMs) ? tMs / 1000 : 0).then(presented);
+}
+
+// Two animation frames: by then what was drawn before has been presented, so a screenshot shows it.
+function presented() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
 // The face's rest set: its own, or the page's ?rest=. A server without the route leaves the face neutral.
@@ -584,7 +591,14 @@ function draw() {
     }
     look.render(posed ? posed.t : undefined);   // a recording's grain follows the frame, not the wall clock
   }
-  if (posedResolve) { const done = posedResolve; posedResolve = null; done(); }
+  // Resolve only once this frame is on screen: a rAF callback runs before the browser presents what it drew, so a
+  // screenshot taken at once could catch the frame before (an idle half-blink, the last pose). Two frames later the
+  // posed one has been presented, and every frame since shows the same pose (#108).
+  if (posedResolve) {
+    const done = posedResolve;
+    posedResolve = null;
+    presented().then(done);
+  }
 
   drawn += 1;
   if (wall - fpsSince >= 1000) { fps = Math.round(drawn * 1000 / (wall - fpsSince)); drawn = 0; fpsSince = wall; }

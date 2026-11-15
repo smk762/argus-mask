@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A recorded frame could be the one before** (#108). `pose()` resolved inside the draw, before the browser had
+  presented it, so a screenshot taken at once could show the previous frame (an idle half-blink, the last pose).
+  It now resolves two frames later, for meshes and splats. A new test records a real stock head twice (head and
+  waist) and allows only the GPU's off-by-one blending of a few pixels; it runs where `assets/stock-01` exists.
 - **Two recordings of a real face differed in about 10,000 pixels.** GTAO's denoiser drew its noise texture from
   `Math.random` on each page load, so the ambient occlusion around the eyes, mouth and collar changed between runs.
   It is seeded now; what remains is a few pixels of blended hair, off by one level, from the GPU.
