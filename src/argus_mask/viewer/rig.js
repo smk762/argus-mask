@@ -120,17 +120,21 @@ export const BODY = {
   },
 };
 
+const GESTURE_BONES = ['upperarm_l', 'upperarm_r', 'lowerarm_l', 'lowerarm_r', 'hand_l', 'hand_r'];
+
 export class BodyLife {
   constructor(THREE, root, seed = 0) {
     this.THREE = THREE;
     const bones = new Map();
     root.traverse((node) => { if (node.isBone) bones.set(nameOf(node), node); });
     root.updateMatrixWorld(true);
-    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod), ...Object.keys(BODY.arms), ...BODY.plant]);
+    const names = new Set([...Object.keys(BODY.breath), ...Object.keys(BODY.shift), ...Object.keys(BODY.nod), ...Object.keys(BODY.arms), ...BODY.plant,
+      ...GESTURE_BONES]);
     this.bones = new Map([...names].filter((n) => bones.has(n)).map((n) => {
       const bone = bones.get(n);
       const world = bone.getWorldQuaternion(new THREE.Quaternion());
-      return [n, { bone, rest: bone.quaternion.clone(), world, inverse: world.clone().invert(), angle: [0, 0, 0] }];
+      const length = new THREE.Vector3(0, 1, 0).applyQuaternion(world).normalize();   // for a twist about the bone
+      return [n, { bone, rest: bone.quaternion.clone(), world, inverse: world.clone().invert(), angle: [0, 0, 0], twist: 0, length }];
     }));
     // Each face breathes and sways in its own phase, from its seed.
     const phase = (k) => ((Math.imul(seed ^ Math.imul(k, 0x9e3779b9), 2654435761) >>> 0) % 6283) / 1000;
@@ -139,16 +143,18 @@ export class BodyLife {
     this.euler = new THREE.Euler();
     this.turn = new THREE.Quaternion();
     this.local = new THREE.Quaternion();
+    this.twist = new THREE.Quaternion();
   }
 
   get alive() { return this.bones.size > 0; }
 
-  // The body at time *t* (seconds), the head pitched by *pitch* degrees (the chest follows a little).
-  apply(t, pitch = 0) {
+  // The body at time *t* (seconds), the head pitched by *pitch* degrees (the chest follows a little), with
+  // *gesture*'s turns on top (Gestures.pose: { bone: { world, twist } }).
+  apply(t, pitch = 0, gesture = null) {
     const tau = 2 * Math.PI;
     const breath = 0.5 - 0.5 * Math.cos(tau * t / BREATH_S + this.phases[0]);   // 0 out, 1 in
     const shift = 0.7 * Math.sin(tau * t / SHIFT_S[0] + this.phases[1]) + 0.3 * Math.sin(tau * t / SHIFT_S[1] + this.phases[2]);
-    for (const b of this.bones.values()) b.angle.fill(0);
+    for (const b of this.bones.values()) { b.angle.fill(0); b.twist = 0; }
     const add = (table, k) => {
       for (const [name, [x, y, z]] of Object.entries(table)) {
         const b = this.bones.get(name);
@@ -164,6 +170,13 @@ export class BodyLife {
       const k = Math.sin(tau * t / period + this.armPhases[i]);
       b.angle[0] += amp[0] * k; b.angle[1] += amp[1] * k; b.angle[2] += amp[2] * k;
     });
+    for (const [name, turn] of Object.entries(gesture || {})) {
+      const b = this.bones.get(name);
+      if (!b) continue;
+      const [x, y, z] = turn.world || [0, 0, 0];
+      b.angle[0] += x; b.angle[1] += y; b.angle[2] += z;
+      b.twist += turn.twist || 0;
+    }
     const rad = Math.PI / 180;
     const pelvis = this.bones.get('pelvis');
     const planted = new Set(BODY.plant);
@@ -175,6 +188,7 @@ export class BodyLife {
         this.turn.setFromEuler(this.euler.set(x * rad, y * rad, z * rad, 'YXZ')).invert();
       } else {
         this.turn.setFromEuler(this.euler.set(b.angle[0] * rad, b.angle[1] * rad, b.angle[2] * rad, 'YXZ'));
+        if (b.twist) this.turn.multiply(this.twist.setFromAxisAngle(b.length, b.twist * rad));
       }
       this.local.copy(b.inverse).multiply(this.turn).multiply(b.world);
       b.bone.quaternion.copy(b.rest).multiply(this.local);
@@ -228,4 +242,96 @@ export function contactShadow(THREE, root, parent, { strength = 0.8 } = {}) {
   card.name = 'contact-shadow';
   parent.add(card);
   return card;
+}
+
+// Gestures (#62): the arms speak with the voice, from the cues on the stream's frames (models.py: SpeechCue).
+// Over some phrases a hand (or both) comes up and open, forearm forward and palm turning up; while it is up, a
+// strong stress strokes it down a little, peaking on the syllable. Which phrases, and which hand, come from the
+// face's seed and the phrase's number: the same take gestures the same way every time. Frames arrive ahead of
+// their sound (and a recording knows them all), so a gesture may begin a little before its cue, as people's do.
+// Degrees about world axes from the posed rest, as BodyLife's; twist about the bone's own length.
+export const GESTURE = {
+  lead_s: 0.15,            // a hand starts coming up this long before the phrase does
+  rise_s: 0.35,            // and is up after this long
+  fall_s: 0.7,             // it goes down over this long after the phrase ends
+  share: [0.25, 0.5, 0.25],   // of phrases: no gesture, one hand (the face's own), both
+  // The raised arm, at full lift. Left side; the right mirrors y and z (and twist).
+  lift: { upperarm: [-8, 0, 0], lowerarm: [-32, -12, 0], twist: -75, hand: [-6, 0, 0] },
+  beat: { min: 0.55, gap_s: 0.6, tau_s: 0.11, lowerarm: 9, hand: 7 },   // a stroke: degrees down at stress 1
+};
+
+const bump = (t, tau) => (t > 0 ? (t / tau) * Math.exp(1 - t / tau) : 0);
+const smooth = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+
+export class Gestures {
+  constructor(seed = 0) {
+    this.seed = seed >>> 0;
+    this.reset();
+  }
+
+  // A new stream: forget the last one's cues.
+  reset() { this.phrases = []; this.beats = []; this.lastBeat = -Infinity; }
+
+  // A frame's cue, at its time on the stream (ms). Frames come in order.
+  add(tMs, cue) {
+    if (!cue) return;
+    if (cue.phrase === 'end') { const open = this.phrases.at(-1); if (open && open.end === null) open.end = tMs; }
+    if (cue.phrase === 'start') {
+      const open = this.phrases.at(-1);
+      if (open && open.end === null) open.end = tMs;
+      const n = this.phrases.length;
+      const r = ((Math.imul(this.seed ^ Math.imul(n + 1, 0x9e3779b9), 2654435761) >>> 0) % 1000) / 1000;
+      const [none, one] = GESTURE.share;
+      const hands = r < none ? [] : r < none + one ? [this.seed % 2 ? 'r' : 'l'] : ['l', 'r'];
+      this.phrases.push({ start: tMs, end: null, hands });
+    }
+    if (cue.stress >= GESTURE.beat.min && tMs - this.lastBeat >= GESTURE.beat.gap_s * 1000) {
+      this.beats.push({ t: tMs, s: cue.stress });
+      this.lastBeat = tMs;
+    }
+  }
+
+  // The stream ended: a phrase still open ends here.
+  end(tMs) { const open = this.phrases.at(-1); if (open && open.end === null) open.end = tMs; }
+
+  // How far each hand is up at time *tMs* (0..1), and its stroke (0..1).
+  at(tMs) {
+    const g = GESTURE;
+    const out = { l: { lift: 0, beat: 0 }, r: { lift: 0, beat: 0 } };
+    for (const p of this.phrases) {
+      if (!p.hands.length) continue;
+      const up = smooth((tMs - p.start + g.lead_s * 1000) / (g.rise_s * 1000));
+      const down = p.end === null ? 1 : 1 - smooth((tMs - p.end) / (g.fall_s * 1000));
+      const lift = Math.min(up, down);
+      for (const h of p.hands) out[h].lift = Math.max(out[h].lift, lift);
+    }
+    for (const b of this.beats) {
+      const dt = (tMs - b.t) / 1000 + g.beat.tau_s;   // the stroke peaks on the syllable
+      if (dt <= 0 || dt > 8 * g.beat.tau_s) continue;
+      for (const h of ['l', 'r']) out[h].beat = Math.max(out[h].beat, b.s * bump(dt, g.beat.tau_s));
+    }
+    for (const h of ['l', 'r']) out[h].beat *= out[h].lift;   // only a hand that is up strokes
+    return out;
+  }
+
+  // The bones' turns for time *tMs*: { bone: { world: [x, y, z], twist } }, for BodyLife.apply.
+  pose(tMs) {
+    const g = GESTURE;
+    const hands = this.at(tMs);
+    const turns = {};
+    for (const side of ['l', 'r']) {
+      const { lift, beat } = hands[side];
+      if (!lift) continue;
+      const m = side === 'l' ? 1 : -1;   // mirror y, z and twist
+      const scale = ([x, y, z], k) => [x * k, y * k * m, z * k * m];
+      turns[`upperarm_${side}`] = { world: scale(g.lift.upperarm, lift) };
+      const fore = scale(g.lift.lowerarm, lift);
+      fore[0] += g.beat.lowerarm * beat;
+      turns[`lowerarm_${side}`] = { world: fore, twist: g.lift.twist * m * lift };
+      const hand = scale(g.lift.hand, lift);
+      hand[0] += g.beat.hand * beat;
+      turns[`hand_${side}`] = { world: hand };
+    }
+    return turns;
+  }
 }

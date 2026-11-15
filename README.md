@@ -342,7 +342,7 @@ argus-mask say "Hello from the bridge." --face stock-01
 `schema/mask-wire.schema.json` is the contract. A viewer socket carries:
 
 - one `header` (JSON): session, fps, seed, the order of the blendshape weights, the audio format;
-- `frame` messages (JSON): `seq`, `t_ms` on the audio timeline, `weights`, `head` rotation in degrees;
+- `frame` messages (JSON): `seq`, `t_ms` on the audio timeline, `weights`, `head` rotation in degrees, and, only on a frame where one began, `cue`: a stressed syllable (`stress`, 0..1) or a phrase's `start` or `end` (`phrase`), which a screen showing the body gestures by;
 - audio chunks (binary): 8 bytes of little-endian float64 giving the chunk's start in ms, then mono `f32le` PCM. The server sends a chunk only once frames reach its end, so a driver that answers late delays the sound, never the mouth;
 - one `end` (JSON).
 

@@ -186,6 +186,10 @@ async def render_frames(
             raise RecordError("no browser could render the face: " + "; ".join(failures))
         try:
             total = len(recording.frames)
+            # The cues, before any pose: a body framing gestures by them (the viewer ignores them otherwise).
+            cues = [[f.t_ms, f.cue.model_dump()] for f in recording.frames if f.cue]
+            last = recording.frames[-1].t_ms if recording.frames else 0
+            await page.evaluate("([c, last]) => window.__mask.cues && window.__mask.cues(c, last)", [cues, last])
             for i, frame in enumerate(recording.frames):
                 await page.evaluate(
                     "([w, h, n, t]) => window.__mask.pose(w, h, n, t)",

@@ -15,11 +15,19 @@ from argus_mask.arkit import ARKIT_52
 from argus_mask.audio import DRIVER_RATE, Resampler
 from argus_mask.drivers import Driver, DriverSession
 from argus_mask.idle import IdleLayer
-from argus_mask.models import AudioFormat, DriverInfo, Frame, StreamEnd, StreamHeader
-from argus_mask.prosody import Prosody
+from argus_mask.models import AudioFormat, DriverInfo, Frame, SpeechCue, StreamEnd, StreamHeader
+from argus_mask.prosody import Cue, Prosody
 
 BLOCK_MS = 100  # how much audio the offline path feeds at a time, and what `push` sends
 WEIGHT_DECIMALS = 4
+
+
+def speech_cue(cue: Cue) -> SpeechCue | None:
+    """What began on the frame, for the wire: None when nothing did (most frames)."""
+    phrase = "start" if cue.phrase_start else "end" if cue.phrase_end else None
+    if not cue.stress and phrase is None:
+        return None
+    return SpeechCue(stress=round(min(1.0, max(0.0, cue.stress)), 3), phrase=phrase)
 
 
 class Performer:
@@ -36,13 +44,15 @@ class Performer:
     def _frames(self, weights: list[np.ndarray]) -> list[Frame]:
         out = []
         for w in weights:
-            layered, head = self._idle.apply(self._seq, w, self._prosody.cue(self._seq))
+            cue = self._prosody.cue(self._seq)
+            layered, head = self._idle.apply(self._seq, w, cue)
             out.append(
                 Frame(
                     seq=self._seq,
                     t_ms=round(self._seq * 1000 / self.fps),
                     weights=[round(float(v), WEIGHT_DECIMALS) for v in layered],
                     head=head,
+                    cue=speech_cue(cue),
                 )
             )
             self._seq += 1

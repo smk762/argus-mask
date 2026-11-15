@@ -20,8 +20,12 @@ class TakeError(ValueError):
 
 
 def line(message: StreamHeader | Frame | StreamEnd) -> str:
-    """One message as it goes on the wire and into a take: compact JSON, keys in model order."""
-    return json.dumps(message.model_dump(mode="json"), separators=(",", ":"))
+    """One message as it goes on the wire and into a take: compact JSON, keys in model order. A frame with no cue
+    has no ``cue`` key: most frames have none."""
+    data = message.model_dump(mode="json")
+    if isinstance(message, Frame) and message.cue is None:
+        del data["cue"]
+    return json.dumps(data, separators=(",", ":"))
 
 
 def render_take(header: StreamHeader, frames: Iterable[Frame], end: StreamEnd) -> str:

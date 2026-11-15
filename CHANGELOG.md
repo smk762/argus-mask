@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gestures** (#62). A waist-up or full-body face talks with its hands: over some phrases one hand or both come up
+  in front of the waist, palms open, and strong stressed syllables stroke them down, landing on the syllable. Which
+  phrases and which hand follow the face's seed, so a take gestures the same way every time and `record` reproduces
+  it. The engine puts each frame's speech cue on the wire for this: `Frame.cue` (a stress, a phrase start or end),
+  only on the frames where one began.
 - **Full-body stock heads** (#62). `stock-01` revision 6 and `stock-02` revision 3 wear boots (`shoes03`, CC0) and
   come with `full.glb` beside `head.glb` and `waist.glb` (on the `stock-heads` release; `fetch_stock_head.py`
   fetches all three). All three models are rebuilt, so no skin shows through the uniform.
