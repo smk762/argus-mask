@@ -246,7 +246,7 @@ REAL_HEAD = Path(__file__).resolve().parent.parent / "assets" / "stock-01"
 
 @pytest.mark.skipif(not _can_render(), reason="needs playwright with a browser, and ffmpeg")
 @pytest.mark.skipif(not (REAL_HEAD / "manifest.json").is_file(), reason="needs a real head: make head (stock-01)")
-@pytest.mark.parametrize("framing", ["head", "waist"])
+@pytest.mark.parametrize("framing", ["head", "waist", "full"])
 def test_a_real_head_records_the_same_twice(tmp_path: Path, framing: str) -> None:
     # The one-triangle fixture cannot show what a real head does: textures, alpha-tested and blended parts, a rig,
     # a body (#108). The GPU still blends a few pixels of the blended layers (hair fringe, lashes, brows) one level
