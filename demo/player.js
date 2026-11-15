@@ -47,6 +47,15 @@ async function readTake(url) {
   return { header, frames };
 }
 
+// A clip's audio, whole, as a blob URL. A static host may answer a byte-range request with the whole file
+// (Cloudflare Pages does), and then a browser will not seek in it: scrubbing would snap back to the start. A blob
+// is always seekable, and a clip's audio is about 100 KB.
+async function audioUrl(url) {
+  const reply = await fetch(url);
+  if (!reply.ok) throw new Error(`${url}: ${reply.status}`);
+  return URL.createObjectURL(await reply.blob());
+}
+
 // ---- the stage: one renderer for the page, a face and backdrop per clip ----------------------------------
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -92,7 +101,7 @@ const faces = new Map();   // id -> manifest
 async function load(clipId) {
   statusEl.textContent = 'Loading…';
   const base = `clips/${clipId}/`;
-  const [clip, take] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`)]);
+  const [clip, take, sound] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`), audioUrl(`${base}audio.m4a`)]);
   if (!faces.has(clip.face)) faces.set(clip.face, await json(`faces/${clip.face}/manifest.json`));
   const manifest = faces.get(clip.face);
   const framed = clip.framing !== 'head' && manifest.framings?.[clip.framing];
@@ -136,7 +145,8 @@ async function load(clipId) {
   size();
   look.focus(root);
   describe(clip, manifest);
-  audio.src = `${base}audio.m4a`;
+  if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src);
+  audio.src = sound;
   scrubEl.max = String(clip.duration_ms);
   scrubEl.value = '0';
   statusEl.textContent = '';
