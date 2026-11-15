@@ -1,4 +1,4 @@
-/*! dh-theme v1.2.6 | Dragonhound Labs light/dark theme, shared across *.dragonhound.dev.
+/*! dh-theme v1.2.7 | Dragonhound Labs light/dark theme, shared across *.dragonhound.dev.
  *
  * Load it as a plain, blocking script in <head>, before the stylesheet if you can:
  *     <meta name="color-scheme" content="light dark">
