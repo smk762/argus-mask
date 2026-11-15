@@ -1389,8 +1389,12 @@ def test_every_bone_the_viewer_moves_is_in_the_rig() -> None:
     # rig.js skips a bone the model lacks (an unrigged head stays as it was), so a misspelt name would leave the
     # body still with no error: hold the names to the rig.
     rig = (SCRIPT.parent.parent / "viewer" / "rig.js").read_text()
-    named = set(re.findall(r"\b([a-z]+_0?\d?_?[lr]?|pelvis|head)\s*:\s*\[", rig)) | set(
+    named = set(re.findall(r"\b([a-z]+_0?\d?_?[lr]?|pelvis|head)\s*:\s*[\[{]", rig)) | set(
         re.findall(r"\['([a-z_0-9]+)', [0-9.]+\]", rig)
     )
-    assert {"upperarm_l", "spine_03", "clavicle_r", "pelvis", "neck_01", "head"} <= named
+    fingers = re.search(r"const FINGERS = \[([^\]]*)\]", rig)
+    assert fingers, "the curled fingers' names are built from FINGERS"
+    for finger in re.findall(r"'([a-z]+)'", fingers.group(1)):  # curl(): <finger>_0<1..3>_<side>
+        named |= {f"{finger}_0{joint}_{side}" for joint in (1, 2, 3) for side in "lr"}
+    assert {"upperarm_l", "lowerarm_r", "index_03_l", "spine_03", "clavicle_r", "pelvis", "neck_01", "head"} <= named
     assert named <= GAME_ENGINE_BONES, named - GAME_ENGINE_BONES

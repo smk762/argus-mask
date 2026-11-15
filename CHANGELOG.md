@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Relaxed arms for waist-up faces.** The arms no longer hang straight with flat hands: the elbows bend a little,
+  the forearms turn the palms toward the thighs and the fingers curl. Each arm drifts by about a degree at the
+  shoulder and elbow on its own slow period, so the two never move in step.
 - **Life below the neck** (#62, step 2b). A waist-up figure breathes (chest and shoulders, a 4.4 s breath), shifts
   its weight slowly (pelvis and spine, two unrelated periods, the head kept level) and lets its chest follow a nod.
   Viewer-side (`rig.js` `BodyLife`), a function of the face's seed and the time: the posed frame's in a recording.
