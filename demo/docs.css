@@ -1,0 +1,48 @@
+/* /docs/ and 404.html (#123): pages built by build.py's shell() around docs_page.py's rendered markdown. Colours and
+   type come from dh-tokens.css, as on the demo page. */
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+.top .site { margin: 0; font-size: var(--dh-text-xl); font-weight: var(--dh-weight-semibold); }
+.top .site a { color: var(--dh-text); text-decoration: none; }
+.site-nav { display: flex; gap: var(--dh-space-3); }
+.site-nav a { color: var(--dh-text); }
+
+main.page { display: block; padding-bottom: var(--dh-space-8); }
+
+.docs { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: var(--dh-space-6); align-items: start; }
+@media (max-width: 760px) { .docs { grid-template-columns: minmax(0, 1fr); } }
+
+.docs-nav { position: sticky; top: calc(var(--dh-strip-h) + 8px); max-height: calc(100vh - var(--dh-strip-h) - 16px); overflow-y: auto; font-size: var(--dh-text-sm); }
+@media (max-width: 760px) { .docs-nav { position: static; max-height: none; } }
+.docs-nav ul { list-style: none; margin: 0; padding: 0; }
+.docs-nav li { margin: 0; }
+.docs-nav a { display: block; padding: 4px 8px; border-radius: var(--dh-radius-md); color: var(--dh-text); text-decoration: none; }
+.docs-nav a:hover { background: var(--dh-surface); }
+.docs-nav a[aria-current="page"] { background: var(--dh-surface-2); font-weight: var(--dh-weight-semibold); }
+.docs-nav ul ul { margin: 2px 0 6px var(--dh-space-3); border-left: 1px solid var(--dh-border); }
+.docs-nav ul ul a { color: var(--dh-muted); }
+
+.docs-body { min-width: 0; max-width: 80ch; }
+.docs-version { margin: 0 0 var(--dh-space-4); padding: 6px 10px; border: 1px solid var(--dh-border); border-radius: var(--dh-radius-md);
+                background: var(--dh-surface); font-size: var(--dh-text-sm); color: var(--dh-muted); }
+.docs-body h1 { font-size: var(--dh-text-2xl); line-height: var(--dh-leading-tight); margin: 0 0 var(--dh-space-4); }
+.docs-body h2 { font-size: var(--dh-text-xl); margin: var(--dh-space-8) 0 var(--dh-space-3); padding-top: var(--dh-space-2); border-top: 1px solid var(--dh-border); }
+.docs-body h3 { font-size: var(--dh-text-lg); margin: var(--dh-space-6) 0 var(--dh-space-2); }
+.docs-body :is(h1, h2, h3, h4) { scroll-margin-top: calc(var(--dh-strip-h) + 16px); }
+.docs-body img { max-width: 100%; height: auto; border-radius: var(--dh-radius-md); }
+.docs-body code { font-family: var(--dh-mono); font-size: 0.9em; padding: 0.1em 0.3em; border-radius: 4px; background: var(--dh-surface); overflow-wrap: anywhere; }
+.docs-body pre { overflow-x: auto; padding: var(--dh-space-3); border: 1px solid var(--dh-border); border-radius: var(--dh-radius-md); background: var(--dh-surface); }
+.docs-body pre code { padding: 0; background: none; overflow-wrap: normal; font-size: var(--dh-text-sm); }
+.docs-body table { display: block; overflow-x: auto; border-collapse: collapse; font-size: var(--dh-text-sm); }
+.docs-body :is(th, td) { padding: 6px 10px; border: 1px solid var(--dh-border); vertical-align: top; text-align: left; }
+.docs-body th { background: var(--dh-surface); }
+.docs-body .align-center { text-align: center; }
+.docs-body .align-right { text-align: right; }
+.docs-body blockquote { margin: var(--dh-space-3) 0; padding: 0 var(--dh-space-3); border-left: 3px solid var(--dh-border); color: var(--dh-muted); }
+.docs-source { margin-top: var(--dh-space-8); font-size: var(--dh-text-sm); color: var(--dh-muted); }
+
+.missing { padding-block: var(--dh-space-8); }
+
+/* The demo page's line under the player: what made the clip, and where its docs are. */
+.made-line { margin: var(--dh-space-2) 0 0; font-size: var(--dh-text-sm); color: var(--dh-muted); }

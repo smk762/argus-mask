@@ -59,10 +59,11 @@ async def speak(tts_url: str, voice: str, sentences: list[str]) -> tuple[np.ndar
 
 def made_by() -> str:
     """The code that made the clips: git's description of the checkout (an editable install's version file can be
-    stale), else the package's version."""
+    stale), else the package's version. Long, so it always names the commit, and marked ``-dirty`` if the checkout
+    had uncommitted changes: demo/build.py refuses such a clip, and one whose engine has changed since its commit."""
     try:
         return subprocess.run(  # noqa: S603 - fixed arguments
-            ["git", "describe", "--tags", "--always"],  # noqa: S607
+            ["git", "describe", "--tags", "--long", "--always", "--dirty"],  # noqa: S607
             cwd=HERE,
             capture_output=True,
             text=True,

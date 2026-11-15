@@ -6,7 +6,8 @@ The page, its styles and player, the shared design layer (vendor/dh, with the st
 unchanged under viewer/, the committed clips, and each clip's stock head: fetched from the stock-heads release and
 checked against its lock (scripts/fetch_stock_head.py), or copied from --faces-from if a checked copy is there.
 Only stock heads: a clip names a face by id and only scripts/stock_heads/ is looked in. Writes _headers with a CSP
-that allows the import map by its hash. Standard library only.
+that allows the import map by its hash. /docs/ is the README and docs/*.md rendered at this commit (docs_page.py,
+which needs markdown-it-py), and 404.html makes Pages answer unknown paths with a real 404, not the demo page.
 """
 
 from __future__ import annotations
@@ -28,12 +29,70 @@ LOCKS = ROOT / "scripts" / "stock_heads"
 MARKER = "<!-- dh-strip: pasted from vendor/dh/dh-strip.html by build.py -->"
 DH_FILES = ("dh-tokens.css", "dh-strip.css", "dh-badge.css", "dh-theme.js")
 
+sys.path.insert(0, str(HERE))
+import docs_page  # noqa: E402 - beside this script, found once HERE is on the path
+
 
 def strip_html() -> str:
     """The strip's <nav>, as dh-strip.html has it (its leading comment dropped)."""
     text = (HERE / "vendor" / "dh" / "dh-strip.html").read_text(encoding="utf-8")
     start = text.index('<nav class="dh-strip"')
     return text[start:].strip()
+
+
+def shell(title: str, body: str) -> str:
+    """A page of the site other than the demo (/docs/, 404.html): the strip, the header and the footer, with
+    root-relative paths so it works at any depth. No inline script or style."""
+    esc = title.replace("&", "&amp;").replace("<", "&lt;")
+    return f"""<!doctype html>
+<html lang="en" data-dh-site="mask">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{esc}</title>
+<script src="/vendor/dh/dh-theme.js"></script>
+<link rel="stylesheet" href="/vendor/dh/dh-tokens.css">
+<link rel="stylesheet" href="/vendor/dh/dh-strip.css">
+<link rel="stylesheet" href="/vendor/dh/dh-badge.css">
+<link rel="stylesheet" href="/demo.css">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+{strip_html()}
+<header class="top">
+  <div>
+    <p class="site"><a href="/">Argus Mask</a></p>
+  </div>
+  <div class="tools">
+    <nav class="site-nav" aria-label="Site"><a href="/">Demo</a><a href="/docs/">Docs</a></nav>
+    <button type="button" class="theme" data-dh-theme-toggle aria-label="Dark theme" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
+</header>
+<main id="main" class="page">
+{body}
+</main>
+<footer class="foot">
+  <p class="links">
+    <a href="https://github.com/smk762/argus-mask">argus-mask on GitHub</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://pypi.org/project/argus-mask/">PyPI</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://docs.dragonhound.dev/">Argus docs</a>
+  </p>
+</footer>
+</body>
+</html>
+"""
+
+
+NOT_FOUND = """<div class="missing">
+<h1>Not found</h1>
+<p>There is no page here. Try <a href="/">the demo</a> or <a href="/docs/">the docs</a>.</p>
+</div>"""
 
 
 def csp(page: str) -> str:
@@ -115,7 +174,7 @@ def main() -> None:
         sys.exit("index.html has lost the strip marker")
     page = page.replace(MARKER, strip_html())
     (out / "index.html").write_text(page, encoding="utf-8")
-    for name in ("demo.css", "player.js"):
+    for name in ("demo.css", "docs.css", "player.js"):
         shutil.copyfile(HERE / name, out / name)
     (out / "vendor" / "dh").mkdir(parents=True)
     for name in DH_FILES:
@@ -129,6 +188,11 @@ def main() -> None:
         clips.append(json.loads((source / "clip.json").read_text(encoding="utf-8")))
         shutil.copytree(source, out / "clips" / clip_id)
     shutil.copyfile(HERE / "clips" / "index.json", out / "clips" / "index.json")
+    try:
+        docs = docs_page.build(out, shell, clips)
+    except docs_page.Refused as exc:
+        sys.exit(str(exc))
+    (out / "404.html").write_text(shell("Not found · Argus Mask", NOT_FOUND), encoding="utf-8")
     faces_for(clips, out, args.faces_from)
 
     (out / "_headers").write_text(
@@ -142,7 +206,7 @@ def main() -> None:
         encoding="utf-8",
     )
     size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-    print(f"built {out} ({len(clips)} clips, {size / 1e6:.1f} MB)")
+    print(f"built {out} ({len(clips)} clips, docs at {docs['commit'][:7]} ({docs['version']}), {size / 1e6:.1f} MB)")
 
 
 if __name__ == "__main__":
