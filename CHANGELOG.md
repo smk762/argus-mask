@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Waist-up stock heads.** `stock-01` and `stock-02` come with a `waist.glb` beside the head (published on the
+  `stock-heads` release, same revisions); a lock file lists each extra framing's url and size, and
+  `fetch_stock_head.py` downloads and checks every model before writing any.
 - **Relaxed arms for waist-up faces.** The arms no longer hang straight with flat hands: the elbows bend a little,
   the forearms turn the palms toward the thighs and the fingers curl. Each arm drifts by about a degree at the
   shoulder and elbow on its own slow period, so the two never move in step.

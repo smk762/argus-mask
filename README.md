@@ -119,7 +119,7 @@ A real person can be the avatar: their face, their voice, or both, under a relea
 
 ### The stock head
 
-The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform, carry the wet line and baked skin maps, and are rigged, so the head turns at the neck (revision 5 of `stock-01`, 2 of `stock-02`). To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md).
+The repo carries no model files. `make head` (or `python scripts/fetch_stock_head.py`) downloads `stock-01`, a generated adult head built from CC0 MakeHuman assets, and checks it against the size and sha256 in `scripts/stock_heads/stock-01.lock.json` before writing anything. `python scripts/fetch_stock_head.py --id stock-02` fetches the second, a woman of about 25. Both wear the crew uniform, carry the wet line and baked skin maps, and are rigged, so the head turns at the neck (revision 5 of `stock-01`, 2 of `stock-02`). Each also comes waist-up (`waist.glb`, fetched with the head): screens show it with `?framing=waist`. To build it yourself with headless Blender and MPFB, or to make another head from a new preset, see [scripts/README.md](https://github.com/smk762/argus-mask/blob/main/scripts/README.md).
 
 ### Your own head
 
