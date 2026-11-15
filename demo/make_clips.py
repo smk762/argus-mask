@@ -57,6 +57,21 @@ async def speak(tts_url: str, voice: str, sentences: list[str]) -> tuple[np.ndar
     return np.concatenate(pieces), rate, captions
 
 
+def made_by() -> str:
+    """The code that made the clips: git's description of the checkout (an editable install's version file can be
+    stale), else the package's version."""
+    try:
+        return subprocess.run(  # noqa: S603 - fixed arguments
+            ["git", "describe", "--tags", "--always"],  # noqa: S607
+            cwd=HERE,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return __version__
+
+
 def write_wav(path: Path, mono: np.ndarray, rate: int) -> None:
     pcm = (np.clip(mono, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
     buffer = io.BytesIO()
@@ -122,7 +137,7 @@ async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str) -> None:
             **BUILTIN[DEFAULT_SET].model_dump(exclude={"name"}),
         },  # what a screen holds at rest
         "made_with": {
-            "argus_mask": __version__,
+            "argus_mask": made_by(),
             "driver": header.driver.model_dump(),
             "fps": header.fps,
             "seed": header.seed,

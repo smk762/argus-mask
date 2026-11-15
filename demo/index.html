@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Argus Mask: a face you can watch talk</title>
-<meta name="description" content="A synthetic face, animated from recorded speech by argus-mask and drawn in your browser: pause it, scrub it, read along.">
+<meta name="description" content="A face that talks: speech in, facial animation out, drawn live in your browser. Pause it, scrub it, read along.">
 <meta property="og:title" content="Argus Mask">
-<meta property="og:description" content="A synthetic face, animated from recorded speech and drawn in your browser.">
+<meta property="og:description" content="A face that talks: speech in, facial animation out, drawn live in your browser.">
 <meta property="og:url" content="https://mask.dragonhound.dev/">
 <script src="vendor/dh/dh-theme.js"></script>
 <link rel="stylesheet" href="vendor/dh/dh-tokens.css">
@@ -23,7 +23,7 @@
 <header class="top">
   <div>
     <h1>Argus Mask</h1>
-    <p class="lede">A face you can watch talk. The voice is recorded; the face is drawn in your browser, frame by frame, from the animation argus-mask made for that sound.</p>
+    <p class="lede">A face that talks. Speech goes in; argus-mask turns it into facial animation, with lip-sync, blinks, nods and hands that keep time. Every frame is drawn live in your browser.</p>
   </div>
   <div class="tools">
     <span class="dh-badge" title="Recorded output from a real run; no model runs while you browse">Recorded</span>
@@ -51,15 +51,18 @@
     <h2>What it says</h2>
     <p class="hint">Captions follow the voice. Pick a line to hear it.</p>
     <div id="transcript" class="transcript"></div>
-    <h2>How this clip was made</h2>
+    <h2>Behind this clip</h2>
     <dl id="made" class="made"></dl>
-    <p class="hint">Synthetic faces and voices only: no one was filmed or recorded. Every frame was made once, offline; nothing runs on a server while you watch.</p>
   </aside>
 </main>
 <footer class="foot">
-  <a href="https://github.com/smk762/argus-mask">argus-mask on GitHub</a>
-  <span aria-hidden="true">·</span>
-  <a href="https://docs.dragonhound.dev/">Argus docs</a>
+  <p class="links">
+    <a href="https://github.com/smk762/argus-mask">argus-mask on GitHub</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://docs.dragonhound.dev/">Argus docs</a>
+  </p>
+  <p class="fine">Faces are generated characters built from CC0 MakeHuman assets. Voices are XTTS-v2 studio speakers
+  (Coqui Public Model License, non-commercial). Each clip's animation was made once, offline, and is replayed here.</p>
 </footer>
 </body>
 </html>

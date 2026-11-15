@@ -1,0 +1,52 @@
+{
+  "id": "screens",
+  "title": "On a screen",
+  "face": "stock-02",
+  "framing": "head",
+  "scene": "ftl",
+  "duration_ms": 12621,
+  "frames": 379,
+  "captions": [
+    {
+      "start_ms": 0,
+      "end_ms": 2133,
+      "text": "At home, I run live."
+    },
+    {
+      "start_ms": 2433,
+      "end_ms": 7308,
+      "text": "A speech service talks, and every screen on the network that shows me moves in step."
+    },
+    {
+      "start_ms": 7608,
+      "end_ms": 12621,
+      "text": "Pick a face, a backdrop and a framing, from head and shoulders to full body."
+    }
+  ],
+  "rest": {
+    "name": "warm",
+    "weights": {
+      "mouthSmileLeft": 0.32,
+      "mouthSmileRight": 0.32,
+      "cheekSquintLeft": 0.12,
+      "cheekSquintRight": 0.12,
+      "eyeSquintLeft": 0.05,
+      "eyeSquintRight": 0.05,
+      "eyeBlinkLeft": 0.1,
+      "eyeBlinkRight": 0.1,
+      "browInnerUp": 0.06
+    },
+    "life": 1.0
+  },
+  "made_with": {
+    "argus_mask": "v0.2.0-56-g0c6a9ec",
+    "driver": {
+      "name": "a2f",
+      "model": null
+    },
+    "fps": 30,
+    "seed": 9,
+    "voice": "Rosemary Okafor",
+    "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial), through agent-composer"
+  }
+}

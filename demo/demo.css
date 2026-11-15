@@ -66,4 +66,6 @@ main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap:
 .made dt { color: var(--dh-muted); }
 .made dd { margin: 0; overflow-wrap: anywhere; }
 
-.foot { display: flex; gap: var(--dh-space-2); padding-block: var(--dh-space-6); border-top: 1px solid var(--dh-border); color: var(--dh-muted); font-size: var(--dh-text-sm); }
+.foot { padding-block: var(--dh-space-6); border-top: 1px solid var(--dh-border); color: var(--dh-muted); font-size: var(--dh-text-sm); }
+.foot .links { display: flex; gap: var(--dh-space-2); margin: 0; }
+.foot .fine { margin: var(--dh-space-3) 0 0; font-size: var(--dh-text-xs); max-width: 70ch; }

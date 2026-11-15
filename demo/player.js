@@ -156,12 +156,12 @@ function describe(clip, manifest) {
   }));
   const m = clip.made_with;
   const driver = m.driver.name === 'a2f' ? `NVIDIA Audio2Face-3D${m.driver.model ? ` (${m.driver.model})` : ''}` : `${m.driver.name} (a stand-in, not the demo's driver)`;
-  const p = manifest.provenance || {};
   madeEl.replaceChildren(...[
-    ['Face', `${manifest.name}: a generated character, not a real person. Built from MakeHuman assets (${p.license}); provenance: ${p.kind}.`],
+    ['Face', `${manifest.name}, built with argus-mask's face editor`],
     ['Framing', clip.framing === 'head' ? 'head and shoulders' : clip.framing === 'waist' ? 'waist up' : 'full body'],
-    ['Voice', `${m.voice}: ${m.voice_licence}`],
-    ['Animation', `${driver}, ${m.fps} frames a second, idle seed ${m.seed}; argus-mask ${m.argus_mask}`],
+    ['Voice', `${m.voice} (XTTS-v2)`],
+    ['Animation', `${driver}, ${m.fps} frames a second; blinks, glances and gestures from seed ${m.seed}`],
+    ['Version', `argus-mask ${m.argus_mask}`],
     ['Backdrop', clip.scene ? `${clip.scene} (built in)` : 'none'],
   ].flatMap(([k, v]) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; return [dt, dd]; }));
 }
