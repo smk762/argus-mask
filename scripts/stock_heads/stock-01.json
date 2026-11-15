@@ -29,5 +29,6 @@
   "blend_parts": ["eyebrows", "eyelashes"],
   "max_texture_px": 2048,
   "max_alpha_texture_px": 1024,
-  "max_triangles": 30000
+  "max_triangles": 30000,
+  "framings": ["waist"]
 }

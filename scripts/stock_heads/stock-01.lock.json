@@ -1,8 +1,14 @@
 {
   "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-01-r5.glb",
   "size": 9843748,
+  "framings": {
+    "waist": {
+      "url": "https://github.com/smk762/argus-mask/releases/download/stock-heads/stock-01-r5-waist.glb",
+      "size": 10442996
+    }
+  },
   "manifest": {
-    "mask_version": "1.0",
+    "mask_version": "1.5",
     "id": "stock-01",
     "name": "Stock head 01",
     "model": {
@@ -72,7 +78,20 @@
       "kind": "stock",
       "source": "Built with src/argus_mask/editor/build_head.py from scripts/stock_heads/stock-01.json: Blender 4.5.15 LTS, MPFB 2.0.18, asset packs makehuman_system_assets, faceunits01 and suits02",
       "license": "CC0-1.0",
-      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0); uniform thegreatengineer_galactic_warrior_uniform by TheGreatEngineer (suits02 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out. Revision 3: wears a high-collared crew uniform. Revision 4: a wet line along each lower lid (its own mesh, wetline, moving with the lid under every shape key); normal and roughness maps baked from the skin's colour map. Revision 5: skinned to MPFB's game_engine rig (53 bones), so the head turns at the neck and the shoulders stay still."
+      "notes": "MakeHuman base mesh and targets (bundled with MPFB 2.0.18); skin young_caucasian_male, hair short02, eyes high-poly (brown), eyebrow001, eyelashes01, teeth_base, tongue01 (makehuman_system_assets pack, CC0); ARKit face units by Mika Suominen (faceunits01 pack, CC0); uniform thegreatengineer_galactic_warrior_uniform by TheGreatEngineer (suits02 pack, CC0). Phenotype: adult, age macro 0.6. A generated character, not a real person. Revision 2: tongue flattened to lie on the floor of the mouth, and it drops with the chin under jawOpen; upper teeth lowered 2.5 mm; inside of the mouth darkened with vertex colours; mouthPucker scaled 1.5x; teeth texture brightened; brows and lashes blended instead of cut out. Revision 3: wears a high-collared crew uniform. Revision 4: a wet line along each lower lid (its own mesh, wetline, moving with the lid under every shape key); normal and roughness maps baked from the skin's colour map. Revision 5: skinned to MPFB's game_engine rig (53 bones), so the head turns at the neck and the shoulders stay still. Waist-up framing (waist.glb, same revision): the same build cut below the hips, arms and all."
+    },
+    "framings": {
+      "waist": {
+        "model": {
+          "file": "waist.glb",
+          "sha256": "d6a059c9bef6ec8bbf0d60a371a270af7fce4d522f93803d793bfbe0528a7859"
+        },
+        "framing": {
+          "distance": 1.812,
+          "height": -0.307,
+          "fov": 30.0
+        }
+      }
     }
   }
 }

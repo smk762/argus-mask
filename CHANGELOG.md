@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Waist-up stock heads.** `stock-01` and `stock-02` come with a `waist.glb` beside the head (published on the
+  `stock-heads` release, same revisions); a lock file lists each extra framing's url and size, and
+  `fetch_stock_head.py` downloads and checks every model before writing any.
 - **Life below the neck** (#62, step 2b). A waist-up figure breathes (chest and shoulders, a 4.4 s breath), shifts
   its weight slowly (pelvis and spine, two unrelated periods, the head kept level) and lets its chest follow a nod.
   Viewer-side (`rig.js` `BodyLife`), a function of the face's seed and the time: the posed frame's in a recording.

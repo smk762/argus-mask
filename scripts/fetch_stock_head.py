@@ -4,8 +4,10 @@
 The repo carries no model files. Each stock head has a lock file,
 ``scripts/stock_heads/<id>.lock.json``, naming where the built ``.glb`` is
 published, its size, and the manifest that goes beside it (which holds the
-model's sha256). This script downloads the model, checks it against the lock,
-and writes ``<assets>/<id>/head.glb`` and ``manifest.json``.
+model's sha256). A head built at more than one framing (``waist``) lists each
+other model under ``framings``, by url and size; the manifest names its file and
+sha256. This script downloads every model, checks each against the lock, and
+writes them and ``manifest.json`` into ``<assets>/<id>/``.
 
     python scripts/fetch_stock_head.py                 # stock-01 into ./assets
     python scripts/fetch_stock_head.py --id stock-01 --assets-dir /srv/faces
@@ -55,6 +57,20 @@ def read_lock(face_id: str, lock_dir: Path = LOCK_DIR) -> dict:
             raise FetchError(f"{path}: the manifest's model file name is not a plain .glb name")
         if not isinstance(lock["url"], str) or not isinstance(lock["size"], int) or not 0 < lock["size"] <= MAX_BYTES:
             raise FetchError(f"{path}: needs a url and a size between 1 and {MAX_BYTES} bytes")
+        for name, framed in (manifest.get("framings") or {}).items():
+            where = (lock.get("framings") or {}).get(name)
+            if not where:
+                raise FetchError(f"{path}: the manifest has a {name} framing but the lock says nowhere to get it")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.glb", framed["model"]["file"]):
+                raise FetchError(f"{path}: the {name} model's file name is not a plain .glb name")
+            if not re.fullmatch(r"[0-9a-f]{64}", framed["model"]["sha256"]):
+                raise FetchError(f"{path}: the {name} model's sha256 is not a sha256")
+            if (
+                not isinstance(where["url"], str)
+                or not isinstance(where["size"], int)
+                or not 0 < where["size"] <= MAX_BYTES
+            ):
+                raise FetchError(f"{path}: the {name} framing needs a url and a size between 1 and {MAX_BYTES} bytes")
     except (ValueError, KeyError, TypeError) as exc:
         raise FetchError(f"{path}: not a usable lock file ({exc})") from exc
     return lock
@@ -105,15 +121,23 @@ def fetch(face_id: str, assets_dir: Path, *, force: bool = False, lock_dir: Path
     lock = read_lock(face_id, lock_dir)
     manifest = lock["manifest"]
     directory = assets_dir / face_id
-    model = directory / manifest["model"]["file"]
     manifest_path = directory / "manifest.json"
-    wanted = manifest["model"]["sha256"]
-    have = sha256_file(model) if model.is_file() else None
-    if have is not None and have != wanted and not force:
-        raise FetchError(f"{model} exists and is a different file; pass --force to replace it")
-    downloaded = have != wanted
-    if downloaded:
-        download(lock["url"], lock["size"], wanted, model)
+    # The head, then each other framing: (file, sha256, url, size).
+    models = [(manifest["model"]["file"], manifest["model"]["sha256"], lock["url"], lock["size"])]
+    for name, framed in (manifest.get("framings") or {}).items():
+        where = lock["framings"][name]
+        models.append((framed["model"]["file"], framed["model"]["sha256"], where["url"], where["size"]))
+    wanted_files = []
+    for file, wanted, _url, _size in models:  # check every file before downloading any
+        model = directory / file
+        have = sha256_file(model) if model.is_file() else None
+        if have is not None and have != wanted and not force:
+            raise FetchError(f"{model} exists and is a different file; pass --force to replace it")
+        wanted_files.append(have != wanted)
+    downloaded = any(wanted_files)
+    for (file, wanted, url, size), needed in zip(models, wanted_files, strict=True):
+        if needed:
+            download(url, size, wanted, directory / file)
     text = json.dumps(manifest, indent=2) + "\n"
     if manifest_path.is_file() and manifest_path.read_text(encoding="utf-8") != text and not force and not downloaded:
         raise FetchError(f"{manifest_path} exists and differs from the lock; pass --force to replace it")
@@ -125,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Download a prebuilt stock head into the assets directory.")
     parser.add_argument("--id", default="stock-01", help="which head (default: stock-01)")
     parser.add_argument("--assets-dir", type=Path, default=Path("assets"), help="the assets root (default: ./assets)")
-    parser.add_argument("--force", action="store_true", help="replace a model or manifest that is already there and differs")
+    parser.add_argument(
+        "--force", action="store_true", help="replace a model or manifest that is already there and differs"
+    )
     args = parser.parse_args(argv)
     try:
         directory, downloaded = fetch(args.id, args.assets_dir, force=args.force)
