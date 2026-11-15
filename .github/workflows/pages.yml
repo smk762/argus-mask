@@ -1,0 +1,39 @@
+name: Deploy demo
+
+# Builds the hosted demo (mask.dragonhound.dev, #118) with demo/build.py and uploads demo/out to Cloudflare Pages:
+# the page, the package's viewer, the committed clips (demo/clips) and the stock heads they show, fetched from the
+# stock-heads release and checked against their locks. Needs the repo secrets CLOUDFLARE_API_TOKEN (Pages: Edit)
+# and CLOUDFLARE_ACCOUNT_ID, and the Pages project created once:
+#   npx wrangler pages project create argus-mask --production-branch main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The vendored design layer is unedited, and say so (not fail) if dragonhound.dev has a newer one.
+      - run: node demo/vendor/dh/sync-shared.mjs --check . --against https://dragonhound.dev/brand/v1/manifest.json --allow-outdated
+      - run: python3 demo/build.py
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy demo/out --project-name=argus-mask --branch=main

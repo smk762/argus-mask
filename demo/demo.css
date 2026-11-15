@@ -1,0 +1,69 @@
+/* The mask demo's page. Colours, type and spacing come from dh-tokens.css (both themes); nothing here sets a colour
+   of its own except over the 3D stage, which is dark in both themes. */
+
+body {
+  margin: 0;
+  font-family: var(--dh-font);
+  font-size: var(--dh-text-base);
+  line-height: var(--dh-leading);
+  background: var(--dh-bg);
+  color: var(--dh-text);
+}
+
+.skip { position: absolute; left: -999px; top: 0; }
+.skip:focus { left: var(--dh-gutter); top: calc(var(--dh-strip-h) + 8px); z-index: 20; padding: 6px 10px; background: var(--dh-surface); }
+
+a { color: var(--dh-accent); }
+:focus-visible { outline: var(--dh-focus-ring); outline-offset: var(--dh-focus-offset); }
+
+.top, main, .foot { max-width: var(--dh-max); margin: 0 auto; padding-inline: var(--dh-gutter); }
+.top { display: flex; gap: var(--dh-space-4); align-items: flex-start; justify-content: space-between; padding-block: var(--dh-space-6) var(--dh-space-4); }
+.top h1 { margin: 0; font-size: var(--dh-text-2xl); line-height: var(--dh-leading-tight); }
+.lede { margin: var(--dh-space-2) 0 0; color: var(--dh-muted); max-width: 60ch; }
+.tools { display: flex; gap: var(--dh-space-3); align-items: center; flex: none; }
+.theme { display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--dh-radius-pill); border: 1px solid var(--dh-border);
+         background: var(--dh-surface); color: var(--dh-text); cursor: pointer; }
+.theme svg { fill: currentColor; }
+
+main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--dh-space-6); align-items: start; padding-bottom: var(--dh-space-8); }
+@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+.stage-wrap { position: sticky; top: calc(var(--dh-strip-h) + 8px); }
+@media (max-width: 760px) { .stage-wrap { position: static; } }
+#stage { position: relative; aspect-ratio: 3 / 4; max-height: 78vh; width: 100%; margin-inline: auto; border-radius: var(--dh-radius-lg);
+         overflow: hidden; background: #101216; border: 1px solid var(--dh-border); }
+#stage canvas { display: block; width: 100%; height: 100%; }
+.caption { position: absolute; left: 50%; bottom: var(--dh-space-4); transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
+           margin: 0; padding: 6px 12px; border-radius: var(--dh-radius-md); text-align: center; font-size: var(--dh-text-md);
+           color: #f2f4f7; background: rgba(8, 10, 14, 0.72); }
+.caption:empty { display: none; }
+.status { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: var(--dh-space-4); text-align: center; color: #e6e9ee; pointer-events: none; }
+.status:empty { display: none; }
+
+.controls { display: flex; align-items: center; gap: var(--dh-space-3); margin-top: var(--dh-space-3); }
+#play { display: inline-flex; align-items: center; gap: var(--dh-space-2); padding: 8px 16px; border-radius: var(--dh-radius-pill); border: 0;
+        background: var(--dh-accent); color: var(--dh-on-accent); font: inherit; font-weight: var(--dh-weight-semibold); cursor: pointer; }
+#play .icon { width: 0; height: 0; border-style: solid; border-width: 6px 0 6px 10px; border-color: transparent transparent transparent currentColor; }
+#play[aria-pressed="true"] .icon { width: 10px; height: 12px; border: 0; border-inline: 3px solid currentColor; box-sizing: border-box; }
+#scrub { flex: 1; min-width: 0; accent-color: var(--dh-accent); }
+.time { font-family: var(--dh-mono); font-size: var(--dh-text-sm); color: var(--dh-muted); white-space: nowrap; }
+
+.side h2 { font-size: var(--dh-text-lg); margin: var(--dh-space-6) 0 var(--dh-space-2); }
+.side h2:first-child { margin-top: 0; }
+.hint { margin: 0 0 var(--dh-space-2); color: var(--dh-muted); font-size: var(--dh-text-sm); }
+.clips { display: flex; flex-wrap: wrap; gap: var(--dh-space-2); }
+.clips button { padding: 8px 14px; border-radius: var(--dh-radius-pill); border: 1px solid var(--dh-border); background: var(--dh-surface);
+                color: var(--dh-text); font: inherit; cursor: pointer; transition: border-color var(--dh-dur); }
+.clips button:hover { border-color: var(--dh-highlight); }
+.clips button[aria-pressed="true"] { border-color: var(--dh-accent); box-shadow: inset 0 0 0 1px var(--dh-accent); font-weight: var(--dh-weight-semibold); }
+.transcript { display: grid; gap: var(--dh-space-1); }
+.transcript .line { text-align: left; padding: 6px 10px; border-radius: var(--dh-radius-md); border: 1px solid transparent; background: none;
+                    color: var(--dh-text); font: inherit; cursor: pointer; }
+.transcript .line:hover { background: var(--dh-surface); }
+.transcript .line.on { background: var(--dh-surface-2); border-color: var(--dh-border); }
+.made { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--dh-space-1) var(--dh-space-3); margin: 0 0 var(--dh-space-3);
+        font-size: var(--dh-text-sm); }
+.made dt { color: var(--dh-muted); }
+.made dd { margin: 0; overflow-wrap: anywhere; }
+
+.foot { display: flex; gap: var(--dh-space-2); padding-block: var(--dh-space-6); border-top: 1px solid var(--dh-border); color: var(--dh-muted); font-size: var(--dh-text-sm); }

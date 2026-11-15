@@ -1,0 +1,50 @@
+{
+  "about": "The hosted demo's clips (#118). demo/make_clips.py speaks each clip's sentences through the TTS service, turns the audio into a take with the a2f driver, and writes demo/clips/<id>/. Synthetic faces and voices only.",
+  "tts_url": "http://192.168.1.198:9150/api/voice/synthesise/pcm",
+  "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial), through agent-composer",
+  "fps": 30,
+  "clips": [
+    {
+      "id": "hello",
+      "title": "Hello",
+      "face": "stock-02",
+      "framing": "waist",
+      "scene": "lake",
+      "voice": "speaker:Rosemary Okafor",
+      "seed": 2,
+      "sentences": [
+        "Hello. I'm a face made by argus-mask.",
+        "You're hearing a recorded voice, and everything you see of me is drawn in your browser, from animation frames made from that sound.",
+        "My face, my clothes and this voice are all synthetic. No one was filmed."
+      ]
+    },
+    {
+      "id": "how",
+      "title": "How it works",
+      "face": "stock-01",
+      "framing": "full",
+      "scene": "garden",
+      "voice": "speaker:Damien Black",
+      "seed": 5,
+      "sentences": [
+        "Here's how it works.",
+        "Audio goes in, and a driver turns it into blendshape weights, thirty times a second. The same audio always gives the same frames.",
+        "On top of that, I blink in the pauses, nod on stressed words, and my hands keep time with what I say."
+      ]
+    },
+    {
+      "id": "screens",
+      "title": "On a screen",
+      "face": "stock-02",
+      "framing": "head",
+      "scene": "ftl",
+      "voice": "speaker:Rosemary Okafor",
+      "seed": 9,
+      "sentences": [
+        "At home, I run live.",
+        "A speech service talks, and the server streams the frames and the sound to every screen on the network that shows me.",
+        "Here there's no server and no GPU: just a recording, replayed."
+      ]
+    }
+  ]
+}
