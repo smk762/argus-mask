@@ -22,6 +22,7 @@ const timeEl = $('time');
 const captionEl = $('caption');
 const transcriptEl = $('transcript');
 const madeEl = $('made');
+const madeLineEl = $('made-line');
 const statusEl = $('status');
 
 // Each face idles its own way, as on a screen (viewer.js: faceSeed).
@@ -174,6 +175,12 @@ function describe(clip, manifest) {
     ['Version', `argus-mask ${m.argus_mask}`],
     ['Backdrop', clip.scene ? `${clip.scene} (built in)` : 'none'],
   ].flatMap(([k, v]) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; return [dt, dd]; }));
+  // "Made with", from the clip's own record: the driver, the clip and the argus-mask that made it (#123).
+  const docs = document.createElement('a');
+  docs.href = 'docs/#hosted-demo';
+  docs.textContent = 'Docs';
+  const driverName = m.driver.name === 'a2f' ? 'Audio2Face' : m.driver.name;
+  madeLineEl.replaceChildren(`Made with ${driverName} · “${clip.title}” · argus-mask ${m.argus_mask} · `, docs);
 }
 
 function showCaption(tMs) {

@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,94 @@ def test_the_page_pastes_the_strip_and_allows_its_import_map_by_hash() -> None:
     policy = build.csp(page)
     assert f"'sha256-{digest}'" in policy and "unsafe" not in policy
     assert not re.search(r"<script(?![^>]*\bsrc=)(?![^>]*importmap)[^>]*>", page), "no other inline script"
+
+
+# ---- /docs/ (#123) ---------------------------------------------------------------------------------------------
+
+
+def _clips() -> list[dict]:
+    return [json.loads((DEMO / "clips" / i / "clip.json").read_text(encoding="utf-8")) for i in INDEX]
+
+
+def _has_commit(commit: str) -> bool:
+    return (
+        subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", f"{commit}^{{commit}}"], check=False).returncode == 0
+    )  # noqa: S603, S607
+
+
+@pytest.fixture(scope="module")
+def docs_site(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict]:
+    """The docs pages, built without clips: the clips' drift check needs history a shallow CI clone lacks."""
+    build = _build()
+    out = tmp_path_factory.mktemp("site")
+    return out, build.docs_page.build(out, build.shell, [], env={})
+
+
+def test_the_docs_are_every_public_doc_recorded_by_commit_and_sha256(docs_site: tuple[Path, dict]) -> None:
+    out, record = docs_site
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # noqa: S603, S607
+    assert record["commit"] == head.stdout.strip() and record["repo"] == "smk762/argus-mask"
+    assert set(record["docs"]) == {"README.md", *(f"docs/{p.name}" for p in (ROOT / "docs").glob("*.md"))}
+    assert not {"CLAUDE.md", "AGENTS.md", "spec.md"} & set(record["docs"]), "agent and planning files never go out"
+    for path, digest in record["docs"].items():
+        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
+    for path, digest in record["images"].items():
+        assert hashlib.sha256((out / "docs" / "files" / path).read_bytes()).hexdigest() == digest
+    assert json.loads((out / "docs" / "sources.json").read_text(encoding="utf-8")) == record
+    assert (out / "docs" / "index.html").is_file() and (out / "docs" / "consent" / "index.html").is_file()
+
+
+def test_a_docs_page_is_csp_neutral_and_links_stay_on_site(docs_site: tuple[Path, dict]) -> None:
+    out, record = docs_site
+    for page in (out / "docs").rglob("index.html"):
+        text = page.read_text(encoding="utf-8")
+        assert re.findall(r"<script[^>]*>", text) == ['<script src="/vendor/dh/dh-theme.js">'], page
+        assert " style=" not in text and "<style" not in text, page
+        assert not re.search(r'<img[^>]+src="(?!/docs/files/)', text), "images are copied in, never hot-linked"
+        assert "&lt;picture" not in text and "&lt;!--" not in text, "raw HTML blocks are dropped, not shown"
+        assert f"@ <code>{record['commit'][:7]}</code>" in text and "pypi.org/project/argus-mask/" in text
+        assert "/blob/main/" not in text, "the repo's own files are linked at the imported commit"
+    readme = (out / "docs" / "index.html").read_text(encoding="utf-8")
+    assert 'id="hosted-demo"' in readme and 'href="/docs/consent/' in readme
+
+
+def test_the_opsec_gate_refuses_and_never_echoes_the_denylist() -> None:
+    docs = _build().docs_page
+    text = "see 192.168.1.5 and /home/someone/x\nmail ops@example.com about Mithril\nfine: docs/media/a.jpg, 127.0.0.1"
+    hits = docs.opsec_hits(text, ["mithril"])
+    assert sorted((n, kind) for n, kind, _ in hits) == [
+        (1, "home directory path"),
+        (1, "private IPv4 address"),
+        (2, "denylisted term"),
+        (2, "email address"),
+    ]
+    assert "Mithril" not in str(hits) and "mithril" not in str(hits)
+    with pytest.raises(docs.Refused, match="opsec gate refused"):
+        docs.gate("x.md", text, [])
+    assert docs.denylist({"OPSEC_DENYLIST": "a, b\nc"}) == ["a", "b", "c"]
+
+
+def test_versions_and_clip_commits_read_as_hatch_and_git_do() -> None:
+    docs = _build().docs_page
+    assert docs.version_from_describe("v0.2.0-65-g1cdb94f") == "0.2.1.dev65+g1cdb94f"
+    assert docs.version_from_describe("v0.3.0-0-gabcdef1") == "0.3.0"
+    assert docs.clip_commit("v0.2.0-56-g0c6a9ec") == "0c6a9ec"
+    with pytest.raises(docs.Refused, match="uncommitted"):
+        docs.clip_commit("v0.2.0-56-g0c6a9ec-dirty")
+
+
+def test_the_committed_clips_were_made_by_the_engine_at_head() -> None:
+    clips = _clips()
+    docs = _build().docs_page
+    if not all(_has_commit(docs.clip_commit(c["made_with"]["argus_mask"])) for c in clips):
+        pytest.skip("a shallow clone: the clips' commits are not here (the deploy fetches the full history)")
+    made = docs.clip_drift(clips)
+    assert set(made) == set(INDEX)
+
+
+def test_the_site_has_a_real_404_and_the_demo_links_its_docs() -> None:
+    build = _build()
+    page = build.shell("Not found · Argus Mask", build.NOT_FOUND)
+    assert 'href="/docs/"' in page and re.findall(r"<script[^>]*>", page) == ['<script src="/vendor/dh/dh-theme.js">']
+    demo = (DEMO / "index.html").read_text(encoding="utf-8")
+    assert 'href="docs/"' in demo and 'id="made-line"' in demo

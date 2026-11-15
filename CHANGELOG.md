@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs in the hosted demo** (#123). mask.dragonhound.dev/docs/ is the README and `docs/*.md`, rendered at the
+  deployed commit with a version header (version, commit, PyPI, GitHub), recorded in `docs/sources.json` with a
+  sha256 per file. The build fails closed on an opsec hit, and on clips the engine has changed since. The demo page
+  gets a Docs link and a "Made with" line from each clip's record, and unknown paths get a real 404. The demo now
+  deploys from `dev`, not `main`.
 - **Hosted demo** (#118). `demo/`: a static page that replays recorded clips (a take and its audio) with the viewer's
   own modules, with pause, scrub, captions and what made each clip; `demo/make_clips.py` makes the clips (TTS as
   `say`, Audio2Face as `drive`), `make demo` builds the site, and `pages.yml` deploys it to mask.dragonhound.dev.
