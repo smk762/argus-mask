@@ -43,7 +43,7 @@ import tempfile
 import bmesh
 import bpy
 import numpy as np  # bundled with Blender
-from mathutils import Vector, kdtree
+from mathutils import Matrix, Vector, kdtree
 from mathutils.bvhtree import BVHTree
 
 # MakeHuman's age macro: 0.0 is 1 year, 0.5 about 25, 1.0 about 90; below 0.5 it maps to years as
@@ -907,6 +907,8 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         strip = wet.pop("object")
         strip.vertex_groups.new(name="head").add(range(len(strip.data.vertices)), 1.0, "REPLACE")
         objects.append(strip)
+    placed = add_accessories(preset.get("accessories") or [], basemesh, rig)
+    objects.extend(obj for obj, _ in placed)
     # Every mesh is the armature's child, skinned by its Armature modifier: what the glTF exporter wants
     # to write a skin. Both are at the origin with no transform, so no parent inverse is needed.
     rig.name = rig.data.name = "rig"
@@ -1016,6 +1018,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         "triangles_total": total,
         "rig": {"name": RIG, "bones": len(rig.data.bones)},
         "decimated": decimated,
+        "accessories": [report for _, report in placed],
         "garment_colours": preset.get("garment_colours") or {},
         "shapes": {name: len(names) for name, names in shapes.items()},
         "parts_without_shapes": still,
@@ -1038,6 +1041,122 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         "extent_m": {"below_eyes": round(-lowest, 3), "above_eyes": round(highest, 3)},
         "bytes": os.path.getsize(out),
     }
+
+
+# Accessories (#61): small rigid pieces made here from primitives (our own, so CC0), placed on the dressed body by
+# casting rays at it, and skinned whole to one bone so they follow it. Sizes in metres. The wearer faces -Y, so their
+# left is +X. Each kind: the bone it rides on, and how it is found.
+ACCESSORY_BONES = {"badge": "spine_03", "pins": "spine_03", "earpiece": "head"}
+
+
+def add_accessories(specs: list, basemesh, rig) -> list:
+    """Make and place each accessory; returns ``[(object, report)]``. One the rays cannot place is reported, not made."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    neck = rig.data.bones["neck_01"].head_local  # the base of the neck: the collar, and the chest below it
+    head_tree = BVHTree.FromObject(basemesh, depsgraph)
+    made = []
+    for spec in specs:
+        kind, side = spec["kind"], spec.get("side", "left")
+        sign = 1.0 if side == "left" else -1.0
+        colour = spec.get("colour", "#c9a227")
+        report = {"kind": kind, "side": side, "colour": colour}
+        if kind == "badge":  # on the chest, over the heart's side: the first surface a ray from the front meets
+            hit = cast(depsgraph, Vector((sign * 0.085, -1.0, neck.z - 0.13)), Vector((0, 1, 0)))
+            mesh = disc(radius=0.017, depth=0.004) if hit else None
+        elif kind == "pins":  # on the collar's outer face, beside the throat: two small studs
+            # Collars differ in height: try a band of heights and keep the hit nearest the front (smallest y): that
+            # is the collar itself, where a ray past its edge would reach the neck behind it.
+            hits = [
+                cast(depsgraph, Vector((sign * 0.05, -1.0, neck.z + dz)), Vector((0, 1, 0)))
+                for dz in (-0.04, -0.03, -0.02, -0.01, 0.0, 0.01)
+            ]
+            hits = [h for h in hits if h]
+            hit = min(hits, key=lambda h: h[0].y) if hits else None
+            mesh = studs(count=2, radius=0.0032, spacing=0.010) if hit else None
+        elif kind == "earpiece":  # on the side of the head at the ear (the head alone: hair would stop the ray)
+            found = head_tree.ray_cast(Vector((sign * 0.5, 0.0, -0.022)), Vector((-sign, 0, 0)))
+            hit = (found[0], found[1]) if found[0] is not None else None
+            mesh = bud(radius=0.0075) if hit else None
+        else:
+            raise RecipeError(f"no accessory {kind!r}: there are {', '.join(ACCESSORY_BONES)}")
+        if not hit:
+            report["placed"] = False
+            made.append((None, report))
+            continue
+        location, normal = hit
+        obj = bpy.data.objects.new(f"accessory_{kind}_{side}", mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        turn = Vector((0, 0, 1)).rotation_difference(normal).to_matrix().to_4x4()
+        mesh.transform(Matrix.Translation(location + normal * 0.0015) @ turn)
+        mesh.materials.append(metal(f"accessory-{kind}", colour))
+        obj.vertex_groups.new(name=ACCESSORY_BONES[kind]).add(range(len(mesh.vertices)), 1.0, "REPLACE")
+        for polygon in mesh.polygons:
+            polygon.use_smooth = True
+        report |= {"placed": True, "at": [round(c, 3) for c in location]}
+        made.append((obj, report))
+    return [(o, r) for o, r in made if o is not None] + [(None, r) for o, r in made if o is None]
+
+
+def cast(depsgraph, origin, direction):
+    """The first surface a ray meets, as (location, normal facing the ray), or None."""
+    hit, location, normal, _, _, _ = bpy.context.scene.ray_cast(depsgraph, origin, direction, distance=2.0)
+    if not hit:
+        return None
+    return location, (normal if normal.dot(direction) < 0 else -normal)
+
+
+def _mesh(name: str, build) -> object:
+    bm = bmesh.new()
+    build(bm)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
+def disc(radius: float, depth: float):
+    """A flat round badge, its face along +Z."""
+    return _mesh(
+        "badge",
+        lambda bm: bmesh.ops.create_cone(
+            bm, cap_ends=True, segments=28, radius1=radius, radius2=radius * 0.92, depth=depth
+        ),
+    )
+
+
+def studs(count: int, radius: float, spacing: float):
+    """Small domed studs in a row along X."""
+
+    def build(bm):
+        for i in range(count):
+            out = bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=6, radius=radius)
+            offset = (i - (count - 1) / 2) * spacing
+            bmesh.ops.scale(bm, vec=(1.0, 1.0, 0.55), verts=out["verts"])
+            bmesh.ops.translate(bm, vec=(offset, 0.0, 0.0), verts=out["verts"])
+
+    return _mesh("pins", build)
+
+
+def bud(radius: float):
+    """An earpiece: a small rounded bud standing off the ear."""
+
+    def build(bm):
+        out = bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=8, radius=radius)
+        bmesh.ops.scale(bm, vec=(1.0, 1.25, 0.85), verts=out["verts"])
+
+    return _mesh("earpiece", build)
+
+
+def metal(name: str, colour: str):
+    """A metallic material of *colour* (#rrggbb), for the glTF exporter's Principled BSDF."""
+    material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    rgb = hair_colour.hex_to_linear(colour)
+    bsdf.inputs["Base Color"].default_value = (float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0)
+    bsdf.inputs["Metallic"].default_value = 0.85
+    bsdf.inputs["Roughness"].default_value = 0.32
+    return material
 
 
 def thin_garments(garments, excess: int) -> dict[str, float]:

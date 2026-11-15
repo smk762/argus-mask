@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Accessories** (#61). A preset's `accessories` adds small metallic pieces the recipe makes itself (CC0) and
+  places on the dressed body: a `badge` on the chest, collar `pins`, an `earpiece` at the ear, each on the wearer's
+  left or right, in a colour, riding on a bone (so the earpiece turns with the head and the badge breathes with the
+  chest). The editor has an Accessories panel.
 - **Garment colourways** (#61). A preset's `garment_colours` recolours a garment at build time: `tint` keeps the
   fabric's shading and detail, `solid` paints it one colour and so removes print the texture carries (logos, emblems).
   The editor's Clothes panel has a Colour row for the outfit worn.

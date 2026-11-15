@@ -44,6 +44,7 @@ const DEFAULT = {
   max_triangles: 45000,
   framings: [],
   garment_colours: {},
+  accessories: [],
 };
 
 // How each value reads: in the units it means, not MakeHuman's 0..1 or -1..+1.
@@ -298,6 +299,41 @@ function colourway(current) {
   return row;
 }
 
+// ---- accessories (#61) ------------------------------------------------------------------------
+// Small pieces the recipe makes and places on the dressed body, riding on a bone: a badge on the chest, collar pins
+// beside the throat, an earpiece at the ear. Each kind once, on one side, in one colour.
+const ACCESSORIES = [['badge', 'Badge', 'on the chest', '#c9a227'], ['pins', 'Collar pins', 'on the collar', '#d8d8d8'], ['earpiece', 'Earpiece', 'at the ear', '#2b2f36']];
+function accessoriesPanel() {
+  const entry = panel('accessories', 'Accessories', { reset: () => { preset.accessories = []; } });
+  const find = (kind) => (preset.accessories || []).find((a) => a.kind === kind);
+  const rows = ACCESSORIES.map(([kind, label, where, colourDefault]) => {
+    const on = el('input', { type: 'checkbox', ariaLabel: label });
+    const side = el('select', { ariaLabel: `${label} side` }, el('option', { value: 'left', textContent: 'left' }), el('option', { value: 'right', textContent: 'right' }));
+    const colour = el('input', { type: 'color', value: colourDefault, ariaLabel: `${label} colour` });
+    const row = el('label', { className: 'row', title: `${label}, ${where}: the wearer's left or right` }, el('span', { textContent: label }), on, side, colour);
+    const apply = () => {
+      const rest = (preset.accessories || []).filter((a) => a.kind !== kind);
+      preset.accessories = on.checked ? [...rest, { kind, side: side.value, colour: colour.value }] : rest;
+      side.disabled = colour.disabled = !on.checked;
+      changed();
+    };
+    on.addEventListener('change', apply);
+    side.addEventListener('change', apply);
+    colour.addEventListener('change', apply);   // on release: each change is a build
+    entry.body.append(row);
+    entry.rows.push({ el: row, text: `${label} accessory ${where}`.toLowerCase() });
+    return () => {
+      const a = find(kind);
+      on.checked = Boolean(a);
+      if (a) { side.value = a.side; colour.value = a.colour; }
+      side.disabled = colour.disabled = !a;
+    };
+  });
+  fields.set('accessories', { label: 'Accessories', show: (v) => (v || []).map((a) => `${a.kind} ${a.side}`).join(', ') || 'none' });
+  const sync = () => { for (const r of rows) r(); };
+  controls.push({ sync, paint: sync });
+}
+
 // ---- hair colour ------------------------------------------------------------------------------
 
 // The swatch only: the build bakes the colour with hair_colour.py, which this mirrors (melanin absorption,
@@ -386,6 +422,7 @@ function buildPanels(library, catalogue) {
   for (const spec of PICKERS) {
     picker(library, spec);
     if (spec[0] === 'hair') hairColour = hairColourPanel();
+    if (spec[0] === 'hat') accessoriesPanel();
   }
   for (const [group, title] of Object.entries(catalogue.groups)) {
     const mods = catalogue.modifiers.filter((m) => m.group === group).sort(order);
