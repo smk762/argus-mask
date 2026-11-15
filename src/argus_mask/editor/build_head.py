@@ -43,7 +43,7 @@ import tempfile
 import bmesh
 import bpy
 import numpy as np  # bundled with Blender
-from mathutils import Vector
+from mathutils import Vector, kdtree
 from mathutils.bvhtree import BVHTree
 
 # MakeHuman's age macro: 0.0 is 1 year, 0.5 about 25, 1.0 about 90; below 0.5 it maps to years as
@@ -66,6 +66,8 @@ RIG = "game_engine"
 FRAMINGS = ("head", "waist")
 WAIST_BELOW_HIPS_M = 0.04
 WAIST_BUDGET_FACTOR = 1.5
+# A garment over the budget is thinned (Decimate), but never below this share of its triangles.
+GARMENT_MIN_RATIO = 0.4
 
 # Modelling targets a preset may set under ``targets``: the allow-list in modifiers.json beside this
 # script (generated from MPFB's catalogue by scripts/make_modifiers.py; the editor reads the same file).
@@ -597,6 +599,20 @@ def wet_line(head, eyes, *, columns: int = 14, width_m: float = 0.0012, lift_m: 
     return {"made": True, "sides": report, "object": obj}
 
 
+def base_colour_images(obj) -> set:
+    """The images feeding *obj*'s materials' Base Color: the ones a colourway may change (never a normal or roughness
+    map)."""
+    found = set()
+    for slot in obj.material_slots:
+        tree = slot.material.node_tree if slot.material else None
+        if tree is None:
+            continue
+        for link in tree.links:
+            if link.to_socket.name == "Base Color" and link.from_node.type == "TEX_IMAGE" and link.from_node.image:
+                found.add(link.from_node.image)
+    return found
+
+
 def part_images(obj) -> set:
     """The images *obj*'s materials read."""
     found = set()
@@ -609,10 +625,16 @@ def part_images(obj) -> set:
 
 
 def recolour(image, target) -> None:
-    """Bake hair colour *target* (linear RGB) into an image's colour, keeping its strand variation and alpha."""
+    """Bake colour *target* into an image's colour, keeping its alpha.
+
+    *target* is linear RGB (hair: the strands' variation kept), or a garment colourway's ``(mode, linear RGB)``:
+    ``tint`` keeps the fabric's variation the same way, ``solid`` paints it flat.
+    """
+    mode, rgb = target if isinstance(target, tuple) else ("tint", target)
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
     image.pixels.foreach_get(pixels)
-    pixels = hair_colour.recolour(pixels.reshape(-1, image.channels), target).astype(np.float32)
+    paint = hair_colour.solid if mode == "solid" else hair_colour.recolour
+    pixels = paint(pixels.reshape(-1, image.channels), rgb).astype(np.float32)
     image.pixels.foreach_set(pixels.ravel())
     image.update()
 
@@ -901,6 +923,11 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     budget = int(preset.get("max_triangles", 45000))
     if framing == "waist":  # arms and hands are dense: the waist has half as much again, within the global cap
         budget = min(int(budget * WAIST_BUDGET_FACTOR), 45000)
+    decimated = {}
+    if total > budget:
+        decimated = thin_garments([o for o in objects if o.get("argus_garment")], total - budget)
+        counts = {obj.name: triangles(obj) for obj in objects}
+        total = sum(counts.values())
     if total > budget:
         raise RecipeError(f"{total} triangles is over the budget of {budget}: {counts}")
 
@@ -930,6 +957,13 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
             if dyed and kind in parts
             for image in part_images(parts[kind])
         }
+        # Colourways (#61): a garment's colour textures, tinted (its shading kept) or painted solid (print and all).
+        for ref, spec in (preset.get("garment_colours") or {}).items():
+            garment = parts.get(asset_name(ref))
+            if garment is None:
+                raise RecipeError(f"garment_colours: {ref} is not worn")
+            for image in base_colour_images(garment):
+                colours[image] = (spec.get("mode", "tint"), hair_colour.hex_to_linear(spec["colour"]))
         textures = fit_textures(max_px, int(preset.get("max_alpha_texture_px", max_px)), workdir, gains, colours)
         blended = {
             slot.material.name
@@ -981,6 +1015,8 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         "framing": framing,
         "triangles_total": total,
         "rig": {"name": RIG, "bones": len(rig.data.bones)},
+        "decimated": decimated,
+        "garment_colours": preset.get("garment_colours") or {},
         "shapes": {name: len(names) for name, names in shapes.items()},
         "parts_without_shapes": still,
         "mouth": mouth_report,
@@ -1002,6 +1038,48 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
         "extent_m": {"below_eyes": round(-lowest, 3), "above_eyes": round(highest, 3)},
         "bytes": os.path.getsize(out),
     }
+
+
+def thin_garments(garments, excess: int) -> dict[str, float]:
+    """Decimate the garments, all by one ratio, to shed *excess* triangles (never below GARMENT_MIN_RATIO).
+
+    Only clothes: the face, hands and hair keep every triangle. Vertex groups, so the skin weights, survive the
+    Decimate; shape keys cannot (Blender refuses to apply it to a mesh that has them), and a garment fitted near the
+    face carries some (a collar's jawOpen). So each key is kept as an offset per vertex, cleared, and given back to
+    the thinned mesh from the nearest vertex of the original: these shapes are smooth across a garment. Returns the
+    ratio applied, by garment; the caller checks the budget again.
+    """
+    total = sum(triangles(g) for g in garments)
+    if not total:
+        return {}
+    ratio = max(GARMENT_MIN_RATIO, (total - excess) / total)
+    done = {}
+    for garment in garments:
+        keys = garment.data.shape_keys
+        offsets = {}
+        if keys:
+            basis = np.array([v.co[:] for v in keys.key_blocks[0].data])
+            offsets = {k.name: np.array([v.co[:] for v in k.data]) - basis for k in keys.key_blocks[1:]}
+            garment.shape_key_clear()
+        modifier = garment.modifiers.new("thin", "DECIMATE")
+        modifier.ratio = ratio
+        modifier.use_collapse_triangulate = True
+        with bpy.context.temp_override(object=garment, active_object=garment):
+            bpy.ops.object.modifier_move_to_index(modifier=modifier.name, index=0)
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        if offsets:
+            tree = kdtree.KDTree(len(basis))
+            for i, co in enumerate(basis):
+                tree.insert(co, i)
+            tree.balance()
+            nearest = [tree.find(v.co)[1] for v in garment.data.vertices]
+            garment.shape_key_add(name="Basis", from_mix=False)
+            for name, offset in offsets.items():
+                key = garment.shape_key_add(name=name, from_mix=False)
+                for vertex, i in zip(key.data, nearest, strict=True):
+                    vertex.co = vertex.co + Vector(offset[i])
+        done[garment.name] = round(ratio, 3)
+    return done
 
 
 def keep_only_armature(obj, rig=None) -> None:

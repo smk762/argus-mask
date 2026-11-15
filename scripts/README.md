@@ -92,13 +92,14 @@ To let clones download a head you built, upload the `.glb` to the repo's `stock-
 | `bust` | Where the body is cut: `height_m` below the top of the head, `half_width_m` either side of the centre line. |
 | `max_texture_px` | Cap for opaque textures, stored as JPEG. |
 | `max_alpha_texture_px` | Cap for textures with real transparency (hair, lashes, brows), stored as PNG. |
-| `max_triangles` | The build fails above this. |
+| `max_triangles` | The build fails above this, after the garments have been thinned: when a build is over budget, the recipe decimates the clothes alone, all by one ratio, never below 40% of their triangles (the face, hands and hair keep every one; a garment's own shapes, such as a collar's `jawOpen`, are carried over). The recipe report says what was thinned (`decimated`). |
 | `mouth.tongue_flatten` | Squashes the tongue's rest shape toward its underside: 1 leaves it, 0.6 makes it 60% as tall. Setting this (or `tongue_drop_mm`) also makes the whole tongue drop with its tip under `jawOpen`. |
 | `mouth.tongue_drop_mm` | Lowers the tongue's rest shape by this much more. |
 | `mouth.upper_teeth_drop_mm` | Lowers the upper teeth, so their edge shows below the upper lip in an open mouth. |
 | `mouth.cavity_shade` | How dark the back of the mouth gets, as a multiplier on its texture (0.02 is nearly black). Leave it out for no shading. |
 | `shape_scale` | Face shapes to exaggerate or soften, by name: `{"mouthPucker": 1.5}` moves every vertex 1.5 times as far. |
 | `texture_gain` | Brightness multiplier for a part's texture, by part: `{"teeth": 1.3}`. |
+| `garment_colours` | Optional. A colourway per garment worn, by its reference in `assets.clothes`: `{"clothes/x/x.mhclo": {"colour": "#1d2b4f", "mode": "solid"}}`. `tint` (the default) keeps the fabric's shading and detail; `solid` paints the garment's colour texture one colour, which also removes print it carries (a logo, an emblem: some community garments have them, and the Red Cross emblem may not be shown). Baked into the colour texture only, never a normal or roughness map. |
 | `hair_colour` | Optional. Bakes a hair colour into the hair's texture, keeping its strand variation: `{"eumelanin": 0.35, "pheomelanin": 0.85, "parts": ["hair", "eyebrows"]}`. `eumelanin` (brown to black) and `pheomelanin` (red to ginger) are 0 to 1; neither gives near-white. `dye` (`#rrggbb`) is mixed over that by `dye_strength` (0 to 1). `parts` is what takes the colour: `hair` (the default), `eyebrows`, `eyelashes`. Leave it out and the hair keeps its own colour. The colour model is `src/argus_mask/editor/hair_colour.py`. |
 | `blend_parts` | Parts whose transparency stays blended (soft edges) instead of becoming a cut-out. Only for parts that lie flat on the skin: `["eyebrows", "eyelashes"]`. |
 

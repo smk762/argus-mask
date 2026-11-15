@@ -72,3 +72,15 @@ def test_recolour_is_deterministic_and_ignores_cut_out_pixels() -> None:
 def test_a_texture_with_nothing_visible_is_left_alone() -> None:
     pixels = np.array([[0.5, 0.4, 0.3, 0.0]])
     assert np.array_equal(hc.recolour(pixels, hc.natural(0.5, 0.2)), pixels)
+
+
+def test_solid_paints_one_flat_colour_and_keeps_alpha() -> None:
+    # A garment's print (a logo, an emblem) is variation in its texture: solid leaves none of it (#61).
+    pixels = np.array([[0.9, 0.1, 0.1, 1.0], [0.1, 0.9, 0.9, 1.0], [0.5, 0.5, 0.5, 0.0]])
+    navy = hc.hex_to_linear("#1d2b4f")
+    out = hc.solid(pixels, navy)
+    assert np.allclose(out[:, :3], out[0, :3]), "every pixel the same colour"
+    assert hc.to_hex(hc.srgb_to_linear(out[0, :3])) == "#1d2b4f"
+    assert out[:, 3].tolist() == [1.0, 1.0, 0.0]
+    assert np.array_equal(hc.solid(pixels, navy), out)
+    assert np.array_equal(pixels[2], [0.5, 0.5, 0.5, 0.0]), "the input is not changed"

@@ -98,3 +98,14 @@ def recolour(pixels: np.ndarray, target: np.ndarray) -> np.ndarray:
         return out
     out[:, :3] = linear_to_srgb(np.outer(lum / mean, target))
     return out
+
+
+def solid(pixels: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Paint sRGB *pixels* (N x 3 or N x 4, 0 to 1) one flat linear *target* colour, keeping their alpha.
+
+    For a garment whose texture carries print (a logo, an emblem, a patch): unlike :func:`recolour`, nothing of the
+    texture's own variation survives, so neither does the print. The shading comes from the normal map and the light.
+    """
+    out = np.asarray(pixels, dtype=np.float64).copy()
+    out[:, :3] = linear_to_srgb(np.broadcast_to(np.asarray(target, dtype=np.float64), (len(out), 3)))
+    return out
