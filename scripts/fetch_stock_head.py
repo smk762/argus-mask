@@ -2,7 +2,7 @@
 """Download a prebuilt stock head into the assets directory.
 
 The repo carries no model files. Each stock head has a lock file,
-``scripts/stock_heads/<id>.lock.json``, naming where the built ``.glb`` is
+``scripts/stock_heads/<id>.lock.json``, naming where the built model (a ``.glb``, or a LAM splat head's ``.zip``) is
 published, its size, and the manifest that goes beside it (which holds the
 model's sha256). A head built at more than one framing (``waist``) lists each
 other model under ``framings``, by url and size; the manifest names its file and
@@ -32,6 +32,8 @@ from pathlib import Path
 LOCK_DIR = Path(__file__).resolve().parent / "stock_heads"
 TIMEOUT_S = 60
 MAX_BYTES = 64 * 1024 * 1024  # no stock head is near this; a lock that says otherwise is wrong
+# A mesh head is a .glb; a LAM Gaussian-splat head (#126) is a .zip, its manifest's model.format "lam-splat".
+MODEL_SUFFIX = {"gltf": ".glb", "lam-splat": ".zip"}
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -53,8 +55,11 @@ def read_lock(face_id: str, lock_dir: Path = LOCK_DIR) -> dict:
             raise FetchError(f"{path}: the manifest is for {manifest['id']!r}")
         if not re.fullmatch(r"[0-9a-f]{64}", manifest["model"]["sha256"]):
             raise FetchError(f"{path}: the manifest's sha256 is not a sha256")
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.glb", manifest["model"]["file"]):
-            raise FetchError(f"{path}: the manifest's model file name is not a plain .glb name")
+        suffix = MODEL_SUFFIX.get(manifest["model"].get("format", "gltf"))
+        if suffix is None:
+            raise FetchError(f"{path}: the model's format {manifest['model'].get('format')!r} is not one mask serves")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*" + re.escape(suffix), manifest["model"]["file"]):
+            raise FetchError(f"{path}: the manifest's model file name is not a plain {suffix} name")
         if not isinstance(lock["url"], str) or not isinstance(lock["size"], int) or not 0 < lock["size"] <= MAX_BYTES:
             raise FetchError(f"{path}: needs a url and a size between 1 and {MAX_BYTES} bytes")
         for name, framed in (manifest.get("framings") or {}).items():

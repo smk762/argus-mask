@@ -102,7 +102,9 @@ def csp(page: str) -> str:
     return "; ".join(
         [
             "default-src 'self'",
-            f"script-src 'self' {hashes}",
+            # 'wasm-unsafe-eval' lets the splat renderer's depth-sort worker compile its WebAssembly (#126); it allows
+            # no eval() and no new Function().
+            f"script-src 'self' 'wasm-unsafe-eval' {hashes}",
             "style-src 'self'",
             "img-src 'self' data: blob:",  # the glTF loader decodes textures from blobs
             "media-src 'self' blob:",  # the player plays each clip's audio from a blob, so it can seek
@@ -153,7 +155,7 @@ def faces_for(clips: list[dict], out: Path, local: Path | None) -> None:
                 ],
                 check=True,
             )
-        for extra in target.glob("*.glb"):
+        for extra in [*target.glob("*.glb"), *target.glob("*.zip")]:
             if extra.name not in {f["file"] for f in files}:
                 extra.unlink()
         (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

@@ -81,7 +81,9 @@ def test_the_page_pastes_the_strip_and_allows_its_import_map_by_hash() -> None:
     importmap = re.search(r'<script type="importmap">(.*?)</script>', page, re.S).group(1)
     digest = base64.b64encode(hashlib.sha256(importmap.encode()).digest()).decode()
     policy = build.csp(page)
-    assert f"'sha256-{digest}'" in policy and "unsafe" not in policy
+    # The splat renderer's sort worker compiles WebAssembly (#126): 'wasm-unsafe-eval' allows that and no eval().
+    assert f"'sha256-{digest}'" in policy and "'wasm-unsafe-eval'" in policy
+    assert "unsafe" not in policy.replace("'wasm-unsafe-eval'", ""), "no unsafe-eval, no unsafe-inline"
     assert not re.search(r"<script(?![^>]*\bsrc=)(?![^>]*importmap)[^>]*>", page), "no other inline script"
 
 

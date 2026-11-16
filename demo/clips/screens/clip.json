@@ -1,25 +1,25 @@
 {
   "id": "screens",
   "title": "On a screen",
-  "face": "stock-02",
+  "face": "splat-01",
   "framing": "head",
   "scene": "ftl",
-  "duration_ms": 12621,
-  "frames": 379,
+  "duration_ms": 11811,
+  "frames": 355,
   "captions": [
     {
       "start_ms": 0,
-      "end_ms": 2133,
+      "end_ms": 1290,
       "text": "At home, I run live."
     },
     {
-      "start_ms": 2433,
-      "end_ms": 7308,
+      "start_ms": 1590,
+      "end_ms": 6273,
       "text": "A speech service talks, and every screen on the network that shows me moves in step."
     },
     {
-      "start_ms": 7608,
-      "end_ms": 12621,
+      "start_ms": 6573,
+      "end_ms": 11810,
       "text": "Pick a face, a backdrop and a framing, from head and shoulders to full body."
     }
   ],
@@ -39,7 +39,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.2.0-56-g0c6a9ec",
+    "argus_mask": "v0.2.0-75-g04a9aa5",
     "driver": {
       "name": "a2f",
       "model": null

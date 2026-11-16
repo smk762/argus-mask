@@ -4,6 +4,9 @@
 //
 // Layout of the built site (make demo): index.html, player.js, viewer/ (the package's viewer, unchanged),
 // faces/<id>/ (the stock heads, from their release), clips/<id>/{clip.json, take.ndjson, audio.m4a}.
+//
+// A LAM Gaussian-splat head (manifest.model.format "lam-splat", #126) is drawn by the viewer's splat.js, as on a
+// screen: the same frames, motion and lip budget, its own renderer and canvas over the stage while it is shown.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './viewer/vendor/loaders/GLTFLoader.js';
@@ -11,6 +14,8 @@ import { Look, lookOptions } from './viewer/look.js';
 import { ARKIT, Motion, interpolate, lipBudget } from './viewer/motion.js';
 import { Backdrop } from './viewer/backdrop.js';
 import { ARMS_DOWN, BodyLife, Gestures, HeadTurn, STANDING, contactShadow, setPose } from './viewer/rig.js';
+
+const BACKGROUND = '#101216';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -66,7 +71,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
 const look = new Look(renderer, scene, camera, lookOptions(params, 'medium'));
 
-let shown = null;   // { clip, take, root, motion, head, body, gestures, backdrop, extras }
+let shown = null;   // { clip, take, motion, names, current } and, for a mesh: root, head, body, gestures, backdrop,
+                    // extras, targets; for a splat head: splat, host
 
 function size() {
   const { width, height } = stageEl.getBoundingClientRect();
@@ -92,9 +98,14 @@ function dispose(root) {
 
 function clear() {
   if (!shown) return;
-  for (const node of [shown.root, ...shown.extras]) { scene.remove(node); dispose(node); }
-  shown.backdrop?.dispose();
-  scene.background = null;
+  if (shown.splat) {
+    shown.host.hidden = true;   // kept for the next clip on this face (loadSplat)
+    renderer.domElement.hidden = false;
+  } else {
+    for (const node of [shown.root, ...shown.extras]) { scene.remove(node); dispose(node); }
+    shown.backdrop?.dispose();
+    scene.background = null;
+  }
   shown = null;
 }
 
@@ -105,6 +116,7 @@ async function load(clipId) {
   const [clip, take, sound] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`), audioUrl(`${base}audio.m4a`)]);
   if (!faces.has(clip.face)) faces.set(clip.face, await json(`faces/${clip.face}/manifest.json`));
   const manifest = faces.get(clip.face);
+  if (manifest.model?.format === 'lam-splat') return loadSplat(clip, take, sound, manifest);
   const framed = clip.framing !== 'head' && manifest.framings?.[clip.framing];
   const model = framed ? framed.model : manifest.model;
   const framing = (framed ? framed.framing : manifest.framing) || {};
@@ -145,12 +157,48 @@ async function load(clipId) {
     names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
   size();
   look.focus(root);
+  ready(clip, manifest, sound);
+}
+
+function ready(clip, manifest, sound) {
   describe(clip, manifest);
   if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src);
   audio.src = sound;
   scrubEl.max = String(clip.duration_ms);
   scrubEl.value = '0';
   statusEl.textContent = '';
+}
+
+// A splat head: its own renderer, on a canvas over the stage (splat.js). Each splat face is made once and kept for
+// the page's life, hidden while a mesh clip plays: a second renderer made in the same page after one was disposed can
+// stall while it loads, and the demo shows the same face in more than one clip.
+const splats = new Map();   // face id -> { splat, host, skin }
+async function loadSplat(clip, take, sound, manifest) {
+  const { SplatHead, readSkin, jawCap, JAW } = await import('./viewer/splat.js');
+  let kept = splats.get(clip.face);
+  if (!kept) {
+    const url = `faces/${clip.face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
+    const skin = await readSkin(url);
+    clear();
+    const host = document.createElement('div');
+    host.className = 'splat';
+    stageEl.prepend(host);
+    try {
+      kept = { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
+    } catch (error) {   // leave the stage as it was: no half-built head
+      host.remove();
+      throw error;
+    }
+    splats.set(clip.face, kept);
+  }
+  await kept.splat.setScene(clip.scene || null, { quality: look.summary.quality });
+  clear();
+  renderer.domElement.hidden = true;
+  kept.host.hidden = false;
+  await kept.splat.exact();   // a frame sorted for this canvas and camera before the clip shows: no stale depth order
+  const motion = new Motion({ budget: kept.skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(JAW.knee) });
+  shown = { clip, take, splat: kept.splat, host: kept.host, motion, names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
+  ready(clip, manifest, sound);
 }
 
 // ---- words: captions, the transcript and what made the clip ------------------------------------------------
@@ -168,7 +216,9 @@ function describe(clip, manifest) {
   const m = clip.made_with;
   const driver = m.driver.name === 'a2f' ? `NVIDIA Audio2Face-3D${m.driver.model ? ` (${m.driver.model})` : ''}` : `${m.driver.name} (a stand-in, not the demo's driver)`;
   madeEl.replaceChildren(...[
-    ['Face', `${manifest.name}, built with argus-mask's face editor`],
+    ['Face', manifest.model?.format === 'lam-splat'
+      ? `${manifest.name}, a Gaussian-splat head made with LAM from a synthetic portrait`
+      : `${manifest.name}, built with argus-mask's face editor`],
     ['Framing', clip.framing === 'head' ? 'head and shoulders' : clip.framing === 'waist' ? 'waist up' : 'full body'],
     ['Voice', `${m.voice} (XTTS-v2)`],
     ['Animation', `${driver}, ${m.fps} frames a second; blinks, glances and gestures from seed ${m.seed}`],
@@ -225,13 +275,18 @@ function draw() {
   }
   const out = s.motion.present(s.current, s.names, { live, t: wall / 1000, dt });
   if (!live && out.head) { const k = 1 - Math.exp(-6 * dt); for (const ax of ['yaw', 'pitch', 'roll']) headTurn[ax] += (out.head[ax] - headTurn[ax]) * k; }
-  for (let j = 0; j < s.names.length; j += 1) {
-    for (const slot of s.targets.get(s.names[j]) || []) slot.influences[slot.index] = out.weights[j];
+  if (s.splat) {
+    s.splat.set(out.weights, s.names, headTurn);
+    s.splat.step(wall / 1000);
+  } else {
+    for (let j = 0; j < s.names.length; j += 1) {
+      for (const slot of s.targets.get(s.names[j]) || []) slot.influences[slot.index] = out.weights[j];
+    }
+    s.body?.apply(wall / 1000, headTurn.pitch, s.gestures?.pose(tMs));
+    if (s.head.rigged) s.head.apply(headTurn.pitch, headTurn.yaw, headTurn.roll);
+    s.backdrop?.update(wall / 1000);
+    look.render();
   }
-  s.body?.apply(wall / 1000, headTurn.pitch, s.gestures?.pose(tMs));
-  if (s.head.rigged) s.head.apply(headTurn.pitch, headTurn.yaw, headTurn.roll);
-  s.backdrop?.update(wall / 1000);
-  look.render();
   if (!scrubbing) scrubEl.value = String(Math.round(tMs));
   timeEl.textContent = `${clock(tMs)} / ${clock(s.clip.duration_ms)}`;
   showCaption(tMs);
@@ -264,6 +319,29 @@ async function choose(clipId, button) {
   try { await load(clipId); } catch (error) { statusEl.textContent = `This clip did not load: ${error.message}`; }
   playing();
 }
+
+// The credits dialog opens and closes without script (command="show-modal", closedby="any", form method="dialog").
+// Where a browser lacks those, the same behaviour from here: the page's CSP allows no polyfill from elsewhere.
+function creditsFallbacks() {
+  const dialog = $('credits');
+  if (!dialog) return;
+  if (!('commandForElement' in HTMLButtonElement.prototype)) {
+    for (const b of document.querySelectorAll('button[commandfor="credits"][command="show-modal"]')) {
+      b.addEventListener('click', () => dialog.showModal());
+    }
+  }
+  if (!('closedBy' in HTMLDialogElement.prototype)) {
+    // The pointer's position, not the event's target: the dialog is also the target for its own padding.
+    const outside = (e) => {
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    dialog.addEventListener('pointerdown', (e) => { pressedOutside = outside(e); });
+    dialog.addEventListener('pointerup', (e) => { if (pressedOutside && outside(e)) dialog.close(); });
+  }
+}
+creditsFallbacks();
 
 async function main() {
   const ids = await json('clips/index.json');

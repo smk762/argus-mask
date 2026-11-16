@@ -15,7 +15,7 @@
 <link rel="stylesheet" href="vendor/dh/dh-badge.css">
 <link rel="stylesheet" href="demo.css">
 <link rel="stylesheet" href="docs.css">
-<script type="importmap">{ "imports": { "three": "./viewer/vendor/three.module.js", "three/examples/jsm/": "./viewer/vendor/" } }</script>
+<script type="importmap">{ "imports": { "three": "./viewer/vendor/three.module.js", "three/examples/jsm/": "./viewer/vendor/", "jszip": "./viewer/vendor/jszip.js" } }</script>
 <script type="module" src="player.js"></script>
 </head>
 <body>
@@ -65,9 +65,45 @@
     <a href="https://github.com/smk762/argus-mask">argus-mask on GitHub</a>
     <span aria-hidden="true">·</span>
     <a href="https://docs.dragonhound.dev/">Argus docs</a>
+    <span aria-hidden="true">·</span>
+    <button type="button" class="link" command="show-modal" commandfor="credits">Credits</button>
   </p>
-  <p class="fine">Faces are generated characters built from CC0 MakeHuman assets. Voices are XTTS-v2 studio speakers
-  (Coqui Public Model License, non-commercial). Each clip's animation was made once, offline, and is replayed here.</p>
+  <p class="fine">Faces are generated characters, not real people: two built from CC0 MakeHuman assets, one a Gaussian-splat
+  head made with LAM (non-commercial weights) from a portrait generated from text. Voices are XTTS-v2 studio speakers
+  (Coqui Public Model License, non-commercial). Each clip's animation was made once, offline, and is replayed here.
+  See the credits for every part and its licence.</p>
 </footer>
+<dialog id="credits" closedby="any" aria-labelledby="credits-h">
+  <form method="dialog" class="credits-close"><button type="submit" aria-label="Close credits">×</button></form>
+  <p class="eyebrow">Built with open source and open models</p>
+  <h2 id="credits-h">Credits</h2>
+  <p class="hint">With thanks to their authors. Each part stays under its own licence; the non-commercial ones are why this
+  demo sells nothing.</p>
+  <h3>The splat head (Splat head 01)</h3>
+  <dl class="credit-list">
+    <dt><a href="https://github.com/aigc3d/LAM">LAM</a>, Alibaba 3DAIGC</dt><dd>Code Apache-2.0; lam-20k weights CC BY-NC 4.0. Builds the Gaussian head from one portrait.</dd>
+    <dt><a href="https://flame.is.tue.mpg.de/">FLAME 2023 Open</a>, Max Planck Institute for Intelligent Systems</dt><dd>CC BY 4.0. The head model under the splats. Li, Bolkart, Black, Li and Romero, “Learning a model of facial shape and expression from 4D scans”, SIGGRAPH Asia 2017.</dd>
+    <dt><a href="https://huggingface.co/black-forest-labs/FLUX.1-schnell">FLUX.1 [schnell]</a>, Black Forest Labs</dt><dd>Apache-2.0. Made the synthetic portrait, from text alone.</dd>
+    <dt><a href="https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker">MediaPipe Face Landmarker</a>, Google</dt><dd>Apache-2.0. Face landmarks for fitting FLAME to the portrait.</dd>
+    <dt><a href="https://huggingface.co/ZhengPeng7/BiRefNet-portrait">BiRefNet-portrait</a>, Zheng Peng et al.</dt><dd>MIT. Separates the portrait from its background.</dd>
+    <dt><a href="https://github.com/KupynOrest/head_detector">VGGHeads</a>, Orest Kupyn et al.</dt><dd>Code MIT; weights CC BY-NC 4.0. Finds the head to crop.</dd>
+    <dt><a href="https://github.com/myned-ai/gsplat-flame-avatar-renderer">gsplat-flame-avatar-renderer</a>, Myned AI</dt><dd>MIT. Draws the splat head in your browser.</dd>
+  </dl>
+  <h3>The mesh heads (Stock heads 01 and 02)</h3>
+  <dl class="credit-list">
+    <dt><a href="https://www.makehumancommunity.org/">MakeHuman</a> and MPFB</dt><dd>Base mesh, targets, skin, hair, eyes and clothes from CC0 asset packs; ARKit face units by Mika Suominen (CC0); uniform by TheGreatEngineer (CC0).</dd>
+  </dl>
+  <h3>Voice and animation</h3>
+  <dl class="credit-list">
+    <dt><a href="https://huggingface.co/coqui/XTTS-v2">XTTS-v2</a>, Coqui</dt><dd>Coqui Public Model License 1.0.0 (non-commercial). The voices are its studio speakers.</dd>
+    <dt><a href="https://github.com/NVIDIA/Audio2Face-3D-SDK">Audio2Face-3D</a>, NVIDIA</dt><dd>SDK MIT; models under the NVIDIA Open Model License. Turns the speech into facial animation.</dd>
+  </dl>
+  <h3>In your browser</h3>
+  <dl class="credit-list">
+    <dt><a href="https://threejs.org/">three.js</a></dt><dd>MIT. Draws the mesh heads and the backdrops.</dd>
+    <dt><a href="https://stuk.github.io/jszip/">JSZip</a></dt><dd>MIT (or GPLv3). Opens the splat head's archive.</dd>
+  </dl>
+  <form method="dialog" class="credits-done"><button type="submit" autofocus>Done</button></form>
+</dialog>
 </body>
 </html>
