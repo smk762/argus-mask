@@ -1,0 +1,48 @@
+# argus-iris GPU tenant manifest for argus-mask (#125).
+# Validated by argus-cortex's TenantManifest (gpu-tenant-schema.json, tenant_version 1.0);
+# tests/test_gpu_tenant.py fails if it stops validating or disagrees with src/argus_mask/gpu.py.
+#
+# Mask's own process uses no GPU. It leases on behalf of the GPU work it asks of others: the Audio2Face
+# server while a source is live, and a TTS service (Miso) making a voice. With ARGUS_GPU_COORDINATOR=broker,
+# ARGUS_GPU_TENANT_MANIFEST points here (the image has it at /app/gpu-tenant.yaml). Tokens never go here:
+# ARGUS_GPU_BROKER_TOKEN lives in the host's .env.
+#
+# The Audio2Face server holds :8110 on morpheus, which is why iris listens on :8120.
+tenant: argus-mask
+description: A talking face; leases for Audio2Face while a face speaks, and for a TTS service making a voice.
+repo: smk762/argus-mask
+node: morpheus
+
+kinds:
+  # A face is speaking: the source socket, POST /push, POST /speak, a Broadcast. Realtime and never preempted,
+  # for as long as the stream runs. Mask asks without waiting (a slow broker never delays a mouth) and only
+  # the broker: no local fallback, since a broadcast would hold the host-wide lock for hours.
+  - kind: a2f-live
+    target: a2f
+    vram_mb: 500
+    model_mb: 500
+    priority: realtime
+    preemptible: false
+    description: Audio2Face lip sync for a live stream, held from its first audio to its end.
+
+  # The Voices page: a synthetic candidate, or a clone stored on the service.
+  - kind: voice-make
+    target: miso
+    vram_mb: 2500
+    model_mb: 2300
+    priority: interactive
+    preemptible: false
+    description: A TTS service making a voice (a synthetic candidate, or a clone) for the Voices page.
+
+residents:
+  # The Audio2Face worker keeps its TensorRT engine loaded (500 MB on a 3090). It has no unload route:
+  # freeing it means stopping the container, and mask then refuses every source (it never falls back to the
+  # energy driver). So it is pinned: small, and the face's mouth.
+  - name: a2f
+    adapter: container
+    target: a2f
+    vram_mb: 500
+    pinned: true
+    base_url: http://morpheus:8110
+    container: a2f
+    health_path: /health

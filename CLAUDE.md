@@ -31,6 +31,9 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 | Sound reaches a viewer before the mouth for it | `test_server::test_audio_is_held_until_the_frames_for_it_exist` |
 | A viewer sends more than its status (≤ 1 KB): media, a command | `test_server::test_a_viewer_saying_anything_else_is_ignored` |
 | A socket opens for another site, or a write runs for one | `must_never::test_every_socket_refuses_another_site`, `::test_every_write_refuses_another_site` (every route of both apps, so a new one is caught) |
+| A page served by a host name is trusted without being listed (DNS rebinding) | `test_server::test_a_screen_served_by_name_needs_the_name_trusted` (cortex 0.6's `cross_site_refuse`; a screen at `http://morpheus:8109` needs `ARGUS_MASK_TRUSTED_HOSTS=morpheus`) |
+| A live Audio2Face stream waits on its GPU lease, or takes the local host-wide lock | `test_gpu_tenant::test_a_held_lease_never_delays_the_work_and_is_released_after_it`, `::test_the_live_lease_goes_only_to_the_broker_with_no_fallback` |
+| A GPU lease kind is used that `gpu-tenant.yaml` doesn't declare | `test_gpu_tenant::test_the_manifest_validates_and_agrees_with_the_leases_mask_takes` |
 | A request's path reaches Blender; an asset no pack licenses is offered | `test_editor::test_an_asset_not_in_the_library_never_reaches_blender`, `::test_clothes_not_in_the_library_never_reach_blender`, `::test_the_library_offers_only_assets_with_a_stated_licence` |
 | The editor replaces a face it did not make (no `preset.json`) | `test_editor::test_the_editor_never_replaces_a_face_it_did_not_make`, `::test_export_never_replaces_a_face_the_editor_did_not_make` |
 | A head under 18 or undressed is built; a full body without shoes | `test_editor::test_a_preset_under_18_is_refused`, `::test_a_preset_with_no_clothes_is_refused`, `::test_a_full_body_wears_shoes` |
@@ -59,6 +62,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - `server/app.py`: `perform()` is the one source path (the source socket, `POST /push`, `POST /speak`).
 - `performance.py` joins resampler, driver, prosody and idle layer; `demo/docs_page.py`'s `ENGINE` lists the modules a take depends on.
 - `drivers/a2f.py`'s docstring is the Audio2Face protocol; `a2f/check.py` checks a running server against it.
+- `gpu.py`: the leases mask takes for GPU work it asks of others (#125); `gpu-tenant.yaml` declares them for argus-iris.
 - `consent.py`: the record and its checks are cortex's (`argus_cortex.consent`); mask owns what the fields mean, so change them in cortex together with #26.
 - `viewer/`: static, no build step. three.js r187, the splat renderer and JSZip are vendored unchanged with their licences. The editor's previews import `look.js`, `motion.js` and `splat.js`.
 - `editor/`: a separate optional process. `build_head.py` runs inside Blender, handed over by path, never imported.
@@ -77,7 +81,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - **Frame boundaries use integer arithmetic** (`frame * 16000 // fps`): float frame lengths drift at rates that don't divide the sample rate. `drive` and `push` feed the same block size (`performance.BLOCK_MS`), so offline and live agree.
 - **Free the face before telling the source it is done** (`stage.claimed = False`, then `done`), or a source that reconnects at once is told the face is taken.
 - **The viewer handler uses an anyio task group**, not bare asyncio tasks: those made the test client raise `CancelledError` on exit about one run in three.
-- **The server's own process uses no GPU.** The Audio2Face server is a tenant outside the lease, like ComfyUI.
+- **The server's own process uses no GPU**; it leases for the GPU work it asks of others (`gpu.py`, `gpu-tenant.yaml`, #125). `a2f-live` is held in the background for a live a2f stream (`hold`: never waited on, broker only, no fallback: the local lease is a host-wide lock a broadcast would hold for hours); `voice-make` is waited for around a TTS service making a voice. A new lease kind goes in both files (`test_gpu_tenant.py` checks they agree).
 - **Two tiers of faces** (README § Personal and cleared): `personal` is served but never cleared; `stock`, `synthetic` and `consented` are cleared. Don't gate personal use on copyright or likeness. Keep `synthetic` honest: a face from a character LoRA is `personal`. The floor is the law: what argus-darkroom refuses is not a face here either. Voices mirror this.
 - **The disclosure label** (`Provenance.disclosure`, `StreamHeader.disclosure`) is fixed text from `models.py`, never a field anyone sets. `FaceStore` takes a `clock` and `consent_valid` takes `at`, so tests never depend on today's date.
 - **The viewer has little automated test.** After touching `viewer/`, run the server, `argus-mask push` a WAV and watch a browser; `window.__mask` exposes what is drawn. Lip shaping and idle life live in the viewer, never in takes. The look finds parts by name (`head`, `eyes`, `hair`, `wetline`): a recipe change that renames them silently loses skin, catch-lights or soft hair.
