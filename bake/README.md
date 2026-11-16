@@ -36,6 +36,40 @@ python bake/train.py --glb assets/stock-01/head.glb --expressions work/expressio
 | `metrics.json` | PSNR on training views and on held-out views. |
 | `view*_gt.png`, `view*_trained.png` | A few held-out views, to compare against the viewer. |
 
+## Checking in the browser
+
+`check/` draws a trained run in Spark with the binding (`ride.glsl`, a dyno), or the mesh head as the demo draws it,
+at any camera in `cameras.json`, so the viewer can be compared pixel for pixel with the trainer and Cycles. Serve it
+from a work directory:
+
+```bash
+mkdir -p work/check/trained && cd work/check
+ln -s ../../bake/check/{index.html,check.js,ride.glsl} . && ln -s ../../src/argus_mask/viewer viewer
+ln -s ../../assets/stock-01/head.glb . && cp ../renders/cameras.json ../expressions.json . && cp -r ../trained trained/a
+npm pack @sparkjsdev/spark@2.4.0 && tar xzf sparkjsdev-spark-2.4.0.tgz package/dist/spark.module.js --strip-components 2
+python3 -m http.server 8779 &
+MODE=splat python ../../bake/check/drive.py a .   # PSNR: viewer~trainer, viewer~cycles, trainer~cycles
+MODE=mesh python ../../bake/check/drive.py a .    # the same views as the mesh head
+```
+
+## Results
+
+The first run on `stock-01` (2026-11-16): 24 training expressions × 40 views and 6 held-out expressions (from a take
+the training never saw) × 8 views, 768², 64 spp; 149,007 splats, 30,000 steps, 11.5 minutes on an RTX 4060.
+
+| | PSNR |
+|---|---|
+| Trainer ~ Cycles, training views | 37.7 dB |
+| Trainer ~ Cycles, held-out views | 37.3 dB |
+| Viewer ~ trainer, 6 held-out views | 35.0–37.8 dB |
+| Viewer ~ Cycles, 6 held-out views | 30.0–37.0 dB |
+
+![Cycles, trainer, viewer (Spark) and the mesh head, at six held-out views](results/route-a-1.jpg)
+
+Columns: Cycles, the trainer, the splats in the viewer, the mesh head (look.js high). The splats keep the subsurface
+skin, the soft light and the open mouth; fine detail (lids, hair edges) is a little soft, and the mesh's hair cards
+still give a ragged hairline. The PLY is 36 MB; SPZ size with SH degree 3 is not measured yet (the format task).
+
 ## The binding
 
 `mesh.py` builds one vertex space for the head: every part's vertices, with parts in file order, and a frame's
