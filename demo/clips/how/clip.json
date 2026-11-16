@@ -4,22 +4,22 @@
   "face": "stock-01",
   "framing": "full",
   "scene": "garden",
-  "duration_ms": 11683,
-  "frames": 351,
+  "duration_ms": 14605,
+  "frames": 439,
   "captions": [
     {
       "start_ms": 0,
-      "end_ms": 1152,
+      "end_ms": 1482,
       "text": "Here's how it works."
     },
     {
-      "start_ms": 1452,
-      "end_ms": 6646,
+      "start_ms": 1782,
+      "end_ms": 6881,
       "text": "Audio goes in, and a driver turns it into facial animation, thirty frames a second."
     },
     {
-      "start_ms": 6946,
-      "end_ms": 11682,
+      "start_ms": 7181,
+      "end_ms": 14605,
       "text": "On top of that, I nod on stressed words, and my hands keep time with what I say."
     }
   ],
@@ -39,7 +39,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.2.0-56-g0c6a9ec",
+    "argus_mask": "v0.2.0-98-gf54e452",
     "driver": {
       "name": "a2f",
       "model": null
