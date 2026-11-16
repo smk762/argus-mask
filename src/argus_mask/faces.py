@@ -355,7 +355,7 @@ def inspect_splat(path: str | Path) -> SplatReport:
         if len(folders) != 1:
             raise FaceError(f"{label}: {len(folders)} top-level entries; a LAM head is one folder")
         folder = folders.pop()
-        if not _SPLAT_FOLDER.match(folder):
+        if not _SPLAT_FOLDER.fullmatch(folder):
             raise FaceError(f"{label}: the folder name {folder!r} is not a plain name")
         if missing := [m for m in SPLAT_REQUIRED if m not in files]:
             raise FaceError(f"{label}: missing {', '.join(missing)}")
@@ -480,7 +480,7 @@ class FaceStore:
 
         A consented face must have a consent record that covers *use* now: served on a screen is ``avatar``.
         """
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
         if face_id in RESERVED_FACE_IDS:
             raise FaceError(f"{face_id!r} is reserved: the directory holds no faces")
@@ -600,7 +600,7 @@ class Aliases:
         return dict(self._raw)
 
     def _problem(self, name: str, target: str, raw: dict[str, str]) -> str | None:
-        if not _FACE_ID.match(name):
+        if not _FACE_ID.fullmatch(name):
             return f"{name!r} is not a face id"
         if (self.store.root / name).is_dir():
             return f"{name!r} is a face: an alias may not hide it"
@@ -624,7 +624,7 @@ class Aliases:
 
     def resolve(self, name: str) -> str:
         """The face a name stands for: a face's own id is itself, an alias its face; anything else as given."""
-        if not _FACE_ID.match(name) or (self.store.root / name).is_dir():
+        if not _FACE_ID.fullmatch(name) or (self.store.root / name).is_dir():
             return name
         raw = self.raw()
         target = raw.get(name)

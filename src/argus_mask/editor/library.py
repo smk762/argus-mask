@@ -159,7 +159,7 @@ class AssetLibrary:
             found: list[Asset] = []
             root = self.data_dir / directory
             if root.is_dir():
-                for sub in sorted(p for p in root.iterdir() if p.is_dir() and _NAME.match(p.name)):
+                for sub in sorted(p for p in root.iterdir() if p.is_dir() and _NAME.fullmatch(p.name)):
                     if not (sub / f"{sub.name}{ext}").is_file():
                         continue  # eyes/materials and the like: not an asset of this part
                     pack, entry = entries.get((directory, sub.name)) or _hair_as_clothes(entries, directory, sub.name)
