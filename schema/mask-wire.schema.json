@@ -32,6 +32,80 @@
       "title": "AudioFormat",
       "type": "object"
     },
+    "BoundSplats": {
+      "additionalProperties": false,
+      "description": "Gaussian splats bound to the triangles of the mesh model they sit beside (#126 route A, ``bake/``).\n\n``file`` is the splats at the mesh's rest pose (SPZ, version 2 or 3). ``binding`` gives each splat, in the\nSPZ's order, the triangle it rides and where on it: little-endian uint32 triangle, float32 u, float32 v (12\nbytes a splat). Triangles are counted through ``parts``, the mesh nodes in file order, so the binding holds\nfor that one build of the mesh: ``mesh_sha256`` must be the model's own sha256. ``license`` is the splats',\n``inputs`` every input that went into them with its licence.",
+      "properties": {
+        "binding": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.bin$",
+          "title": "Binding",
+          "type": "string"
+        },
+        "binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Binding Sha256",
+          "type": "string"
+        },
+        "count": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "file": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.spz$",
+          "title": "File",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/Credit"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Inputs",
+          "type": "array"
+        },
+        "license": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        },
+        "mesh_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Mesh Sha256",
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/SplatPart"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Parts",
+          "type": "array"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "binding",
+        "binding_sha256",
+        "count",
+        "mesh_sha256",
+        "parts",
+        "license",
+        "inputs"
+      ],
+      "title": "BoundSplats",
+      "type": "object"
+    },
     "ConsentVerdict": {
       "additionalProperties": false,
       "description": "What a service returns about a record: the verdict and its reason, never the record itself.",
@@ -70,6 +144,36 @@
         "ok"
       ],
       "title": "ConsentVerdict",
+      "type": "object"
+    },
+    "Credit": {
+      "additionalProperties": false,
+      "description": "One input that went into a model, and its licence: a mesh, an environment map, a tool whose output it is.",
+      "properties": {
+        "license": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "license"
+      ],
+      "title": "Credit",
       "type": "object"
     },
     "DarkroomDepth": {
@@ -352,7 +456,7 @@
           "type": "string"
         },
         "mask_version": {
-          "default": "1.5",
+          "default": "1.6",
           "title": "Mask Version",
           "type": "string"
         },
@@ -631,7 +735,7 @@
       "type": "object"
     },
     "ModelFile": {
-      "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.",
+      "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.\n\nA ``gltf`` model may carry ``splats`` (:class:`BoundSplats`): files beside it that a screen able to draw\nthem shows riding the mesh; one that is not shows the mesh.",
       "properties": {
         "file": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.(glb|zip)$",
@@ -652,6 +756,17 @@
           "pattern": "^[0-9a-f]{64}$",
           "title": "Sha256",
           "type": "string"
+        },
+        "splats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundSplats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -793,7 +908,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.5",
+          "default": "1.6",
           "title": "Mask Version",
           "type": "string"
         },
@@ -1109,6 +1224,35 @@
       "title": "SpeechCue",
       "type": "object"
     },
+    "SplatPart": {
+      "additionalProperties": false,
+      "description": "One mesh of the model, in the order the bake concatenated their vertices: what the binding indexes.",
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "triangles": {
+          "minimum": 1,
+          "title": "Triangles",
+          "type": "integer"
+        },
+        "vertices": {
+          "minimum": 1,
+          "title": "Vertices",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "vertices",
+        "triangles"
+      ],
+      "title": "SplatPart",
+      "type": "object"
+    },
     "StreamEnd": {
       "description": "Closes a stream: the source went away and every frame has been sent.",
       "properties": {
@@ -1176,7 +1320,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.5",
+          "default": "1.6",
           "title": "Mask Version",
           "type": "string"
         },

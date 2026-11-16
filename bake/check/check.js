@@ -1,5 +1,5 @@
 // Route A viewer check (#126): trained splats bound to every part's triangles, driven by ARKit weights, in Spark.
-// ?run=<dir under trained/>  ?mode=splat|mesh (mesh: the head as the demo draws it, look.js high).
+// ?run=<dir under trained/>  ?mode=splat|mesh (mesh: the head as the demo draws it, look.js high)  ?splats=<file in the run>.
 // window.__bake.view(i) draws camera i of cameras.json at its expression, exactly (sorted, then presented).
 // Served from a work directory that holds this page, spark.module.js, viewer/ (the repo's), head.glb,
 // cameras.json, expressions.json and trained/<run>/: see bake/README.md.
@@ -95,7 +95,7 @@ const ride = (gsplat) => new dyno.Dyno({
     `if (isGsplatActive(${outputs.gsplat}.flags)) rideTriangle(${inputs.bind}, ${inputs.tris}, ${inputs.rest}, ${inputs.cur}, ${outputs.gsplat}.index, ${outputs.gsplat}.center, ${outputs.gsplat}.quaternion);`,
   ],
 }).outputs.gsplat;
-const splats = new SplatMesh({ url: `${RUN}/splats.ply` });
+const splats = new SplatMesh({ url: `${RUN}/${P.get('splats') || 'splats.ply'}` });
 await splats.initialized;
 splats.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => ({ gsplat: ride(gsplat) }));
 splats.updateGenerator();

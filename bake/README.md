@@ -26,6 +26,11 @@ python bake/train.py --glb assets/stock-01/head.glb --expressions work/expressio
     --renders work/renders --out work/trained --splats 150000 --steps 30000
 ```
 
+```bash
+# 4. Package: SPZ and binding beside the face's mesh, `model.splats` in its manifest (repo environment).
+PYTHONPATH=bake python bake/package.py --run work/trained --face assets/stock-01 --license CC0-1.0
+```
+
 `train.py` writes the following:
 
 | File | Contents |
@@ -69,6 +74,30 @@ the training never saw) × 8 views, 768², 64 spp; 149,007 splats, 30,000 steps,
 Columns: Cycles, the trainer, the splats in the viewer, the mesh head (look.js high). The splats keep the subsurface
 skin, the soft light and the open mouth; fine detail (lids, hair edges) is a little soft, and the mesh's hair cards
 still give a ragged hairline. The PLY is 36 MB; SPZ size with SH degree 3 is not measured yet (the format task).
+
+## The format
+
+`package.py` writes the head's `ModelFile.splats` (`BoundSplats` in `models.py`, wire 1.6), two files beside the
+`.glb`:
+
+- `<stem>.splats.spz`: the splats at rest, SPZ version 3 (`spz.py`, Niantic's format, MIT), SH degree 3, in the
+  PLY's order. `spz.py` matches Spark's own encoder to one quantisation step, and draws the same.
+- `<stem>.binding.bin`: per splat, little-endian uint32 triangle, float32 u, float32 v.
+
+The manifest records the mesh build (`mesh_sha256`, which must be the model's sha256: a rebuilt head drops its
+splats), the parts the triangles are counted through, the splats' licence, and `inputs`, every input with its
+licence (the mesh, from the face's provenance; then `BAKE_INPUTS`). The server refuses a face whose splats don't
+match (`inspect_bound_splats` in `faces.py`) and serves the two files at `/face/{id}/model/{file}`.
+
+On `stock-01` (the held-out views, as the viewer draws them against the trainer):
+
+| SPZ | Size | PSNR |
+|---|---|---|
+| (the PLY, 36 MB) | | 35.0–37.8 dB |
+| SH 3 | 2.85 MiB | 33.5–35.4 dB |
+| SH 0 | 2.01 MiB | 24.9–28.1 dB |
+
+SH 3 it is: view-dependent colour carries the baked light. Quantisation costs about 2 dB.
 
 ## The binding
 

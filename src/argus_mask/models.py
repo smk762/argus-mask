@@ -24,7 +24,9 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.4: ``PlateManifest``, a backdrop made from a still image (``background.json``).
 # 1.5: ``FaceManifest.framings``: the same face's other framings (waist up, full body), each its own model and camera;
 #      ``Frame.cue``: a stress or a phrase edge that began on the frame, for gestures.
-MASK_VERSION = "1.5"
+# 1.6: ``ModelFile.splats``: Gaussian splats bound to a mesh model's triangles (#126 route A), with the licence of
+#      every input that went into them.
+MASK_VERSION = "1.6"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -213,6 +215,59 @@ ModelFormat = Literal["gltf", "lam-splat"]
 MODEL_SUFFIXES: dict[str, str] = {"gltf": ".glb", "lam-splat": ".zip"}
 
 
+# Bound splats: a ceiling well above a head's (stock-01's has 149,007), so a file cannot make a screen allocate
+# without bound.
+MAX_BOUND_SPLATS = 1_000_000
+_FILE_NAME = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+
+
+class Credit(BaseModel):
+    """One input that went into a model, and its licence: a mesh, an environment map, a tool whose output it is."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=300)
+    license: str = Field(..., min_length=1, max_length=200)
+    url: str = Field("", max_length=500)
+
+
+class SplatPart(BaseModel):
+    """One mesh of the model, in the order the bake concatenated their vertices: what the binding indexes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
+    vertices: int = Field(..., ge=1)
+    triangles: int = Field(..., ge=1)
+
+
+class BoundSplats(BaseModel):
+    """Gaussian splats bound to the triangles of the mesh model they sit beside (#126 route A, ``bake/``).
+
+    ``file`` is the splats at the mesh's rest pose (SPZ, version 2 or 3). ``binding`` gives each splat, in the
+    SPZ's order, the triangle it rides and where on it: little-endian uint32 triangle, float32 u, float32 v (12
+    bytes a splat). Triangles are counted through ``parts``, the mesh nodes in file order, so the binding holds
+    for that one build of the mesh: ``mesh_sha256`` must be the model's own sha256. ``license`` is the splats',
+    ``inputs`` every input that went into them with its licence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(..., pattern=_FILE_NAME + r"\.spz$")
+    sha256: str = Field(..., pattern=SHA256_PATTERN)
+    binding: str = Field(..., pattern=_FILE_NAME + r"\.bin$")
+    binding_sha256: str = Field(..., pattern=SHA256_PATTERN)
+    count: int = Field(..., ge=1, le=MAX_BOUND_SPLATS)
+    mesh_sha256: str = Field(..., pattern=SHA256_PATTERN)
+    parts: list[SplatPart] = Field(..., min_length=1, max_length=64)
+    license: str = Field(..., min_length=1, max_length=200)
+    inputs: list[Credit] = Field(..., min_length=1, max_length=32)
+
+    @property
+    def triangles(self) -> int:
+        return sum(p.triangles for p in self.parts)
+
+
 class ModelFile(BaseModel):
     """A face's model, in its directory: its file name, sha256 and format.
 
@@ -221,18 +276,32 @@ class ModelFile(BaseModel):
     - ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and
       its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally
       ``iris_occlusion.json``.
+
+    A ``gltf`` model may carry ``splats`` (:class:`BoundSplats`): files beside it that a screen able to draw
+    them shows riding the mesh; one that is not shows the mesh.
     """
 
     file: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(glb|zip)$")
     sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     format: ModelFormat = Field("gltf", description="gltf: a .glb; lam-splat: a LAM Gaussian-splat head, a .zip")
+    splats: BoundSplats | None = None
 
     @model_validator(mode="after")
     def _agrees(self) -> ModelFile:
         suffix = MODEL_SUFFIXES[self.format]
         if not self.file.endswith(suffix):
             raise ValueError(f"a {self.format} model is a {suffix} file, not {self.file}")
+        if self.splats is not None:
+            if self.format != "gltf":
+                raise ValueError("only a mesh (gltf) model carries bound splats")
+            if self.splats.mesh_sha256 != self.sha256:
+                raise ValueError("the splats were bound to another build of the mesh: bake them again")
         return self
+
+    @property
+    def files(self) -> list[str]:
+        """Every file this model is: the model's own, then its splats' and their binding."""
+        return [self.file, *((self.splats.file, self.splats.binding) if self.splats else ())]
 
 
 class Framing(BaseModel):
@@ -275,9 +344,9 @@ class FaceManifest(_Versioned):
 
     @model_validator(mode="after")
     def _framings(self) -> FaceManifest:
-        files = [self.model.file, *(f.model.file for f in self.framings.values())]
+        files = [name for m in (self.model, *(f.model for f in self.framings.values())) for name in m.files]
         if len(set(files)) != len(files):
-            raise ValueError("each framing is its own model file")
+            raise ValueError("each framing is its own model file, and splats and binding files of their own")
         if self.framings and (
             self.model.format != "gltf" or any(f.model.format != "gltf" for f in self.framings.values())
         ):

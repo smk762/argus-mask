@@ -6,7 +6,8 @@
 ``GET /face/{id}``                    one face's manifest
 ``GET /face/{id}/rest``               the rest set it shows (``?set=`` another); ``GET /expressions`` lists them
 ``GET /face/{id}/model``              its model: a ``.glb``, or a LAM splat head's ``.zip``
-``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``)
+``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``);
+                                      also a mesh's bound splats (``.spz``) and their binding (``.bin``)
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
 ``POST /push?face=…``                 audio in over HTTP (a WAV, or PCM with format headers), played as a source
@@ -52,7 +53,7 @@ from argus_mask.config import Settings
 from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, voice_refusal
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
-from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
+from argus_mask.faces import MEDIA_TYPES, SPLAT_MEDIA_TYPE, Aliases, FaceError, FaceStore
 from argus_mask.gpu import A2F_LIVE, hold, live_coordinator
 from argus_mask.models import (
     FACE_ID_PATTERN,
@@ -414,10 +415,15 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face_model_named(face_id: str, file: str) -> FileResponse:
         """A model under its own name: only a file the manifest names, never a path the request makes up."""
         manifest, path = face_or_404(face_id)
-        models = {m.file: m for m in (manifest.model, *(f.model for f in manifest.framings.values()))}
-        if file not in models:
-            raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
-        return model_response(models[file], path.parent / file)
+        all_models = (manifest.model, *(f.model for f in manifest.framings.values()))
+        models = {m.file: m for m in all_models}
+        if file in models:
+            return model_response(models[file], path.parent / file)
+        for m in all_models:  # checked with the face: in its directory, matching their sha256
+            if m.splats and file in (m.splats.file, m.splats.binding):
+                sha = m.splats.sha256 if file == m.splats.file else m.splats.binding_sha256
+                return FileResponse(path.parent / file, media_type=SPLAT_MEDIA_TYPE, headers={"ETag": f'"{sha}"'})
+        raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
 
     add_scene_routes(app, plates)
 
