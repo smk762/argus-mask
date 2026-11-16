@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A plate's depth map waits for a busy darkroom behind the GPU broker.** With the argus-iris broker
+  (argus-darkroom#53), darkroom answers a full queue with `409 ... already queued or running`, not `already running`.
+  `POST /depth/{id}` retried only the second, so a depth map failed the plate instead of waiting. Both are retried now;
+  any other 409 (no stored image) is still an answer.
+
 ### Added
 
 - **Docs in the hosted demo** (#123). mask.dragonhound.dev/docs/ is the README and `docs/*.md`, rendered at the

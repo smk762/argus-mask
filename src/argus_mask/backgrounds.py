@@ -157,6 +157,15 @@ def _sse(lines: Iterator[bytes]) -> Iterator[tuple[str, Any]]:
         yield event, json.loads("\n".join(data))
 
 
+# How darkroom says it is busy, in a 409's detail: one generation at a time, or (behind the argus-iris GPU broker) its
+# queue full. Any other 409 (no stored image, say) is an answer, not a reason to wait.
+_BUSY = (b"already running", b"already queued")
+
+
+def _busy(detail: bytes) -> bool:
+    return any(marker in detail for marker in _BUSY)
+
+
 @dataclass
 class Darkroom:
     """The few argus-darkroom routes a plate needs. Waits while darkroom is busy with another generation."""
@@ -182,7 +191,7 @@ class Darkroom:
                     return reply.read()
             except urllib.error.HTTPError as exc:
                 detail = exc.read()
-                if exc.code == 409 and b"already running" in detail and time.monotonic() < deadline:
+                if exc.code == 409 and _busy(detail) and time.monotonic() < deadline:
                     self.sleep(self.busy_wait)
                     continue
                 raise PlateError(f"darkroom {method} {path}: {exc.code} {_detail(detail)}") from exc
