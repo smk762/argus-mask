@@ -126,7 +126,8 @@ def test_a_model_outside_the_face_directory_is_refused(tmp_path) -> None:
         FaceStore(tmp_path / "assets").load("linked")
 
 
-@pytest.mark.parametrize("face_id", ["../etc", "UPPER", "", "a/b", ".hidden"])
+# "stock-01\n": `$` matches before a final newline, so an id check must use fullmatch.
+@pytest.mark.parametrize("face_id", ["../etc", "UPPER", "", "a/b", ".hidden", "stock-01\n"])
 def test_a_face_id_is_a_plain_name(tmp_path, face_id: str) -> None:
     with pytest.raises(FaceError, match="not a face id"):
         FaceStore(tmp_path).load(face_id)

@@ -50,7 +50,7 @@ argus-mask plate generate assets/backgrounds/highland-forest --title "Highland p
 - **Callum MacRae**, a Highland man of about 25, red-bearded, with optional blue woad: SDXL photoreal portrait, LAM head, Highland forest backdrop.
 - **Nadia Volkova**, a blonde operative of about 25 in a black tactical jacket: SDXL photoreal portrait, LAM head, bunker backdrop.
 
-They have no pictures here: a LAM head is never cleared (LAM's weights are CC BY-NC 4.0 and FLAME is non-commercial), so splat heads stay on your own screens. See [Personal and cleared](#personal-and-cleared).
+A splat head made by `lam/` (FLAME 2023 Open, and our own FLAME code and tracker front end) from a cleared portrait can be cleared, as `splat-01` on the hosted demo is; LAM's weights are CC BY-NC 4.0, so it is credited and never commercial. One made with LAM's own pipeline (FLAME's academic model) stays `personal`. See [Personal and cleared](#personal-and-cleared).
 
 ## Quick start
 
@@ -149,7 +149,7 @@ A **splat head** is a [LAM](https://github.com/aigc3d/LAM) (Large Avatar Model) 
   ```
 
   The manifest gets `format: lam-splat` and the splat framing: LAM's heads stand at about 1.65 m, so the camera aims at `--height 1.65` from `--distance 0.7`, a tenth of the distance above its aim, with a 50 degree `--fov`.
-- **Licences: personal, never cleared.** LAM's code is Apache-2.0, but its weights are CC BY-NC 4.0 and FLAME's model is for non-commercial research. A head made with them is `personal` (whatever the portrait) until those licences change: it may be on your own screens, and in nothing published, shared or commercial. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
+- **Licences.** LAM's code is Apache-2.0 and its weights CC BY-NC 4.0: credit them wherever a head is shown, and never use one commercially. A head made with LAM's own pipeline uses FLAME's academic model (non-commercial research only) and is `personal`: your own screens, nothing published or shared. `lam/` replaces every research-only part (FLAME 2023 Open, CC BY 4.0; our FLAME code, landmark embedding and tracker front end; licences per part in `lam/README.md`), so a head it makes from a cleared portrait can be `synthetic` and shown, credited, like `splat-01` on the demo. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
 - **On screens:** `display=flat` only (`hld` says it is not supported yet). `?bg=` works as for a mesh (not `transparent`); `?jaw=` moves the jaw cap's knee (default 0.35: past it, `jawOpen` and the lower lip open at 0.35 of the rate, since the inside of a splat mouth is weak; `?jaw=1` turns it off). The head turns through the rig's neck and head bones; LAM's own animation clips never play, so mask is the only thing that moves the face and a screen shows what a recording does. It needs no cross-origin isolation: it renders on a plain-http LAN page (checked in headless Chromium, GPU and software; check a real screen before relying on it). `window.__mask.renderer` says `splat` or `mesh`.
 - **Recording:** `argus-mask record` and the Broadcast page record a splat face as they do a mesh: each frame is posed, depth-sorted for the camera and drawn before its screenshot, so a frame rendered twice is byte-identical.
 
@@ -244,7 +244,7 @@ The server speaks plain HTTP and WebSocket, and binds localhost by default. To p
 2. Proxy to it with TLS. Caddy forwards WebSocket upgrades without extra configuration.
 3. Name the proxy's origin in `ARGUS_MASK_CORS_ORIGINS`, for example `https://mask.example.org`.
 
-Both sockets refuse a browser whose `Origin` is neither the server's own host nor in that list. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
+Both sockets, and every write, refuse a browser whose `Origin` is not in that list, unless the page came from the server's own host and that host is an IP address, `localhost`, or a name in `ARGUS_MASK_TRUSTED_HOSTS`. A screen opened at `http://morpheus:8109` needs `ARGUS_MASK_TRUSTED_HOSTS=morpheus`: a name is not trusted on its own, because under DNS rebinding another site's page sends its own name as both `Origin` and `Host`. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
 
 ### Face editor
 
@@ -286,6 +286,7 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` and `/speak` ask for: a stored clone's name, a speaker number, or `speaker:<name>` |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
+| `ARGUS_MASK_TRUSTED_HOSTS` | empty | Host names (no port) screens open the server at, comma-separated; an IP address and `localhost` need none |
 | `ARGUS_MASK_READ_ONLY` | off | Refuses every audio source; viewers still connect. The editor refuses builds. |
 | `ARGUS_MASK_BLENDER` | `blender` | The editor's Blender binary |
 | `ARGUS_MASK_BLENDER_USER` | `$BLENDER_USER_RESOURCES` | Blender's user directory, holding MPFB and its asset packs |
@@ -296,6 +297,15 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_VIEWER_URL` | the server URL | The origin screens open the viewer at (the TLS proxy, on a LAN); the editor's links point here |
 | `ARGUS_MASK_RECORDINGS_DIR` | `recordings` | Where the Broadcast page's recordings go (an MP4, its WAV and take) |
 | `ARGUS_MASK_VOICES_DIR` | `voices` | The Voices page's checked clips, and each voice's record and clips. The server and `say` read it too, to refuse a consenting speaker's voice that their record no longer covers |
+
+### GPU leases (argus-iris)
+
+Mask's own process uses no GPU, but it asks others for GPU work, and tells [argus-iris](https://github.com/smk762/argus-iris), the suite's GPU broker, through argus-cortex's lease client. `gpu-tenant.yaml` declares the two kinds:
+
+- `a2f-live`: the Audio2Face server while a face speaks (the source socket, `/push`, `/speak`, a broadcast). `realtime`, never preempted, from the stream's first audio to its end. Mask asks without waiting, so a slow or absent broker never delays a mouth, and asks the broker alone: when it can't be reached there is no fallback, because the local lease is a host-wide lock that a broadcast would hold for hours.
+- `voice-make`: a TTS service (Miso) making a voice on the Voices page. `interactive`, and waited for; a refusal fails the job with the reason.
+
+It is off until `ARGUS_GPU_COORDINATOR=broker` and `ARGUS_GPU_BROKER_URL` are set. `ARGUS_GPU_BROKER_TOKEN` (secret, the host's `.env`), `ARGUS_GPU_TENANT_MANIFEST` (the image has `/app/gpu-tenant.yaml`) and `ARGUS_GPU_BROKER_FALLBACK` (`lease` or `none`) are cortex's; see `.env.example`.
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 

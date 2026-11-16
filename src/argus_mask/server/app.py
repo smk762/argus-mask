@@ -16,7 +16,8 @@
 
 A source is a write and a viewer hears the audio, so both sockets apply the
 same origin rule as cortex's write guard: no ``Origin`` (a CLI), the request's
-own host, or a configured origin. CORS does not cover WebSockets, so without
+own host when that is an IP address, ``localhost`` or a name in ``ARGUS_MASK_TRUSTED_HOSTS``,
+or a configured origin. CORS does not cover WebSockets, so without
 this any page the operator visits could open either one. The server binds to
 localhost by default.
 """
@@ -24,6 +25,7 @@ localhost by default.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import struct
 import time
@@ -32,6 +34,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import anyio
 import structlog
@@ -51,6 +54,7 @@ from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, vo
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
 from argus_mask.faces import MEDIA_TYPES, SPLAT_MEDIA_TYPE, Aliases, FaceError, FaceStore
+from argus_mask.gpu import A2F_LIVE, hold, live_coordinator
 from argus_mask.models import (
     FACE_ID_PATTERN,
     FRAMINGS,
@@ -248,7 +252,7 @@ def install_guards(app: FastAPI, cfg: Settings) -> Callable:
     """The write guards and CORS every mask app uses. Returns the origin predicate, for the sockets to call."""
     wildcard = "*" in cfg.cors_origins
     named = [o for o in cfg.cors_origins if o != "*"]
-    origin_refusal = cross_site_refuse(named)
+    origin_refusal = cross_site_refuse(named, cfg.trusted_hosts)
     # A wildcard grants anonymous reads, never a cross-site write: naming an origin is the way to get those.
     app.add_middleware(WriteGuard, refuse=origin_refusal)
     if cfg.read_only:
@@ -293,10 +297,15 @@ def add_scene_routes(app: FastAPI, plates: PlateStore) -> None:
         return FileResponse(directory / file, media_type="image/png", headers={"ETag": f'"{images[file].sha256}"'})
 
 
-def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
-    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
+def create_app(settings: Settings | None = None, *, driver: Driver | None = None, gpu: Any = None) -> FastAPI:  # noqa: ANN401
+    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment.
+
+    *gpu* is the coordinator a live Audio2Face stream's lease goes to (:mod:`argus_mask.gpu`); by default the
+    broker when ``ARGUS_GPU_COORDINATOR=broker``, else none.
+    """
     cfg = settings or Settings.from_env()
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
+    gpu = gpu if gpu is not None else live_coordinator()
     store = FaceStore(cfg.assets_dir)
     plates = PlateStore(cfg.assets_dir)
     scene_choices = SceneChoices(cfg.assets_dir, plates)
@@ -447,6 +456,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         ends the stream. The face is freed before this returns, so a caller can say "done" at once.
         """
         performer: Performer | None = None
+        leases = contextlib.AsyncExitStack()
         try:
             try:
                 performer = Performer(
@@ -455,6 +465,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except DriverError as exc:
                 probe.forget()  # ask the driver again next time
                 raise SourceRefused(str(exc)) from exc
+            if driver.name == "a2f":  # Audio2Face is working for this face until the stream ends: tell the broker
+                await leases.enter_async_context(hold(gpu, A2F_LIVE, f"argus-mask:{face_id}"))
             header = make_header(
                 face_id=aliases.resolve(face_id),  # the face itself: a viewer that loaded another reloads
                 session_id=uuid.uuid4().hex,
@@ -542,8 +554,11 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             stage.claimed = False
             return Played(header.session_id, frames, duration_ms, failure)
         finally:
-            if performer is not None:
-                await performer.close()
+            try:
+                if performer is not None:
+                    await performer.close()
+            finally:
+                await leases.aclose()
             stage.header = None
             stage.claimed = False
 

@@ -6,7 +6,8 @@
 #   docker compose --profile a2f up --build    # mask and the Audio2Face server (needs an NVIDIA GPU)
 #
 # Published on 127.0.0.1 only by default. To serve screens on the LAN, set MASK_PUBLISH to an
-# address your TLS proxy can reach and name the proxy's origin in CORS_ORIGINS.
+# address your TLS proxy can reach and name the proxy's origin in CORS_ORIGINS; a screen that opens the
+# server by a host name needs that name in TRUSTED_HOSTS.
 #
 # The a2f image is built here and not published. Its first build downloads about 5.5 GB and needs
 # about 25 GB free in Docker's data directory; see a2f/README.md.
@@ -23,9 +24,16 @@ services:
       ARGUS_MASK_A2F_URL: ${A2F_URL:-}
       ARGUS_MASK_FPS: ${FPS:-30}
       ARGUS_MASK_CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ARGUS_MASK_TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
       ARGUS_MASK_READ_ONLY: ${READ_ONLY:-0}
       ARGUS_MASK_TTS_URL: ${TTS_URL:-}
       ARGUS_MASK_TTS_VOICE: ${TTS_VOICE:-}
+      # argus-iris, the suite's GPU broker (see .env.example). The token stays in the host's .env.
+      ARGUS_GPU_COORDINATOR: ${ARGUS_GPU_COORDINATOR:-none}
+      ARGUS_GPU_BROKER_URL: ${ARGUS_GPU_BROKER_URL:-}
+      ARGUS_GPU_BROKER_TOKEN: ${ARGUS_GPU_BROKER_TOKEN:-}
+      ARGUS_GPU_TENANT_MANIFEST: ${ARGUS_GPU_TENANT_MANIFEST:-/app/gpu-tenant.yaml}
+      ARGUS_GPU_BROKER_FALLBACK: ${ARGUS_GPU_BROKER_FALLBACK:-lease}
     volumes:
       - ${ASSETS_DIR:-./assets}:/assets:ro
     extra_hosts:

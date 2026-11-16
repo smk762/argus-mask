@@ -159,7 +159,7 @@ class Builder:
 
     def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
         """The cached build for *key* and its model, if it is whole: the model still matches its manifest."""
-        if self.cache_size == 0 or not _KEY.match(key):
+        if self.cache_size == 0 or not _KEY.fullmatch(key):
             return None
         directory = self.cache_dir / key
         try:
@@ -191,7 +191,9 @@ class Builder:
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
-        entries = sorted((p for p in self.cache_dir.iterdir() if _KEY.match(p.name)), key=lambda p: p.stat().st_mtime)
+        entries = sorted(
+            (p for p in self.cache_dir.iterdir() if _KEY.fullmatch(p.name)), key=lambda p: p.stat().st_mtime
+        )
         for old in entries[: max(0, len(entries) - self.cache_size)]:
             shutil.rmtree(old, ignore_errors=True)
 
@@ -230,10 +232,10 @@ class Builder:
 
     def owned(self, face_id: str) -> bool:
         """Whether ``<assets>/<id>`` is a face the editor exported (so it may replace it)."""
-        return bool(_FACE_ID.match(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
+        return bool(_FACE_ID.fullmatch(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
 
     def previewed(self, face_id: str) -> bool:
-        return bool(_FACE_ID.match(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
+        return bool(_FACE_ID.fullmatch(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
 
     @staticmethod
     def _read_preset(directory: Path) -> Preset | None:
@@ -251,7 +253,7 @@ class Builder:
         for root, key in ((self.assets_dir, "exported"), (self.preview_dir, "previewed")):
             if not root.is_dir():
                 continue
-            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.match(p.name)):
+            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.fullmatch(p.name)):
                 preset = self._read_preset(directory)
                 if preset is None:
                     continue
@@ -271,7 +273,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.match(face_id):
+            if not _FACE_ID.fullmatch(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             try:
                 manifest, _ = FaceStore(self.preview_dir).load(face_id)
@@ -427,7 +429,7 @@ class Builder:
         return self.previewed(face_id) if place == "preview" else self.owned(face_id)
 
     def preset_in(self, face_id: str, place: str) -> Preset | None:
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             return None
         return self._read_preset(self.root(place) / face_id)
 
@@ -456,7 +458,7 @@ class Builder:
                 }
             if place == "export":
                 for face_id, why in refused.items():
-                    if _FACE_ID.match(face_id):
+                    if _FACE_ID.fullmatch(face_id):
                         out.setdefault(face_id, {"id": face_id, "export": None, "preview": None})["refused"] = why
 
         def newest(e: dict) -> float:
@@ -470,7 +472,7 @@ class Builder:
             raise Busy("another build or export is running")
         async with self._lock:
             new_id = new_id or face_id
-            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.match(i)), None):
+            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.fullmatch(i)), None):
                 raise NoPreview(f"{bad!r} is not a face id")
             places = [p for p in PLACES if (self.root(p) / face_id).exists()]
             if not places:
@@ -524,7 +526,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.match(face_id):
+            if not _FACE_ID.fullmatch(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             found = [p for p in places if (self.root(p) / face_id).exists()]
             if not found:

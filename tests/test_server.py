@@ -175,12 +175,44 @@ def test_a_cross_site_page_cannot_open_either_socket(assets) -> None:
                 client.websocket_connect(path, headers={"origin": "https://evil.example"}),
             ):
                 pass
-            # The configured origin, and the server's own host behind a TLS proxy, are let in.
-            for origin in ("https://mask.example", "https://testserver"):
-                with client.websocket_connect(path, headers={"origin": origin}) as ws:
-                    if path.endswith("source"):
-                        ws.send_text(HELLO)
-                        assert ws.receive_json()["type"] == "ready"
+            # The configured origin is let in; the server's own host by a name is not, unless the name is
+            # trusted: under DNS rebinding an attacker's page sends its own name as both Origin and Host.
+            with client.websocket_connect(path, headers={"origin": "https://mask.example"}) as ws:
+                if path.endswith("source"):
+                    ws.send_text(HELLO)
+                    assert ws.receive_json()["type"] == "ready"
+            with (
+                pytest.raises(WebSocketDisconnect),
+                client.websocket_connect(path, headers={"origin": "https://testserver"}),
+            ):
+                pass
+
+
+@pytest.mark.parametrize(
+    ("trusted", "host", "allowed"),
+    [
+        ((), "testserver", False),  # a screen at http://morpheus:8109 with nothing set
+        (("testserver",), "testserver", True),  # ARGUS_MASK_TRUSTED_HOSTS=morpheus
+        ((), "192.168.1.39:8109", True),  # an IP address cannot be rebound
+        ((), "localhost:8109", True),
+        (("other",), "testserver", False),
+    ],
+)
+def test_a_screen_served_by_name_needs_the_name_trusted(assets, trusted, host, allowed) -> None:
+    app = create_app(Settings(assets_dir=assets, trusted_hosts=trusted))
+    with TestClient(app) as client:
+        headers = {"origin": f"http://{host}", "host": host}
+        if allowed:
+            with client.websocket_connect("/session/test-head/view", headers=headers):
+                pass
+            assert client.post("/push?face=test-head", content=b"", headers=headers).status_code != 403
+        else:
+            with (
+                pytest.raises(WebSocketDisconnect),
+                client.websocket_connect("/session/test-head/view", headers=headers),
+            ):
+                pass
+            assert client.post("/push?face=test-head", content=b"", headers=headers).status_code == 403
 
 
 def test_read_only_refuses_a_source_and_still_serves_viewers(assets) -> None:
@@ -359,10 +391,19 @@ def test_a_screen_with_external_sound_is_ready_without_sound_of_its_own(client) 
 
 @pytest.mark.parametrize(
     "message",
-    ["not json", json.dumps({"type": "status", "display": "cinema"}), json.dumps({"type": "status", "x": "y" * 2000})],
+    [
+        "not json",
+        json.dumps({"type": "status", "display": "cinema"}),
+        json.dumps({"type": "status", "x": "y" * 2000}),  # over 1 KB
+        json.dumps({"type": "say", "text": "hello"}),  # a command: a viewer only reports its state
+        b"\x00" * 512,  # media: never taken from a viewer
+    ],
 )
 def test_a_viewer_saying_anything_else_is_ignored(client, message) -> None:
     with client.websocket_connect("/session/test-head/view") as viewer:
-        viewer.send_text(message)
+        if isinstance(message, bytes):
+            viewer.send_bytes(message)
+        else:
+            viewer.send_text(message)
         viewer.send_text(json.dumps({"type": "status", "audio": True}))  # still heard after the bad one
         assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False, "sound": "local"}])
