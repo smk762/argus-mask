@@ -161,7 +161,9 @@ def main() -> None:
     # The checkout as it is before any clip is written: a clip's own files would make it read as -dirty.
     made = made_by()
     if made.endswith("-dirty"):
-        sys.exit(f"the checkout has uncommitted changes ({made}): commit them first, or demo/build.py refuses the clips")
+        sys.exit(
+            f"the checkout has uncommitted changes ({made}): commit them first, or demo/build.py refuses the clips"
+        )
     for clip in spec["clips"]:
         if not args.only or clip["id"] in args.only:
             asyncio.run(make(spec, clip, args.driver, args.a2f_url, made))
