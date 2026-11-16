@@ -33,6 +33,9 @@ main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap:
 #stage { position: relative; aspect-ratio: 3 / 4; max-height: 78vh; width: 100%; margin-inline: auto; border-radius: var(--dh-radius-lg);
          overflow: hidden; background: #101216; border: 1px solid var(--dh-border); }
 #stage canvas { display: block; width: 100%; height: 100%; }
+#stage canvas[hidden] { display: none; }
+/* A splat head's own renderer (player.js loadSplat) fills the stage under the captions. */
+#stage .splat { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
 .caption { position: absolute; left: 50%; bottom: var(--dh-space-4); transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
            margin: 0; padding: 6px 12px; border-radius: var(--dh-radius-md); text-align: center; font-size: var(--dh-text-md);
            color: #f2f4f7; background: rgba(8, 10, 14, 0.72); }

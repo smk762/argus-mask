@@ -153,7 +153,7 @@ def faces_for(clips: list[dict], out: Path, local: Path | None) -> None:
                 ],
                 check=True,
             )
-        for extra in target.glob("*.glb"):
+        for extra in [*target.glob("*.glb"), *target.glob("*.zip")]:
             if extra.name not in {f["file"] for f in files}:
                 extra.unlink()
         (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
