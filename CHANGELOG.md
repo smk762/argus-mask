@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- argus-cortex is pinned `>=0.9,<0.10` (was `>=0.7.0,<0.8`), so the suite's paved-road helpers (`fs`, `net`, `auth`,
+  `limits`; ai-code-auditor#56) are available.
 - **Skin under clothes is hidden by the recipe** (#62). Below the neck, skin a garment covers (cloth within 3 cm out
   along its normal) or pokes through (cloth within 12 mm in) is deleted: under the coverall the shins showed through
   at the knees. Every framing has fewer triangles for it.
