@@ -48,6 +48,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 | An asset pack installs from outside the catalogue, unpinned, or overwrites a file | `test_packs::test_only_a_catalogued_pinned_pack_installs`, `::test_a_download_with_the_wrong_hash_is_refused_and_the_mirror_tried`, `::test_an_installed_file_is_never_replaced` |
 | A plate is kept that darkroom's sha256 doesn't match, under an unknown licence, or under a built-in scene's name | `test_backgrounds::test_a_record_that_does_not_hold_up_writes_nothing`, `::test_an_unknown_licence_is_refused_before_darkroom_is_asked`, `::test_a_plate_cannot_take_a_built_in_name` |
 | A LAM archive is unpacked to disk, or past its caps | `test_splat::test_an_archive_that_breaks_a_rule_is_refused`, `::test_size_caps_hold_for_each_member_all_of_them_and_the_count` |
+| A mesh's bound splats are served that don't match it (files, sha256, parts, SPZ length, triangles) | `test_bound_splats::test_splats_that_break_a_rule_refuse_the_face`, `::test_splats_ride_only_a_mesh_and_only_the_build_they_were_bound_to` |
 | Demo clips made by an older engine are deployed | `test_demo::test_the_committed_clips_were_made_by_the_engine_at_head` (re-record with `demo/make_clips.py`) |
 | A demo or docs page runs an inline script the CSP doesn't hash | `test_demo::test_the_page_pastes_the_strip_and_allows_its_import_map_by_hash`, `::test_a_docs_page_is_csp_neutral_and_links_stay_on_site` |
 | A file Blender loads by path imports the package | `must_never::test_what_blender_loads_by_path_imports_nothing_from_the_package` |
@@ -58,7 +59,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 
 `src/argus_mask/`: the engine is pydantic, numpy, soxr and cortex; the CLI, server and editor are extras, imported lazily.
 
-- `models.py` is **the API surface**: the wire contract and `render_wire_schema()`.
+- `models.py` is **the API surface**: the wire contract and `render_wire_schema()`. A `gltf` model may carry `splats` (`BoundSplats`, #126 route A): an SPZ and a binding beside it, bound to that build (`mesh_sha256`), with every input's licence; `faces.inspect_bound_splats` checks them.
 - `server/app.py`: `perform()` is the one source path (the source socket, `POST /push`, `POST /speak`).
 - `performance.py` joins resampler, driver, prosody and idle layer; `demo/docs_page.py`'s `ENGINE` lists the modules a take depends on.
 - `drivers/a2f.py`'s docstring is the Audio2Face protocol; `a2f/check.py` checks a running server against it.
@@ -66,7 +67,8 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - `consent.py`: the record and its checks are cortex's (`argus_cortex.consent`); mask owns what the fields mean, so change them in cortex together with #26.
 - `viewer/`: static, no build step. three.js r187, the splat renderer and JSZip are vendored unchanged with their licences. The editor's previews import `look.js`, `motion.js` and `splat.js`.
 - `editor/`: a separate optional process. `build_head.py` runs inside Blender, handed over by path, never imported.
-- `a2f/` (the Audio2Face server's image), `lam/` (splat heads from portraits, #126) and `demo/` (the hosted demo, #118) are not part of the package; CI does not lint or test `a2f/` or `lam/`. Read `a2f/README.md` before building (about 25 GB of Docker disk) and `lam/README.md` for licences per part.
+- `bake/` makes bound splats from a mesh head (#126 route A): Cycles renders, gsplat training on a GPU host, `package.py` into a face; steps and results in `bake/README.md`.
+- `a2f/` (the Audio2Face server's image), `lam/` (splat heads from portraits, #126) and `demo/` (the hosted demo, #118) are not part of the package; CI does not lint or test `a2f/`, `lam/` or `bake/`. Read `a2f/README.md` before building (about 25 GB of Docker disk) and `lam/README.md` for licences per part.
 - `tests/helpers.py` builds every fixture in code: a one-triangle `.glb`, tone WAVs, a fake Audio2Face server, a fake TTS service, `live_server()`.
 
 ## Commands

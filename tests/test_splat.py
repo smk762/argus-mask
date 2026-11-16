@@ -266,6 +266,7 @@ def test_inspect_writes_a_manifest_for_a_splat_archive(tmp_path) -> None:
         "file": "avatar.zip",
         "sha256": faces.sha256_file(directory / "avatar.zip"),
         "format": "lam-splat",
+        "splats": None,
     }
     assert manifest["framing"] == {"distance": 0.7, "height": 1.65, "fov": 50.0}
     assert manifest["provenance"]["kind"] == "personal" and manifest["mask_version"] == MASK_VERSION
