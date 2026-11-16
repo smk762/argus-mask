@@ -99,8 +99,7 @@ function dispose(root) {
 function clear() {
   if (!shown) return;
   if (shown.splat) {
-    shown.splat.dispose();
-    shown.host.remove();
+    shown.host.hidden = true;   // kept for the next clip on this face (loadSplat)
     renderer.domElement.hidden = false;
   } else {
     for (const node of [shown.root, ...shown.extras]) { scene.remove(node); dispose(node); }
@@ -170,21 +169,35 @@ function ready(clip, manifest, sound) {
   statusEl.textContent = '';
 }
 
-// A splat head: its own renderer, on a canvas over the stage (splat.js). One renderer at a time: the mesh face, or
-// another splat head, goes first, since two splat renderers building at once stall each other.
+// A splat head: its own renderer, on a canvas over the stage (splat.js). Each splat face is made once and kept for
+// the page's life, hidden while a mesh clip plays: a second renderer made in the same page after one was disposed can
+// stall while it loads, and the demo shows the same face in more than one clip.
+const splats = new Map();   // face id -> { splat, host, skin }
 async function loadSplat(clip, take, sound, manifest) {
   const { SplatHead, readSkin, jawCap, JAW } = await import('./viewer/splat.js');
-  const url = `faces/${clip.face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
-  const skin = await readSkin(url);
+  let kept = splats.get(clip.face);
+  if (!kept) {
+    const url = `faces/${clip.face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
+    const skin = await readSkin(url);
+    clear();
+    const host = document.createElement('div');
+    host.className = 'splat';
+    stageEl.prepend(host);
+    try {
+      kept = { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
+    } catch (error) {   // leave the stage as it was: no half-built head
+      host.remove();
+      throw error;
+    }
+    splats.set(clip.face, kept);
+  }
+  await kept.splat.setScene(clip.scene || null, { quality: look.summary.quality });
   clear();
   renderer.domElement.hidden = true;
-  const host = document.createElement('div');
-  host.className = 'splat';
-  stageEl.prepend(host);
-  const splat = await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin });
-  if (clip.scene) await splat.setScene(clip.scene, { quality: look.summary.quality });
-  const motion = new Motion({ budget: skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(JAW.knee) });
-  shown = { clip, take, splat, host, motion, names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
+  kept.host.hidden = false;
+  await kept.splat.exact();   // a frame sorted for this canvas and camera before the clip shows: no stale depth order
+  const motion = new Motion({ budget: kept.skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(JAW.knee) });
+  shown = { clip, take, splat: kept.splat, host: kept.host, motion, names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
   ready(clip, manifest, sound);
 }
 
@@ -306,6 +319,29 @@ async function choose(clipId, button) {
   try { await load(clipId); } catch (error) { statusEl.textContent = `This clip did not load: ${error.message}`; }
   playing();
 }
+
+// The credits dialog opens and closes without script (command="show-modal", closedby="any", form method="dialog").
+// Where a browser lacks those, the same behaviour from here: the page's CSP allows no polyfill from elsewhere.
+function creditsFallbacks() {
+  const dialog = $('credits');
+  if (!dialog) return;
+  if (!('commandForElement' in HTMLButtonElement.prototype)) {
+    for (const b of document.querySelectorAll('button[commandfor="credits"][command="show-modal"]')) {
+      b.addEventListener('click', () => dialog.showModal());
+    }
+  }
+  if (!('closedBy' in HTMLDialogElement.prototype)) {
+    // The pointer's position, not the event's target: the dialog is also the target for its own padding.
+    const outside = (e) => {
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    dialog.addEventListener('pointerdown', (e) => { pressedOutside = outside(e); });
+    dialog.addEventListener('pointerup', (e) => { if (pressedOutside && outside(e)) dialog.close(); });
+  }
+}
+creditsFallbacks();
 
 async function main() {
   const ids = await json('clips/index.json');

@@ -153,7 +153,21 @@ export class SplatHead {
     head.aim(head.framing);
     // create() resolves after the first section of a progressive load; the rest builds afterwards (each build
     // stops rendering until its sort is done). Wait for the last, or a recording's first frames race it.
-    await until(() => !v.isLoadingOrUnloading() && v.splatRenderReady && v.splatMesh?.finalBuild && v.splatMesh.getSplatCount() > 0, 'load');
+    // The build only advances in the renderer's frame loop, cancelled above, so draw a frame per animation frame
+    // until it is done: waiting without drawing hangs whenever the load had not finished by create()'s return.
+    // A minute: a phone or a software renderer builds slowly. A timeout only; no pose depends on it.
+    // Known: a second renderer created in the same page after one was disposed can still stall here, in headless
+    // Chromium, its build waiting on a sort that never answers. A page that shows a splat face more than once keeps
+    // its SplatHead (demo/player.js) rather than make another.
+    const loaded = () => !v.isLoadingOrUnloading() && v.splatRenderReady && v.splatMesh?.finalBuild && v.splatMesh.getSplatCount() > 0;
+    const start = performance.now();
+    while (!loaded()) {
+      if (performance.now() - start > 60000) throw new Error('The splat head did not load in 60 s.');
+      head.fit();
+      r.render();
+      cancelAnimationFrame(v.requestFrameId);
+      await nextFrame();
+    }
     return head;
   }
 
@@ -260,6 +274,17 @@ export class SplatHead {
 
   dispose() {
     this.backdrop?.dispose();
+    // The renderer takes its canvas off the page, then starts its viewer's async dispose, which removes the same
+    // canvas from its root again: that throws (removeChild: not a child) before the WebGL renderer is disposed, so
+    // each splat head shown would leak a context. Put the canvas back (hidden) for the viewer to remove itself.
+    const viewer = this.r?.viewer;
+    const canvas = viewer?.renderer?.domElement;
+    const root = viewer?.rootElement;
+    // The viewer's dispose first waits for its last sort, which settles only in a frame the page no longer draws: it
+    // would wait for ever, the old renderer would stay alive, and the next splat head would stall beside it. Ending
+    // the sort worker now settles it, so the dispose runs through.
+    try { viewer?.disposeSortWorker?.(); } catch { /* no worker */ }
     try { this.r.dispose(); } catch { /* already gone */ }
+    if (canvas && root && !canvas.parentNode && !viewer.usingExternalRenderer) root.appendChild(canvas);
   }
 }
