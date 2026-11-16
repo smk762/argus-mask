@@ -983,10 +983,12 @@ def test_the_broadcast_page_sees_the_servers_faces(broadcasting) -> None:
     assert "Broadcast" in c.get("/broadcast.html").text
 
 
-def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
+def test_say_speaks_through_the_tts_into_the_face(broadcasting, capsys) -> None:
+    from structlog.testing import capture_logs  # noqa: PLC0415
+
     from tests.helpers import fake_wyoming  # noqa: PLC0415
 
-    with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _):
+    with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _), capture_logs() as logs:
         body = {
             "face": "stock-01",
             "text": "Hello there, how are you? This is the second sentence.",
@@ -1001,6 +1003,8 @@ def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
     assert "ready" in kinds and "progress" in kinds and kinds[-1] == "done"
     assert [s["text"] for s in seen] == ["Hello there, how are you?", "This is the second sentence."]  # one each
     assert seen[0]["voice"] == {"name": "en_GB-alba", "speaker": "3"}
+    assert any(e.get("event") == "source_connected" for e in logs)  # the logs were captured: the server's are here
+    assert "second sentence" not in capsys.readouterr().out + "".join(map(str, logs))  # the text is never logged
     with fake_wyoming(tone(0.3)) as (tts, seen), broadcasting(tts) as (c, _):
         for tidy, sent in [(True, ["Hi. It is nine thirty."]), (False, ["Hi.", "It is 9:30."])]:
             job = finished(

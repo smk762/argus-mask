@@ -391,10 +391,19 @@ def test_a_screen_with_external_sound_is_ready_without_sound_of_its_own(client) 
 
 @pytest.mark.parametrize(
     "message",
-    ["not json", json.dumps({"type": "status", "display": "cinema"}), json.dumps({"type": "status", "x": "y" * 2000})],
+    [
+        "not json",
+        json.dumps({"type": "status", "display": "cinema"}),
+        json.dumps({"type": "status", "x": "y" * 2000}),  # over 1 KB
+        json.dumps({"type": "say", "text": "hello"}),  # a command: a viewer only reports its state
+        b"\x00" * 512,  # media: never taken from a viewer
+    ],
 )
 def test_a_viewer_saying_anything_else_is_ignored(client, message) -> None:
     with client.websocket_connect("/session/test-head/view") as viewer:
-        viewer.send_text(message)
+        if isinstance(message, bytes):
+            viewer.send_bytes(message)
+        else:
+            viewer.send_text(message)
         viewer.send_text(json.dumps({"type": "status", "audio": True}))  # still heard after the bad one
         assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False, "sound": "local"}])
