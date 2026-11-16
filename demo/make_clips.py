@@ -111,7 +111,7 @@ def encode(wav: Path, out: Path) -> None:
     )
 
 
-async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str) -> None:
+async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str, made: str) -> None:
     out = HERE / "clips" / clip["id"]
     out.mkdir(parents=True, exist_ok=True)
     mono, rate, captions = await speak(spec["tts_url"], clip["voice"], clip["sentences"])
@@ -138,7 +138,7 @@ async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str) -> None:
             **BUILTIN[DEFAULT_SET].model_dump(exclude={"name"}),
         },  # what a screen holds at rest
         "made_with": {
-            "argus_mask": made_by(),
+            "argus_mask": made,
             "driver": header.driver.model_dump(),
             "fps": header.fps,
             "seed": header.seed,
@@ -158,9 +158,13 @@ def main() -> None:
     parser.add_argument("--only", action="append", help="make only this clip (repeatable)")
     args = parser.parse_args()
     spec = json.loads((HERE / "clips.json").read_text(encoding="utf-8"))
+    # The checkout as it is before any clip is written: a clip's own files would make it read as -dirty.
+    made = made_by()
+    if made.endswith("-dirty"):
+        sys.exit(f"the checkout has uncommitted changes ({made}): commit them first, or demo/build.py refuses the clips")
     for clip in spec["clips"]:
         if not args.only or clip["id"] in args.only:
-            asyncio.run(make(spec, clip, args.driver, args.a2f_url))
+            asyncio.run(make(spec, clip, args.driver, args.a2f_url, made))
     index = [c["id"] for c in spec["clips"] if (HERE / "clips" / c["id"] / "clip.json").is_file()]
     (HERE / "clips" / "index.json").write_text(json.dumps(index) + "\n", encoding="utf-8")
 
