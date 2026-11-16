@@ -30,12 +30,15 @@ import uuid
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import structlog
+from argus_cortex.gpu import GpuLeaseRefused, GpuLeaseTimeout, NullCoordinator
 
 from argus_mask import client
 from argus_mask.audio import PcmDecoder
+from argus_mask.gpu import VOICE_MAKE, lease
 from argus_mask.voice import analyse
 
 log = structlog.get_logger(__name__)
@@ -196,8 +199,9 @@ class Generation:
 class Generations:
     """Synthetic candidates: a TTS service reading a script in a voice no one owns."""
 
-    def __init__(self, store: VoiceStore) -> None:
+    def __init__(self, store: VoiceStore, gpu: Any = None) -> None:  # noqa: ANN401 - a cortex GpuCoordinator
         self.store = store
+        self.gpu = gpu if gpu is not None else NullCoordinator()  # the TTS service's GPU: a VOICE_MAKE lease
         self.jobs: dict[str, Generation] = {}
 
     def start(self, tts_url: str, body: dict) -> Generation:
@@ -210,15 +214,17 @@ class Generations:
 
         async def run() -> None:
             try:
-                reply = await asyncio.to_thread(client.open_tts, tts_url, body)
-                # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the app.
-                limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)
-                try:
-                    data = await client._cancellable(
-                        asyncio.to_thread(client._read_capped, reply, limit), cut=reply.cut
-                    )
-                finally:
-                    reply.close()
+                async with lease(self.gpu, VOICE_MAKE, f"argus-mask:voice-candidate:{job.id}"):
+                    reply = await asyncio.to_thread(client.open_tts, tts_url, body)
+                    # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the
+                    # app.
+                    limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)
+                    try:
+                        data = await client._cancellable(
+                            asyncio.to_thread(client._read_capped, reply, limit), cut=reply.cut
+                        )
+                    finally:
+                        reply.close()
                 samples = pcm_to_float(data, reply.fmt)
                 if not len(samples):
                     raise client.ClientError("the TTS service sent no audio")
@@ -230,7 +236,7 @@ class Generations:
                 report = await asyncio.to_thread(analyse, padded, rate, body["text"], generated=True)
                 job.result = {"sha": sha, "transcript": body["text"], "report": report.public()}
                 job.state = "done"
-            except client.ClientError as exc:
+            except (client.ClientError, GpuLeaseRefused, GpuLeaseTimeout) as exc:
                 job.state, job.error = "failed", str(exc)
             except Exception as exc:  # noqa: BLE001 - the page must hear of it
                 job.state, job.error = "failed", f"{type(exc).__name__}: {exc}"
