@@ -52,7 +52,7 @@ overrides.patch()
 left = overrides.verify()
 if left:
     sys.exit("LAM's own FLAME code is still in use: " + ", ".join(left))
-print("FLAME core: argus-mask's; FLAME model: 2023 Open; painted texture: grey")
+print("FLAME core: argus-mask's; FLAME model: 2023 Open; painted texture: grey; vertex masks: placeholders")
 
 image_in = os.environ.get("IMG", "/work/portrait.png")
 motion = os.environ.get("MOTION", "Look_In_My_Eyes")

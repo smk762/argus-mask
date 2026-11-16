@@ -14,10 +14,13 @@ It is not part of the `argus-mask` Python package, it is not linted or tested by
 | FLAME's academic models (2017 to 2023) | research only, not to be made available | **replaced** by FLAME 2023 Open (CC BY 4.0) |
 | FLAME's skinning code in LAM and VHAP (`lbs.py`, and its copies in `FlameHeadSubdivided`) | Max-Planck proprietary notice | **replaced** by `flame_core.py` (MIT, ours) |
 | FLAME's painted mean texture (`tex_mean_painted.png`) | FLAME texture space, non-commercial | **replaced** by a flat grey (it is loaded but never fitted to) |
-| `FLAME_masks.pkl`, `landmark_embedding_with_eyes.npy` | MPI downloads, research only | **still used, offline**: to be rebuilt on the Open mesh (#126) |
+| FLAME's vertex masks (`FLAME_masks.pkl`) | MPI download, research only | **replaced** by placeholders (they feed only photometric tracking, which is off) |
+| FLAME's landmark embedding (`landmark_embedding_with_eyes.npy`) | MPI research data (via DECA/VHAP) | **still used, offline**: the tracker fits FLAME through it (#126) |
+| The tracker's helper models: STAR landmarks (`68_keypoints_model.pkl`), StyleMatte matting | no licence; STAR trained on 300W (research only) | **still used, offline** (#126) |
+| The tracker's VGGHeads and FaceBoxesV2 detectors | MIT code; weights not yet checked | used |
 
 - `flame_core.py` is FLAME's maths written from the paper: blendshapes, pose correctives, a five-joint chain and linear blend skinning. It has the function names and signatures LAM calls. Checked against LAM's originals on random inputs in float64, it agrees to 1e-15.
-- `overrides.py` registers `flame_core` under the names of LAM's and VHAP's skinning modules before LAM is imported. It then points the remaining helpers and `FlameHeadSubdivided`'s posing and skinning at it, and swaps the painted texture for grey. The LAM checkout is never edited.
+- `overrides.py` registers `flame_core` under the names of LAM's and VHAP's skinning modules before LAM is imported. It then points the remaining helpers and `FlameHeadSubdivided`'s posing and skinning at it. It swaps the painted texture for grey and FLAME's vertex masks for placeholders, and refuses photometric tracking, the only stage that would read either. A head built with unreadable mask files is byte-identical to one built with the real ones. The LAM checkout is never edited.
 - `make_head.py` stops before doing any work if the FLAME file is not FLAME 2023 Open (by sha256), or if `overrides.verify()` finds any LAM FLAME function still in use.
 
 FLAME 2023 Open is the academic FLAME 2023 with new expression components (from SUPR). The template, faces, skinning weights, joints, pose correctives and identity shape space are identical. A head made with it looks the same as one made with the academic model ([#126](https://github.com/smk762/argus-mask/issues/126)). Its licence bars pornographic use and "fake, libelous, misleading or defamatory content": keep mask's disclosure label on, and feed it SFW portraits only.

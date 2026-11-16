@@ -76,13 +76,56 @@ def _grey_texture():
     return GreyTexture
 
 
+# FLAME's vertex masks (`FLAME_masks.pkl`, an MPI research-only download) name 14 regions. LAM's own regions (lip
+# rings, teeth) are its hard-coded vertex lists, and the MPI regions feed only photometric tracking, which LAM leaves
+# off: with every region a single vertex the head is byte-identical (#126). So no file is read; each region is a
+# placeholder, and `check_photometric_off` refuses a configuration where they would matter.
+MASK_REGIONS = (
+    "face",
+    "neck",
+    "scalp",
+    "boundary",
+    "right_eyeball",
+    "left_eyeball",
+    "right_ear",
+    "left_ear",
+    "forehead",
+    "eye_region",
+    "nose",
+    "lips",
+    "right_eye_region",
+    "left_eye_region",
+)
+TRACKING_CONFIG = "configs/vhap_tracking/base_tracking_config.yaml"
+
+
+def _placeholder_regions(self, flame_parts_path=None):
+    import torch
+
+    self.v = sys.modules[type(self).__module__].BufferContainer()
+    for region in MASK_REGIONS:
+        self.v.register_buffer(region, torch.zeros(1, dtype=torch.long))
+    self.create_custom_mask()
+
+
+def check_photometric_off(config_path: str = TRACKING_CONFIG) -> None:
+    """Refuse photometric tracking: it is what reads the painted texture and the MPI regions we replace."""
+    from pathlib import Path
+
+    text = Path(config_path).read_text()
+    if "photometric: false" not in text or "photometric: true" in text:
+        raise RuntimeError(f"{config_path}: photometric tracking must be off (the texture and masks are placeholders)")
+
+
 def patch() -> None:
     install()
+    check_photometric_off()
     grey = _grey_texture()
     for name in TEXTURE_USERS:
         importlib.import_module(name).FlameTexPainted = grey
     for name in FLAME_MODULES:
         module = importlib.import_module(name)
+        module.FlameMask.process_vertex_mask = _placeholder_regions
         for helper in HELPERS:
             setattr(module, helper, getattr(flame_core, helper))
         for fn in LBS_NAMES:
@@ -107,6 +150,8 @@ def verify() -> list[str]:
         module = sys.modules.get(name)
         if module is None:
             continue
+        if module.FlameMask.process_vertex_mask is not _placeholder_regions:
+            left.append(f"{name}.FlameMask.process_vertex_mask")
         left += [f"{name}.{h}" for h in HELPERS if getattr(module, h) is not getattr(flame_core, h)]
         left += [
             f"{name}.{f}" for f in LBS_NAMES if hasattr(module, f) and getattr(module, f) is not getattr(flame_core, f)
