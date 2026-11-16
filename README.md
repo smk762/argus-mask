@@ -50,7 +50,7 @@ argus-mask plate generate assets/backgrounds/highland-forest --title "Highland p
 - **Callum MacRae**, a Highland man of about 25, red-bearded, with optional blue woad: SDXL photoreal portrait, LAM head, Highland forest backdrop.
 - **Nadia Volkova**, a blonde operative of about 25 in a black tactical jacket: SDXL photoreal portrait, LAM head, bunker backdrop.
 
-They have no pictures here: a LAM head is never cleared (LAM's weights are CC BY-NC 4.0 and FLAME is non-commercial), so splat heads stay on your own screens. See [Personal and cleared](#personal-and-cleared).
+A splat head made by `lam/` (FLAME 2023 Open, and our own FLAME code and tracker front end) from a cleared portrait can be cleared, as `splat-01` on the hosted demo is; LAM's weights are CC BY-NC 4.0, so it is credited and never commercial. One made with LAM's own pipeline (FLAME's academic model) stays `personal`. See [Personal and cleared](#personal-and-cleared).
 
 ## Quick start
 
@@ -149,7 +149,7 @@ A **splat head** is a [LAM](https://github.com/aigc3d/LAM) (Large Avatar Model) 
   ```
 
   The manifest gets `format: lam-splat` and the splat framing: LAM's heads stand at about 1.65 m, so the camera aims at `--height 1.65` from `--distance 0.7`, a tenth of the distance above its aim, with a 50 degree `--fov`.
-- **Licences: personal, never cleared.** LAM's code is Apache-2.0, but its weights are CC BY-NC 4.0 and FLAME's model is for non-commercial research. A head made with them is `personal` (whatever the portrait) until those licences change: it may be on your own screens, and in nothing published, shared or commercial. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
+- **Licences.** LAM's code is Apache-2.0 and its weights CC BY-NC 4.0: credit them wherever a head is shown, and never use one commercially. A head made with LAM's own pipeline uses FLAME's academic model (non-commercial research only) and is `personal`: your own screens, nothing published or shared. `lam/` replaces every research-only part (FLAME 2023 Open, CC BY 4.0; our FLAME code, landmark embedding and tracker front end; licences per part in `lam/README.md`), so a head it makes from a cleared portrait can be `synthetic` and shown, credited, like `splat-01` on the demo. The renderer ([Myned AI's gsplat-flame-avatar-renderer](https://github.com/myned-ai/gsplat-flame-avatar-renderer) 1.4.0) and JSZip are MIT and vendored under `viewer/vendor/` with their licences.
 - **On screens:** `display=flat` only (`hld` says it is not supported yet). `?bg=` works as for a mesh (not `transparent`); `?jaw=` moves the jaw cap's knee (default 0.35: past it, `jawOpen` and the lower lip open at 0.35 of the rate, since the inside of a splat mouth is weak; `?jaw=1` turns it off). The head turns through the rig's neck and head bones; LAM's own animation clips never play, so mask is the only thing that moves the face and a screen shows what a recording does. It needs no cross-origin isolation: it renders on a plain-http LAN page (checked in headless Chromium, GPU and software; check a real screen before relying on it). `window.__mask.renderer` says `splat` or `mesh`.
 - **Recording:** `argus-mask record` and the Broadcast page record a splat face as they do a mesh: each frame is posed, depth-sorted for the camera and drawn before its screenshot, so a frame rendered twice is byte-identical.
 
