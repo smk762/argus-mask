@@ -46,12 +46,14 @@ def fake_darkroom(
     depth: bytes | None = None,
     depth_sha: str | None = None,
     expand: bool = False,
+    depth_busy: int = 0,
+    busy_detail: str = "a generation is already running",
 ) -> Iterator[tuple[str, list[str]]]:
     """argus-darkroom's generation, image and depth routes, as mask uses them. Yields (url, calls)."""
     picture = image if image is not None else png()
     depth_png = depth if depth is not None else png(grey=True, shade=200)
     calls: list[str] = []
-    state = {"busy": busy, "record": None}
+    state = {"busy": busy, "depth_busy": depth_busy, "record": None}
     app = FastAPI()
 
     @app.post("/generate/stream")
@@ -59,7 +61,7 @@ def fake_darkroom(
         calls.append("generate")
         if state["busy"]:
             state["busy"] -= 1
-            return JSONResponse({"detail": "a generation is already running"}, status_code=409)
+            return JSONResponse({"detail": busy_detail}, status_code=409)
         body = await request.json()
         record = {
             "id": "rec1",
@@ -94,6 +96,9 @@ def fake_darkroom(
     @app.post("/depth/{rid}")
     def make_depth(rid: str):
         calls.append(f"make_depth {rid}")
+        if state["depth_busy"]:
+            state["depth_busy"] -= 1
+            return JSONResponse({"detail": busy_detail}, status_code=409)
         return {
             "model": "depth-anything-v2-small",
             "model_license": "Apache-2.0",
@@ -191,6 +196,20 @@ def test_a_busy_darkroom_is_waited_for(tmp_path: Path) -> None:
     with fake_darkroom(busy=2) as (url, calls):
         make(url, tmp_path / "garden")
     assert calls[:3] == ["generate"] * 3
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "a generation is already running",  # darkroom one at a time
+        "8 generations are already queued or running",  # darkroom behind the argus-iris GPU broker, queue full
+    ],
+)
+def test_a_busy_darkroom_is_waited_for_on_both_routes(tmp_path: Path, detail: str) -> None:
+    with fake_darkroom(busy=1, depth_busy=1, busy_detail=detail) as (url, calls):
+        plate = make(url, tmp_path / "garden")
+    assert plate.depth is not None
+    assert calls == ["generate", "generate", "image rec1", "make_depth rec1", "make_depth rec1", "depth rec1"]
 
 
 def test_depth_can_be_added_later(tmp_path: Path) -> None:
