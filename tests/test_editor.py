@@ -1291,6 +1291,13 @@ def test_a_face_keeps_its_backdrop_through_rename_and_loses_it_on_delete(client,
     assert client.get("/scenes/faces").json() == {}
 
 
+def test_a_face_id_with_a_trailing_newline_is_refused(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    assert client.put("/scenes/faces/my-face%0A", json={"scene": "garden"}).status_code == 404
+    assert client.get("/scenes/faces").json() == {}
+
+
 def test_the_editor_serves_what_a_preview_needs_for_a_backdrop(client) -> None:
     assert client.get("/backdrop.js").status_code == 200
     assert client.get("/scenes/plate.js").status_code == 200

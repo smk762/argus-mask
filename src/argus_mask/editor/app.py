@@ -532,7 +532,7 @@ def create_editor_app(
     @app.put("/scenes/faces/{face_id}")
     def scene_choose(face_id: str, choice: SceneChoice) -> dict:
         """Which backdrop a face shows when a screen does not ask for one. Screens pick it up on their next load."""
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             scene_choices.choose(face_id, choice.scene)
@@ -558,7 +558,7 @@ def create_editor_app(
     @app.put("/expressions/faces/{face_id}")
     def expression_choose(face_id: str, choice: RestChoice) -> dict:
         """Which rest set a face shows. Screens pick it up when they next load the face."""
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             expressions.choose(face_id, choice.set)
@@ -608,7 +608,7 @@ def create_editor_app(
 
     @app.delete("/aliases/{name}")
     def alias_remove(name: str) -> dict:
-        if not _FACE_ID.match(name) or not aliases.remove(name):
+        if not _FACE_ID.fullmatch(name) or not aliases.remove(name):
             raise HTTPException(404, f"no alias {name!r}")
         log.info("alias_removed", alias=name)
         return {"removed": name}
@@ -636,7 +636,7 @@ def create_editor_app(
 
     @app.get("/screen/{face_id}")
     async def screen(face_id: str) -> dict:
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"{face_id!r} is not a face id")
         target = aliases.resolve(face_id)
         try:
@@ -1019,7 +1019,7 @@ def create_editor_app(
             return []
         clips = []
         for p in root.iterdir():
-            if p.suffix in (".mp4", ".webm") and _RECORDING.match(p.name):
+            if p.suffix in (".mp4", ".webm") and _RECORDING.fullmatch(p.name):
                 with contextlib.suppress(OSError):  # gone, or not a file, between the listing and the look
                     if p.is_file():
                         clips.append((p.name, p.stat()))
@@ -1030,7 +1030,7 @@ def create_editor_app(
     def recording(name: str) -> FileResponse:
         """One recorded file: a plain name in the recordings directory, nothing else."""
         path = ed.recordings_dir / name
-        if not _RECORDING.match(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
+        if not _RECORDING.fullmatch(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
             raise HTTPException(404, "no such recording")
         return FileResponse(path, filename=name)
 

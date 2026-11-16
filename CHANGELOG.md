@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Id and name checks match the whole string** (argus-cortex's `fullmatch` codemod, ai-code-auditor#56). With
+  `re.match`, an anchored check like `^[a-z0-9][a-z0-9_-]{0,63}$` also accepted the value followed by a newline,
+  because `$` matches before a final `\n`. Face ids, pack ids, cache keys, recording names, library asset names, LAM
+  head folders, expression names and `scripts/fetch_stock_head.py`'s face id now use `fullmatch`, so `"stock-01\n"`
+  is refused like any other bad id.
 - **A plate's depth map waits for a busy darkroom behind the GPU broker.** With the argus-iris broker
   (argus-darkroom#53), darkroom answers a full queue with `409 ... already queued or running`, not `already running`.
   `POST /depth/{id}` retried only the second, so a depth map failed the plate instead of waiting. Both are retried now;

@@ -125,7 +125,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
         return {}
     packs: dict[str, Pack] = {}
     for raw in doc.get("packs", []) if isinstance(doc, dict) else []:
-        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.match(raw["id"]):
+        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.fullmatch(raw["id"]):
             continue
         urls = tuple(
             u

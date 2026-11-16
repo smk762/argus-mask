@@ -42,7 +42,7 @@ class FetchError(RuntimeError):
 
 
 def read_lock(face_id: str, lock_dir: Path = LOCK_DIR) -> dict:
-    if not _ID.match(face_id):
+    if not _ID.fullmatch(face_id):
         raise FetchError(f"{face_id!r} is not a face id")
     path = lock_dir / f"{face_id}.lock.json"
     if not path.is_file():

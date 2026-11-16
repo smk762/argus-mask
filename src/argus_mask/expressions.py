@@ -98,7 +98,7 @@ class ExpressionError(ValueError):
 
 def check_set(name: str, weights: object, life: object = 1.0) -> RestSet:
     """A rest set from untrusted input, or `ExpressionError` saying what is wrong with it."""
-    if not _NAME.match(name):
+    if not _NAME.fullmatch(name):
         raise ExpressionError(f"{name!r} is not a usable name (lowercase letters, digits, - and _)")
     if not isinstance(weights, dict):
         raise ExpressionError("weights must be an object: shape name -> weight")
