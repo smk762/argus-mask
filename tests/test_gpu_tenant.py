@@ -117,14 +117,13 @@ def test_a_live_a2f_stream_holds_a_realtime_lease_for_its_length(tmp_path) -> No
     rec = Recording()
     with fake_a2f() as url:
         app = create_app(Settings(assets_dir=tmp_path, driver="a2f", a2f_url=url), gpu=rec)
-        with TestClient(app) as client:
-            with client.websocket_connect("/session/test-head/source") as source:
-                source.send_text(HELLO)
-                assert source.receive_json()["type"] == "ready"
-                source.send_bytes(tone(0.5, 16000).astype("<f4").tobytes())
-                assert [e for e, _ in rec.events] == ["ask", "granted"]  # held while the stream runs
-                source.send_text(json.dumps({"type": "end"}))
-                assert source.receive_json()["type"] == "done"
+        with TestClient(app) as client, client.websocket_connect("/session/test-head/source") as source:
+            source.send_text(HELLO)
+            assert source.receive_json()["type"] == "ready"
+            source.send_bytes(tone(0.5, 16000).astype("<f4").tobytes())
+            assert [e for e, _ in rec.events] == ["ask", "granted"]  # held while the stream runs
+            source.send_text(json.dumps({"type": "end"}))
+            assert source.receive_json()["type"] == "done"
     asked = rec.events[0][1]
     assert (asked["kind"], asked["priority"], asked["preemptible"]) == ("a2f-live", "realtime", False)
     assert asked["caller"] == "argus-mask:test-head"
