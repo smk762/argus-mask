@@ -73,7 +73,7 @@
       "kind": "synthetic",
       "source": "A LAM Gaussian head (argus-mask lam/, #126) from a synthetic portrait: argus-darkroom record 7359c3c507d543c4bf67c67d2cdde7fd, FLUX.1 schnell, seed 102, 896x1152, 4 steps, SFW policy, no LoRA, no prompt expansion",
       "license": "CC BY-NC 4.0 (made with LAM's lam-20k weights, CC BY-NC 4.0; portrait from FLUX.1 schnell, Apache-2.0)",
-      "notes": "A generated character, not a real person. No real-person inputs: text prompt only, no image input, no LoRA. Head built with LAM (aigc3d/LAM, Apache-2.0 code, lam-20k weights CC BY-NC 4.0) on FLAME 2023 Open (CC BY 4.0, Li et al. 2017), argus-mask's FLAME core and landmark embedding, MediaPipe Face Mesh landmarks (Apache-2.0), BiRefNet-portrait matte (MIT) and VGGHeads crop (MIT code, CC BY-NC 4.0 weights). Look-alike check: pending.",
+      "notes": "A generated character, not a real person. No real-person inputs: text prompt only, no image input, no LoRA. Head built with LAM (aigc3d/LAM, Apache-2.0 code, lam-20k weights CC BY-NC 4.0) on FLAME 2023 Open (CC BY 4.0, Li et al. 2017), argus-mask's FLAME core and landmark embedding, MediaPipe Face Mesh landmarks (Apache-2.0), BiRefNet-portrait matte (MIT) and VGGHeads crop (MIT code, CC BY-NC 4.0 weights). Look-alike check: 2026-11-16, Bing visual search of source/portrait.png and a look, by the maintainer: similar studio-style portraits of different people, no match; Bing's suggested label (a tensor.art model page) shows a different face.",
       "subject": "",
       "release_sha256": null,
       "generator": {
