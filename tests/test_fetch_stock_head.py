@@ -226,3 +226,18 @@ def test_a_splat_lock_must_name_a_zip(tmp_path, monkeypatch) -> None:
     locks, _ = _splat_lock(tmp_path, monkeypatch, file="splat-test.glb")
     with pytest.raises(fetch_stock_head.FetchError, match=r"plain \.zip name"):
         fetch_stock_head.read_lock("splat-test", locks)
+
+
+def test_a_fetched_head_gets_the_usual_file_mode_not_mkstemps(tmp_path, published) -> None:
+    """mkstemp makes the download 0600; another user (a service, a container) must still read the head."""
+    import os  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+
+    locks, _ = published
+    old = os.umask(0o022)
+    try:
+        directory, _ = fetch_stock_head.fetch("stock-test", tmp_path / "assets", lock_dir=locks)
+    finally:
+        os.umask(old)
+    model = next(directory.glob("*.glb"))
+    assert stat.S_IMODE(model.stat().st_mode) == 0o644
