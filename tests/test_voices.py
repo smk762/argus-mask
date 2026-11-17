@@ -95,3 +95,28 @@ async def test_a_stopped_generation_does_not_block_the_next(tmp_path: Path, monk
         await gens.stop_all()
     finally:
         release.set()
+
+
+async def test_a_reply_opened_after_its_generation_was_stopped_is_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, reached, closed = threading.Event(), threading.Event(), threading.Event()
+
+    class Reply:
+        def close(self) -> None:
+            closed.set()
+
+    def slow_open(url: str, body: dict) -> Reply:
+        reached.set()
+        release.wait(5)  # still connecting when the generation is stopped
+        return Reply()
+
+    monkeypatch.setattr(voices.client, "open_tts", slow_open)
+    gens = Generations(VoiceStore(tmp_path / "voices"))
+    try:
+        gens.start("http://tts", {"text": "hi"})
+        await asyncio.to_thread(reached.wait, 5)
+        await gens.stop_all()
+    finally:
+        release.set()  # the open completes after the stop
+    assert await asyncio.to_thread(closed.wait, 5), "the reply opened after the stop was never closed"

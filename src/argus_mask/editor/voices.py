@@ -231,7 +231,8 @@ class Generations:
         async def run() -> None:
             try:
                 async with lease(self.gpu, VOICE_MAKE, f"argus-mask:voice-candidate:{job.id}"):
-                    reply = await asyncio.to_thread(client.open_tts, tts_url, body)
+                    # cancelled while the reply is still opening, the reply is closed when it arrives, not leaked
+                    reply = await client._open_tts_cancellable(tts_url, body)
                     # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the
                     # app.
                     limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)

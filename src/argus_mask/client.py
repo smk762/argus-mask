@@ -490,7 +490,7 @@ def _http_voices(tts_url: str) -> list[dict] | None:
             with urllib.request.urlopen(base + path, timeout=VOICES_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only
                 body = json.loads(reply.read())
                 return body if isinstance(body, dict) else None
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):  # a garbled reply is no answer, not a crash
             return None
 
     speakers, clones = get("/speakers"), get("/clones")

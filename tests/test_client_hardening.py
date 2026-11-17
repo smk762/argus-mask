@@ -185,3 +185,24 @@ def test_a_reply_opened_after_its_utterance_was_cancelled_is_closed(monkeypatch:
 
     asyncio.run(main())
     assert closed.wait(5), "the reply opened after the cancel was never closed"
+
+
+def test_a_garbled_http_voices_reply_is_no_answer_not_a_crash() -> None:
+    listener = socket.create_server(("127.0.0.1", 0))
+    listener.settimeout(5)
+
+    def serve() -> None:
+        for _ in range(2):  # /speakers, then /clones
+            with contextlib.suppress(OSError):
+                conn, _ = listener.accept()
+                with conn:
+                    conn.recv(65536)
+                    conn.sendall(b"not http at all\r\n\r\n")
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        assert client._http_voices(f"http://127.0.0.1:{listener.getsockname()[1]}/synthesise") is None
+    finally:
+        listener.close()
+        thread.join(5)

@@ -117,7 +117,9 @@ class Broadcasts:
 
         async def with_recording(job: Job) -> dict:
             listening = asyncio.Event()
-            name = f"{face}-{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.mp4"  # the job's id: two in one second never share
+            name = (
+                f"{face}-{time.strftime('%Y%m%d-%H%M%S')}-{job.id}.mp4"  # the job's id: two in one second never share
+            )
             last = -1
 
             def on_wait() -> None:

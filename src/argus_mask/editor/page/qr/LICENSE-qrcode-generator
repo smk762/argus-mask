@@ -1,4 +1,6 @@
-qrcode.js is qrcode-generator 1.4.4 (https://www.npmjs.com/package/qrcode-generator), unchanged.
+qrcode.js is qrcode-generator 1.4.4 (https://www.npmjs.com/package/qrcode-generator) with one change: renderTo2dContext
+draws column by x and row by y (upstream has them swapped, so its canvas output is transposed). The line is marked
+"argus-mask:".
 
 The MIT License
 
