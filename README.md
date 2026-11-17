@@ -244,7 +244,7 @@ The server speaks plain HTTP and WebSocket, and binds localhost by default. To p
 2. Proxy to it with TLS. Caddy forwards WebSocket upgrades without extra configuration.
 3. Name the proxy's origin in `ARGUS_MASK_CORS_ORIGINS`, for example `https://mask.example.org`.
 
-Both sockets, and every write, refuse a browser whose `Origin` is not in that list, unless the page came from the server's own host and that host is an IP address, `localhost`, or a name in `ARGUS_MASK_TRUSTED_HOSTS`. A screen opened at `http://morpheus:8109` needs `ARGUS_MASK_TRUSTED_HOSTS=morpheus`: a name is not trusted on its own, because under DNS rebinding another site's page sends its own name as both `Origin` and `Host`. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
+Both sockets, and every write, refuse a browser whose `Origin` is not in that list, unless the page came from the server's own host and that host is an IP address, `localhost`, or a name in `ARGUS_MASK_TRUSTED_HOSTS`. A screen opened at `http://<LAN_HOST>:8109` needs `ARGUS_MASK_TRUSTED_HOSTS=<LAN_HOST>`: a name is not trusted on its own, because under DNS rebinding another site's page sends its own name as both `Origin` and `Host`. Clients that send no `Origin`, such as the CLI, are allowed. There is no authentication: reaching the port is access.
 
 ### Face editor
 
