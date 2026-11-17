@@ -41,14 +41,23 @@ class Head:
 
 def _glb(path: Path) -> tuple[dict, bytes]:
     data = path.read_bytes()
-    magic, _version, _length = struct.unpack_from("<III", data, 0)
-    if magic != 0x46546C67:
+    if len(data) < 20 or struct.unpack_from("<I", data, 0)[0] != 0x46546C67:
         raise ValueError(f"{path}: not a .glb")
     n, kind = struct.unpack_from("<II", data, 12)
     if kind != 0x4E4F534A:
         raise ValueError(f"{path}: first chunk is not JSON")
+    if 20 + n > len(data):
+        raise ValueError(f"{path}: truncated JSON chunk")
     gltf = json.loads(data[20 : 20 + n])
-    m, _ = struct.unpack_from("<II", data, 20 + n)
+    if len(data) == 20 + n:  # the BIN chunk is optional
+        return gltf, b""
+    if len(data) < 28 + n:
+        raise ValueError(f"{path}: truncated chunk header after the JSON")
+    m, kind = struct.unpack_from("<II", data, 20 + n)
+    if kind != 0x004E4942:
+        raise ValueError(f"{path}: second chunk is not BIN")
+    if 28 + n + m > len(data):
+        raise ValueError(f"{path}: truncated BIN chunk")
     return gltf, data[28 + n : 28 + n + m]
 
 
@@ -108,6 +117,9 @@ def load(path: Path, blendshapes: list[str]) -> Head:
         node = gltf["nodes"][i]
         if any(k in node for k in ("translation", "rotation", "scale", "matrix")):
             raise ValueError(f"{path}: node {node.get('name')!r} has a transform; the bake expects identity nodes")
+    part_names = [node.get("name") for node in gltf["nodes"] if "mesh" in node]
+    if len(set(part_names)) != len(part_names):
+        raise ValueError(f"{path}: mesh node names repeat; each part needs its own name")
     names, offsets, counts, rests, uvs, tris, parts, deltas, textures = [], [], [], [], [], [], [], [], {}
     base = 0
     for node in gltf["nodes"]:
@@ -117,6 +129,8 @@ def load(path: Path, blendshapes: list[str]) -> Head:
         if len(mesh["primitives"]) != 1:
             raise ValueError(f"{path}: {mesh['name']} has {len(mesh['primitives'])} primitives; expected one")
         prim = mesh["primitives"][0]
+        if prim.get("mode", 4) != 4:
+            raise ValueError(f"{path}: {mesh.get('name')} has primitive mode {prim['mode']}; expected triangles (4)")
         pos = _accessor(gltf, blob, prim["attributes"]["POSITION"]).astype(np.float32)
         uv = _accessor(gltf, blob, prim["attributes"]["TEXCOORD_0"]).astype(np.float32)
         idx = _accessor(gltf, blob, prim["indices"]).reshape(-1, 3).astype(np.int64)
