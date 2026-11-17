@@ -111,6 +111,9 @@ def load_preset(path: str) -> dict:
     for key in PHENOTYPE_KEYS:
         if not 0.0 <= phenotype[key] <= 1.0:
             raise RecipeError(f"{path}: phenotype.{key} must be between 0 and 1")
+    for key in RACE_KEYS:
+        if not 0.0 <= race[key] <= 1.0:
+            raise RecipeError(f"{path}: phenotype.race.{key} must be between 0 and 1")
     age = float(phenotype["age"])
     if age < ADULT_AGE:
         raise RecipeError(
@@ -353,7 +356,7 @@ def lower_upper_teeth(teeth, drop_m: float) -> dict:
 def scale_shapes(objects, factors: dict[str, float]) -> None:
     """Exaggerate (or soften) named face shapes on every mesh that carries them."""
     for obj in objects:
-        if not obj.data.shape_keys:
+        if obj.type != "MESH" or not obj.data.shape_keys:
             continue
         basis = key_coords(obj)
         for name, factor in factors.items():
@@ -387,6 +390,11 @@ def shade_mouth(head, teeth, tongue, floor: float) -> dict:
     box = (np.abs(base[:, 0]) < 0.034) & (base[:, 2] < -0.040) & (base[:, 2] > -0.110) & (base[:, 1] < 0.03)
     # The lips themselves: a narrow band on the centre line, below the nose and above the chin's bulge.
     lips = (np.abs(base[:, 0]) < 0.012) & (base[:, 2] < -0.060) & (base[:, 2] > -0.085)
+    if not lips.any():
+        raise RecipeError(
+            "mouth.cavity_shade: no head vertex where the lips should be (|x| < 12 mm, z from -85 to -60 mm "
+            "below the eyes): is the head centred and at MakeHuman's scale?"
+        )
     lip_front = float(base[lips][:, 1].min())
     tree = BVHTree.FromPolygons([tuple(v) for v in base.tolist()], [tuple(p.vertices) for p in head.data.polygons])
     # Straight ahead, and a little up, down and to each side: a vertex seen through the gap
@@ -671,6 +679,8 @@ def is_opaque(image) -> bool:
     """Whether every pixel's alpha is (near enough) 1."""
     if image.channels < 4:
         return True
+    if not image.size[0] * image.size[1]:
+        return True  # no pixels (an image Blender could not load): nothing to keep the alpha of
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
     image.pixels.foreach_get(pixels)
     return bool(pixels[3 :: image.channels].min() > 0.995)
@@ -790,6 +800,18 @@ def patch_glb(path: str, blended: set[str]) -> dict:
     return doc
 
 
+def clear_scene() -> None:
+    """Remove every object, and the data and materials only they used: a mesh or material left in ``bpy.data``
+    keeps its name, so a later one given the same name (``head``, ``rig``) would get a ``.001`` suffix."""
+    data = {obj.data for obj in bpy.data.objects if obj.data is not None}
+    materials = {m for block in data for m in (getattr(block, "materials", None) or ()) if m is not None}
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    # Data first, so the materials it held lose those users; anything something else still uses is kept.
+    for blocks in (data, materials):
+        bpy.data.batch_remove([b for b in blocks if b.users == 0])
+
+
 def build(preset: dict, out: str, framing: str = "head") -> dict:
     mpfb = find_mpfb()
     services = importlib.import_module(mpfb.__name__ + ".services")
@@ -802,8 +824,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     if not faces.is_faceunits01_installed(force_recheck=True):
         raise RecipeError("MPFB's faceunits01 asset pack is not installed: it holds the ARKit face shapes")
 
-    for obj in list(bpy.data.objects):
-        bpy.data.objects.remove(obj, do_unlink=True)
+    clear_scene()
 
     phenotype = {k: float(preset["phenotype"][k]) for k in PHENOTYPE_KEYS}
     phenotype["race"] = {k: float(preset["phenotype"]["race"][k]) for k in RACE_KEYS}
@@ -1228,9 +1249,9 @@ def hide_covered_skin(basemesh, garments, below_z: float) -> int:
         if hit(vert.co, normal, COVER_OUT_M) or hit(vert.co, -normal, COVER_IN_M):
             covered.add(vert.index)
     gone = [face for face in skin.faces if all(v.index in covered for v in face.verts)]
-    bmesh.ops.delete(skin, geom=gone, context="FACES_ONLY")
-    loose = [v for v in skin.verts if not v.link_faces]
-    bmesh.ops.delete(skin, geom=loose, context="VERTS")
+    # The faces, and the edges and vertices only they used: no wire edges left at the hole, and loose geometry
+    # that was there before is not this function's to remove.
+    bmesh.ops.delete(skin, geom=gone, context="FACES")
     skin.to_mesh(basemesh.data)
     skin.free()
     basemesh.data.update()
