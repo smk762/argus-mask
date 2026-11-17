@@ -8,6 +8,7 @@ import io
 import json
 import stat
 import time
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from argus_mask.editor.packs import Installs, PackError, download, load_catalogu
 
 URL = "https://files.makehumancommunity.org/asset_packs/hair09/hair09_cc0.zip"
 MIRROR = "https://files2.makehumancommunity.org/asset_packs/hair09/hair09_cc0.zip"
+COMMUNITY = {"files.makehumancommunity.org", "files2.makehumancommunity.org"}  # spelled out, not packs.HOSTS
 
 
 def pack_zip(pack: str = "hair09", extra: dict[str, bytes] | None = None, index: bool = True) -> bytes:
@@ -93,10 +95,31 @@ def files_under(d: Path) -> set[str]:
 
 def test_the_shipped_catalogue_loads_and_points_only_at_the_community_hosts() -> None:
     catalogue = load_catalogue()
+    assert "suits02" in catalogue  # filled by scripts/make_asset_catalogue.py
     for pack in catalogue.values():
-        assert all(u.startswith("https://files") for u in pack.urls)
-    if catalogue:  # filled by scripts/make_asset_catalogue.py
-        assert "suits02" in catalogue
+        assert pack.urls, pack.id
+        for url in pack.urls:
+            parts = urllib.parse.urlsplit(url)
+            assert parts.scheme == "https" and parts.hostname in COMMUNITY, url
+            assert parts.netloc == parts.hostname, url  # no userinfo or port
+
+
+def test_a_malformed_catalogue_field_drops_its_entry_not_the_catalogue(tmp_path: Path) -> None:
+    data = pack_zip()
+    good = json.loads(write_catalogue(tmp_path / "c.json", data).read_text())["packs"][0]
+    bad = [
+        good | {"id": "nums", "urls": 5},
+        good | {"id": "text", "urls": URL},  # a string, not a list of them
+        good | {"id": "bracket", "urls": ["https://[abc", "https://[::1/x.zip"]},
+    ]
+    doc = {"packs": [*bad, good | {"id": "noassets", "assets": 5}, good]}
+    (tmp_path / "c.json").write_text(json.dumps(doc), encoding="utf-8")
+    catalogue = load_catalogue(tmp_path / "c.json")
+    assert set(catalogue) == {"hair09", "noassets"}
+    assert catalogue["noassets"].assets == () and catalogue["hair09"].urls == (URL, MIRROR)
+    for packs in (1, "hair09", {"id": "hair09"}):
+        (tmp_path / "c.json").write_text(json.dumps({"packs": packs}), encoding="utf-8")
+        assert load_catalogue(tmp_path / "c.json") == {}
 
 
 def test_a_catalogue_entry_pointing_anywhere_else_is_dropped(tmp_path: Path) -> None:
@@ -225,6 +248,48 @@ def test_an_installed_file_is_never_replaced(tmp_path: Path, data_dir: Path) -> 
         unpack(zip_file(tmp_path, pack_zip()), data_dir, "hair09")
     assert mine.read_bytes() == b"my own material\n"
     assert files_under(data_dir) == {"hair/neat_bun/neat_bun.mhmat"}
+
+
+@pytest.mark.parametrize("linked", ["file", "directory"])
+def test_an_installed_link_is_never_written_through(tmp_path: Path, data_dir: Path, linked: str) -> None:
+    # The link's destination is inside the data directory and holds the same bytes: still refused.
+    real = data_dir / "elsewhere" / "neat_bun"
+    real.mkdir(parents=True)
+    (real / "neat_bun.mhmat").write_bytes(b"name neat_bun\n")
+    (data_dir / "hair").mkdir()
+    if linked == "file":
+        (data_dir / "hair" / "neat_bun").mkdir()
+        (data_dir / "hair" / "neat_bun" / "neat_bun.mhmat").symlink_to(real / "neat_bun.mhmat")
+    else:
+        (data_dir / "hair" / "neat_bun").symlink_to(real, target_is_directory=True)
+    before = files_under(data_dir)
+    with pytest.raises(PackError, match="link"):
+        unpack(zip_file(tmp_path, pack_zip()), data_dir, "hair09")
+    assert files_under(data_dir) == before and set(p.name for p in real.iterdir()) == {"neat_bun.mhmat"}
+
+
+def test_a_file_that_appears_mid_move_is_never_replaced(
+    tmp_path: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another writer puts a file at a target after the check that it is free and before the move.
+    import os  # noqa: PLC0415
+
+    theirs = data_dir / "hair" / "neat_bun" / "neat_bun.mhclo"
+
+    def racing(real):  # noqa: ANN001, ANN202
+        def move(src, dst, *a, **kw):  # noqa: ANN001, ANN002, ANN003, ANN202
+            if Path(dst) == theirs and not theirs.exists():
+                theirs.write_bytes(b"theirs")
+            return real(src, dst, *a, **kw)
+
+        return move
+
+    monkeypatch.setattr(os, "replace", racing(os.replace))
+    monkeypatch.setattr(os, "link", racing(os.link))
+    with pytest.raises(PackError, match="appeared"):
+        unpack(zip_file(tmp_path, pack_zip()), data_dir, "hair09")
+    assert theirs.read_bytes() == b"theirs"
+    assert files_under(data_dir) == {"hair/neat_bun/neat_bun.mhclo"}
 
 
 def test_a_file_already_there_and_the_same_is_skipped(tmp_path: Path, data_dir: Path) -> None:
