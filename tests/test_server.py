@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import struct
 
@@ -10,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from argus_mask.config import Settings
 from argus_mask.models import Health, StreamHeader
-from argus_mask.server.app import create_app
+from argus_mask.server.app import _DriverProbe, create_app
 from tests.helpers import fake_a2f, make_face, tone
 
 HELLO = json.dumps({"sample_rate": 24000, "channels": 1, "format": "f32le"})
@@ -166,12 +167,13 @@ def test_a_viewer_that_joins_mid_stream_gets_the_header_then_live_frames(client)
         session = source.receive_json()["session_id"]
         source.send_bytes(pcm(0.5))
         with client.websocket_connect("/session/test-head/view") as late:
-            assert client.get("/health").json()["live"] == ["test-head"]  # the join has been handled
+            # The header comes only once the join is handled: anything sent after it reaches this viewer.
+            header = late.receive_json()
             source.send_bytes(pcm(0.5))
             source.send_text(json.dumps({"type": "end"}))
             assert source.receive_json()["type"] == "done"
             notes, _ = drain(late)
-    assert notes[0]["type"] == "header" and notes[0]["session_id"] == session
+    assert header["type"] == "header" and header["session_id"] == session
     frames = [n for n in notes if n["type"] == "frame"]
     # Nothing from before it joined. The resampler holds a few samples back, so the frame that
     # straddles the half-second mark is finished by the audio sent after the join.
@@ -417,9 +419,11 @@ def test_a_viewer_that_reports_is_a_screen(client) -> None:
     with client.websocket_connect("/session/test-head/view") as viewer:
         assert _screens(client, want=[]) == []  # connected, not yet said what it is: not a screen
         viewer.send_text(json.dumps({"type": "status", "audio": False, "display": "hld", "kiosk": True}))
-        assert _screens(client, want=[{"display": "hld", "audio_ready": False, "kiosk": True, "sound": "local"}])
+        want = [{"display": "hld", "audio_ready": False, "kiosk": True, "sound": "local"}]
+        assert _screens(client, want=want) == want
         viewer.send_text(json.dumps({"type": "status", "audio": True, "display": "hld", "kiosk": True}))
-        assert _screens(client, want=[{"display": "hld", "audio_ready": True, "kiosk": True, "sound": "local"}])
+        want = [{"display": "hld", "audio_ready": True, "kiosk": True, "sound": "local"}]
+        assert _screens(client, want=want) == want  # the second status replaces the first
     assert _screens(client, want=[]) == []  # gone with its socket
 
 
@@ -429,9 +433,10 @@ def test_a_screen_with_external_sound_is_ready_without_sound_of_its_own(client) 
         viewer.send_text(
             json.dumps({"type": "status", "audio": False, "display": "flat", "kiosk": True, "sound": "external"})
         )
-        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": True, "sound": "external"}])
+        want = [{"display": "flat", "audio_ready": True, "kiosk": True, "sound": "external"}]
+        assert _screens(client, want=want) == want
         viewer.send_text(json.dumps({"type": "status", "sound": "elsewhere"}))  # not a sound mode: ignored
-        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": True, "sound": "external"}])
+        assert _screens(client, want=want) == want
 
 
 @pytest.mark.parametrize(
@@ -451,4 +456,39 @@ def test_a_viewer_saying_anything_else_is_ignored(client, message) -> None:
         else:
             viewer.send_text(message)
         viewer.send_text(json.dumps({"type": "status", "audio": True}))  # still heard after the bad one
-        assert _screens(client, want=[{"display": "flat", "audio_ready": True, "kiosk": False, "sound": "local"}])
+        want = [{"display": "flat", "audio_ready": True, "kiosk": False, "sound": "local"}]
+        assert _screens(client, want=want) == want
+
+
+async def test_a_failure_while_the_driver_is_asked_is_not_overwritten_by_the_answer() -> None:
+    class Slow:
+        calls = 0
+        answer = asyncio.Event()
+
+        async def check(self) -> str | None:
+            self.calls += 1
+            await self.answer.wait()
+            return None  # asked before the failure: it says the driver is fine
+
+    driver = Slow()
+    probe = _DriverProbe(driver)
+    asking = asyncio.create_task(probe.reason())
+    await asyncio.sleep(0)
+    probe.forget()  # a source saw the driver fail meanwhile
+    driver.answer.set()
+    assert await asking is None
+    await probe.reason()
+    assert driver.calls == 2  # asked again, not the stale answer kept
+
+
+@pytest.mark.parametrize(
+    ("body", "headers"),
+    [
+        (b"\x00" * 5, {"X-Sample-Rate": "16000", "X-Audio-Format": "pcm_s16le", "X-Channels": "2"}),
+        (b"\x00" * 4001, {"X-Sample-Rate": "24000", "X-Audio-Format": "pcm_f32le"}),
+    ],
+    ids=["s16-stereo-odd-byte", "f32-stray-byte"],
+)
+def test_raw_pcm_that_is_not_whole_samples_is_refused(client, body, headers) -> None:
+    out = client.post("/push", params={"face": "test-head"}, content=body, headers=headers)
+    assert out.status_code == 422 and "not whole samples" in out.json()["detail"]
