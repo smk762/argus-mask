@@ -32,7 +32,7 @@ def wav(samples: np.ndarray, rate: int = 48000) -> bytes:
 @pytest.fixture
 def voices_page(tmp_path):
     @contextmanager
-    def run(tts_url: str = "", **tts_kwargs):
+    def run(tts_url: str = ""):
         ed = EditorSettings(voices_dir=tmp_path / "voices", recordings_dir=tmp_path / "rec")
         with TestClient(create_editor_app(Settings(assets_dir=tmp_path / "assets", tts_url=tts_url), ed)) as c:
             yield c
@@ -63,7 +63,20 @@ def test_a_clip_is_checked_and_kept_by_its_hash(voices_page, tmp_path) -> None:
         assert (tmp_path / "voices" / ".staged" / f"{good['sha']}.wav").is_file()
         served = c.get(f"/voice/clip/{good['sha']}")
         assert served.status_code == 200 and served.headers["content-type"] == "audio/wav"
-        assert c.get("/voice/clip/../../etc/passwd").status_code == 404
+        # an encoded slash is decoded before routing, so it never matches the clip route
+        assert c.get("/voice/clip/..%2F..%2Fetc%2Fpasswd").status_code == 404
+        # each of these reaches the clip route (no dot segment or slash for the client or router to take away) and is
+        # refused there, by the handler
+        for bad in [
+            "....",
+            "..%5C..%5Cetc%5Cpasswd",
+            "g" * 64,
+            good["sha"].upper(),
+            good["sha"] + "%00",
+            f"..{good['sha']}",
+        ]:
+            refused = c.get(f"/voice/clip/{bad}")
+            assert refused.status_code == 404 and refused.json()["detail"] == "not a clip", bad
         assert c.get(f"/voice/clip/{'0' * 64}").status_code == 404
         noisy = check(c, speechlike(noise_db=-38.0), transcript="")
         assert noisy["report"]["verdict"] == "not suitable"
@@ -168,7 +181,8 @@ def test_a_synthetic_candidate_is_generated_and_checked(voices_page) -> None:
     import time  # noqa: PLC0415
 
     script = "Good morning. I keep an eye on the systems, and I read out what matters. Shall we start?"
-    with fake_tts(speechlike(6.0, 24000, lead=0.0, tail=0.0), 24000) as (tts, seen), voices_page(tts) as c:
+    # stalled before its audio, so the first job is surely still running when the second is asked for
+    with fake_tts(speechlike(6.0, 24000, lead=0.0, tail=0.0), 24000, stall_s=1.0) as (tts, seen), voices_page(tts) as c:
         job = c.post("/voice/generate", json={"script": script, "speaker": "1", "temperature": 0.8}).json()
         assert c.post("/voice/generate", json={"script": script}).status_code == 409  # one at a time
         end = time.monotonic() + 10
@@ -187,7 +201,9 @@ def test_a_synthetic_candidate_is_generated_and_checked(voices_page) -> None:
         while described["state"] == "running" and time.monotonic() < end:
             time.sleep(0.05)
             described = c.get(f"/voice/generate/{described['id']}").json()
-        assert seen[-1] == {"text": script, "voice_description": "warm, calm, alto"}
+        assert described["state"] == "done", described
+        assert described["result"]["transcript"] == script and len(described["result"]["sha"]) == 64
+        assert len(seen) == 2 and seen[-1] == {"text": script, "voice_description": "warm, calm, alto"}
 
 
 def test_a_wyoming_service_cannot_make_voices(voices_page) -> None:
