@@ -11,7 +11,7 @@ mono ``f32le`` PCM at ``StreamHeader.audio.sample_rate``.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from argus_cortex.wire import make_versioned_base, render_schema
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -426,7 +426,9 @@ class RestSet(BaseModel):
     """
 
     name: str = Field(..., pattern=FACE_ID_PATTERN)
-    weights: dict[str, float] = Field(default_factory=dict, description="ARKit blendshape name -> weight, 0 to 1")
+    weights: dict[str, Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=dict, description="ARKit blendshape name -> weight, 0 to 1"
+    )
     life: float = Field(1.0, ge=0.0, le=2.0)
 
 

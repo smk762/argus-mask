@@ -1062,6 +1062,8 @@
         },
         "weights": {
           "additionalProperties": {
+            "maximum": 1.0,
+            "minimum": 0.0,
             "type": "number"
           },
           "description": "ARKit blendshape name -> weight, 0 to 1",

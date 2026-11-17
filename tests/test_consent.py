@@ -5,7 +5,9 @@ Synthetic fixtures only: the release is a hash of nothing, the subject a placeho
 
 from __future__ import annotations
 
+import contextlib
 import json
+import threading
 from datetime import UTC, date, datetime
 
 import pytest
@@ -175,6 +177,38 @@ def test_a_release_has_one_record_and_a_revocation_stands(tmp_path) -> None:
     assert store.find(RELEASE[:8]).release_sha256 == RELEASE
     with pytest.raises(ConsentError, match="at least its first 8"):
         store.find("ab")
+
+
+def test_concurrent_revocations_keep_the_first(tmp_path, monkeypatch) -> None:
+    write_consent(tmp_path)
+    store = ConsentStore(tmp_path)
+    real_get = store.get
+    both_read = threading.Barrier(2)
+
+    def slow_get(release):
+        record = real_get(release)
+        with contextlib.suppress(threading.BrokenBarrierError):
+            both_read.wait(timeout=0.5)  # each revoke reads before either writes, unless one waits on the other
+        return record
+
+    monkeypatch.setattr(store, "get", slow_get)
+    results: dict[str, object] = {}
+
+    def revoke(by: str) -> None:
+        try:
+            results[by] = store.revoke(RELEASE, Revocation(requested_on="2026-05-01", effective_on="2026-05-01", by=by))
+        except Exception as exc:  # noqa: BLE001 - the test reports whatever escaped
+            results[by] = exc
+
+    threads = [threading.Thread(target=revoke, args=(by,)) for by in ("B", "C")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert all(isinstance(r, cortex_consent.ConsentRecord) for r in results.values()), results
+    kept = real_get(RELEASE).revocation
+    assert kept is not None and results["B"].revocation == results["C"].revocation == kept
+    assert sorted(p.name for p in store.dir.iterdir() if p.suffix == ".part") == []
 
 
 def test_a_create_that_fails_part_way_leaves_no_record_behind(tmp_path, monkeypatch) -> None:

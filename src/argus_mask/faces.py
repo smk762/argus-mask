@@ -159,6 +159,26 @@ def _image_size(blob: bytes) -> tuple[int, int] | None:
     return None
 
 
+_MALFORMED = "not a well-formed glTF"
+
+
+def _objects(holder: dict, key: str) -> list[dict]:
+    """*holder*'s list of objects under *key* (none if absent); :class:`FaceError` for any other shape."""
+    value = holder.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise FaceError(f"{_MALFORMED}: {key} is not a list of objects")
+    return value
+
+
+def _whole(value: object, what: str) -> int:
+    """A glTF count, offset or index: a whole number, not negative; :class:`FaceError` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise FaceError(f"{_MALFORMED}: {what} is not a whole number")
+    return value
+
+
 def _target_names(mesh: dict, count: int) -> list[str]:
     # Blender, three.js and the glTF sample models all put the names in extras.targetNames.
     for holder in (mesh, *(p for p in mesh.get("primitives", []) if isinstance(p, dict))):
@@ -174,26 +194,29 @@ def inspect_glb(path: str | Path) -> GlbReport:
 
 
 def glb_report(doc: dict, binary: bytes) -> GlbReport:
-    """:func:`inspect_glb` of a parsed glTF binary."""
-    accessors = doc.get("accessors") or []
-    views = doc.get("bufferViews") or []
+    """:func:`inspect_glb` of a parsed glTF binary. The JSON is the file's own claim: an entry of the wrong shape is
+    :class:`FaceError`, never another exception."""
+    accessors = _objects(doc, "accessors")
+    views = _objects(doc, "bufferViews")
     report = GlbReport()
 
     def count(index: object) -> int:
         if isinstance(index, int) and 0 <= index < len(accessors):
-            return int(accessors[index].get("count", 0))
+            return _whole(accessors[index].get("count", 0), "an accessor's count")
         return 0
 
-    for i, mesh in enumerate(doc.get("meshes") or []):
-        primitives = [p for p in mesh.get("primitives", []) if isinstance(p, dict)]
+    for i, mesh in enumerate(_objects(doc, "meshes")):
+        primitives = mesh.get("primitives", [])
+        if not isinstance(primitives, list):
+            raise FaceError(f"{_MALFORMED}: a mesh's primitives are not a list")
+        primitives = [p for p in primitives if isinstance(p, dict)]
         triangles = 0
         for prim in primitives:
+            attributes = prim.get("attributes", {})
+            if not isinstance(attributes, dict) or not isinstance(prim.get("targets", []), list):
+                raise FaceError(f"{_MALFORMED}: a primitive's attributes or targets are the wrong shape")
             if prim.get("mode", 4) == 4:
-                n = (
-                    count(prim["indices"])
-                    if "indices" in prim
-                    else count((prim.get("attributes") or {}).get("POSITION"))
-                )
+                n = count(prim["indices"]) if "indices" in prim else count(attributes.get("POSITION"))
                 triangles += n // 3
         targets = max((len(p.get("targets") or []) for p in primitives), default=0)
         report.meshes.append(
@@ -202,12 +225,13 @@ def glb_report(doc: dict, binary: bytes) -> GlbReport:
             )
         )
 
-    for image in doc.get("images") or []:
+    for image in _objects(doc, "images"):
         size = None
         view = image.get("bufferView")
         if isinstance(view, int) and 0 <= view < len(views):
-            start = int(views[view].get("byteOffset", 0))
-            size = _image_size(binary[start : start + int(views[view].get("byteLength", 0))])
+            start = _whole(views[view].get("byteOffset", 0), "a buffer view's byteOffset")
+            length = _whole(views[view].get("byteLength", 0), "a buffer view's byteLength")
+            size = _image_size(binary[start : start + length])
         report.textures.append(size)
 
     found = {name for mesh in report.meshes for name in mesh.targets}
@@ -612,16 +636,20 @@ class FaceStore:
         self.root = Path(root)
         self.consents = ConsentStore(self.root)
         self.clock = clock
-        self._hashes: dict[tuple[str, int, int], str] = {}  # (path, mtime_ns, size) -> sha256
+        self._hashes: dict[str, tuple[tuple[int, ...], str]] = {}  # path -> (its version, sha256)
         self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
         self._bound: dict[tuple, BoundSplatsReport | str] = {}  # each file's (path, mtime_ns, size) -> the same
 
     def _sha256(self, path: Path) -> str:
+        """The file's sha256, hashed again once anything about it changes. The version includes the inode and its
+        ctime, which no tool sets: a same-size copy with its mtime kept (``cp -p``, ``rsync -t``) is still new."""
         stat = path.stat()
-        key = (str(path), stat.st_mtime_ns, stat.st_size)
-        if key not in self._hashes:
-            self._hashes[key] = sha256_file(path)
-        return self._hashes[key]
+        version = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+        cached = self._hashes.get(str(path))
+        if cached is None or cached[0] != version:  # one entry per path: an earlier version's goes
+            cached = (version, sha256_file(path))
+            self._hashes[str(path)] = cached
+        return cached[1]
 
     def load(self, face_id: str, *, use: ConsentUse = "avatar") -> tuple[FaceManifest, Path]:
         """A face's manifest and model path, or :class:`FaceError` saying why it is refused.
