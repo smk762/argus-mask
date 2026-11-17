@@ -24,11 +24,13 @@ The checks are pure: the caller passes the time. Cortex reads a record's dates a
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -179,11 +181,28 @@ class ConsentStore:
             finally:
                 tmp.unlink(missing_ok=True)
             return
-        tmp = path.with_suffix(".part")
-        tmp.unlink(missing_ok=True)  # a crashed write's leftover: O_EXCL below keeps the file private from birth
-        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
-            out.write(text)
-        tmp.replace(path)
+        # A private file of this write's own (mkstemp: 0600, a unique name), then replaced into place.
+        fd, name = tempfile.mkstemp(dir=self.dir, prefix=f".{record.release_sha256}.", suffix=".part")
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                out.write(text)
+                out.flush()
+                os.fsync(out.fileno())
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    @contextlib.contextmanager
+    def _locked(self) -> Iterator[None]:
+        """One change at a time, across threads and processes: an exclusive lock on ``.lock`` in the folder."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.dir / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # closing releases the lock
 
     def create(self, record: ConsentRecord) -> None:
         """Write a new record. A release has one record: writing a second for the same hash is refused."""
@@ -194,20 +213,24 @@ class ConsentStore:
 
     def revoke(self, release_sha256: str, revocation: Revocation) -> ConsentRecord:
         """Mark a record revoked. Revoking a revoked record keeps the first revocation, and returns it unchanged."""
-        record = self.get(release_sha256)
-        if record is None:
+        self.path(release_sha256)  # a bad hash is refused before the folder is made for the lock
+        if self.get(release_sha256) is None:
             raise ConsentError(f"no consent record for release {release_sha256}")
-        if record.revocation is not None:
-            return record
-        if len(revocation.by) > MAX_NAME:
-            raise ConsentError(f"by: at most {MAX_NAME} characters")
-        # Validated again with the revocation, so cortex's checks run (model_copy would skip them).
-        try:
-            revoked = ConsentRecord.model_validate(record.model_dump() | {"revocation": revocation.model_dump()})
-        except ValidationError as exc:
-            raise ConsentError(f"cannot revoke: {exc.errors()[0]['msg'].removeprefix('Value error, ')}") from exc
-        self._write(revoked, new=False)
-        return revoked
+        with self._locked():  # read again under the lock: a revocation that landed meanwhile is the first
+            record = self.get(release_sha256)
+            if record is None:
+                raise ConsentError(f"no consent record for release {release_sha256}")
+            if record.revocation is not None:
+                return record
+            if len(revocation.by) > MAX_NAME:
+                raise ConsentError(f"by: at most {MAX_NAME} characters")
+            # Validated again with the revocation, so cortex's checks run (model_copy would skip them).
+            try:
+                revoked = ConsentRecord.model_validate(record.model_dump() | {"revocation": revocation.model_dump()})
+            except ValidationError as exc:
+                raise ConsentError(f"cannot revoke: {exc.errors()[0]['msg'].removeprefix('Value error, ')}") from exc
+            self._write(revoked, new=False)
+            return revoked
 
     # -- checks with mask's own reasons on top of consent_valid's --
 
