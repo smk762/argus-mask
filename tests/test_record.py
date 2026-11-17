@@ -310,3 +310,117 @@ def test_a_real_head_records_the_same_twice(tmp_path: Path, framing: str) -> Non
         assert diff.max() <= 2 and (diff > 0).sum() <= 50, (
             f"{name}: {(diff > 0).sum()} pixels differ, by up to {diff.max()}"
         )
+
+
+def _recording(frames: int = 3) -> record.Recording:
+    from argus_mask.models import Frame, StreamHeader  # noqa: PLC0415
+
+    header = StreamHeader(
+        face_id="f", session_id="s", fps=30, seed=0, blendshapes=[], audio={"sample_rate": 8000}, driver={"name": "e"}
+    )
+    return record.Recording(header, [Frame(seq=i, t_ms=i * 33, weights=[]) for i in range(frames)])
+
+
+def test_a_chunk_before_zero_keeps_its_tail_at_the_start() -> None:
+    rec = _recording(0)  # 8 samples a millisecond
+    rec.audio = [(-0.25, np.arange(1, 6, dtype=np.float32)), (0.375, np.full(2, 9, dtype=np.float32))]
+    assert rec.pcm().tolist() == [3, 4, 5, 9, 9]
+    rec.audio = [(-1.25, np.ones(3, dtype=np.float32)), (0.0, np.full(2, 7, dtype=np.float32))]
+    assert rec.pcm().tolist() == [7, 7]  # wholly before 0: dropped, not written over the tail
+
+
+def test_a_timed_out_video_check_refuses(monkeypatch) -> None:
+    import urllib.error  # noqa: PLC0415
+
+    def raising(exc: BaseException):  # noqa: ANN202 - stands in for urlopen
+        def urlopen(url, timeout):  # noqa: ANN001, ANN202
+            raise exc
+
+        return urlopen
+
+    for exc in (TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out"))):
+        monkeypatch.setattr(record.urllib.request, "urlopen", raising(exc))
+        assert "timed out" in record.video_refusal("http://127.0.0.1:9", "someone")
+    monkeypatch.setattr(record.urllib.request, "urlopen", raising(urllib.error.URLError(ConnectionRefusedError())))
+    assert record.video_refusal("http://127.0.0.1:9", "someone") is None  # down: left for the capture
+
+
+def test_ffmpeg_reads_no_stdin_and_cannot_hang(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+
+    def run(command, **kwargs):  # noqa: ANN001, ANN003, ANN202 - stands in for subprocess.run
+        calls.append((command, kwargs))
+        raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+
+    monkeypatch.setattr(record, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(record.subprocess, "run", run)
+    with pytest.raises(record.RecordError, match="did not finish"):
+        record.mux(tmp_path, tmp_path / "a.wav", tmp_path / "a.mp4", 30)
+    command, kwargs = calls[0]
+    assert "-nostdin" in command and kwargs["stdin"] is subprocess.DEVNULL and kwargs["timeout"]
+
+
+@pytest.mark.parametrize("name", ["c.wav", "c.frames"])
+def test_a_clip_named_like_its_sidecars_is_refused_before_waiting(tmp_path: Path, name: str) -> None:
+    with pytest.raises(record.RecordError, match="overwrite its own"):
+        asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / name))
+
+
+def test_the_frames_are_removed_off_the_event_loop(monkeypatch, tmp_path: Path) -> None:
+    import threading  # noqa: PLC0415
+
+    threads = []
+    real = shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        threads.append(threading.current_thread())
+        return real(path, *args, **kwargs)
+
+    async def capture(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        return _recording()
+
+    async def render(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        pass
+
+    monkeypatch.setattr(record, "video_refusal", lambda base, face: None)
+    monkeypatch.setattr(record, "capture", capture)
+    monkeypatch.setattr(record, "render_frames", render)
+    monkeypatch.setattr(record, "mux", lambda *a, **k: None)
+    monkeypatch.setattr(record.shutil, "rmtree", rmtree)
+    asyncio.run(record.record("http://127.0.0.1:9", "x", tmp_path / "c.mp4"))
+    assert len(threads) == 2 and threading.main_thread() not in threads
+
+
+def test_a_backend_failing_with_no_message_closes_its_browser_and_falls_through(monkeypatch, tmp_path: Path) -> None:
+    import sys  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    closed = []
+
+    class Browser:
+        async def new_page(self, **kwargs):  # noqa: ANN003, ANN202
+            raise TimeoutError
+
+        async def close(self) -> None:
+            closed.append(self)
+
+    class Chromium:
+        async def launch(self, args):  # noqa: ANN001, ANN202
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+        async def __aenter__(self):  # noqa: ANN204
+            return self
+
+        async def __aexit__(self, *exc) -> None:  # noqa: ANN002
+            pass
+
+    api = types.ModuleType("playwright.async_api")
+    api.async_playwright = Playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    with pytest.raises(record.RecordError, match="gpu: TimeoutError; software: TimeoutError"):
+        asyncio.run(record.render_frames("http://x/", _recording(), tmp_path / "frames"))
+    assert len(closed) == len(record.BACKENDS)

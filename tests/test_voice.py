@@ -148,3 +148,17 @@ def test_a_quiet_band_limited_clip_with_no_pauses_is_not_read_as_full_band() -> 
     spectrum[np.fft.rfftfreq(len(x), 1 / rate) > 4000] = 0  # telephone-band speech, resampled up
     mono = (np.fft.irfft(spectrum, len(x)) * 0.01 + rng.standard_normal(len(x)) * 1e-7).astype(np.float32)
     assert _bandwidth(mono, rate, np.ones(int(3 / FRAME_S), dtype=bool)) < 5000
+
+
+def test_a_clipped_run_counts_each_sample_once() -> None:
+    clip = speechlike()
+    at = int(5.0 * 48000)
+    clip[at : at + 10] = 1.0  # one flat-topped run at full scale: ten samples, not nineteen
+    m = analyse(clip, 48000, TEXT).metrics
+    assert m["clipped_samples"] == 10
+
+
+def test_a_set_without_a_rate_is_still_assessed() -> None:
+    one = analyse(speechlike(), 48000, TEXT).public()
+    del one["metrics"]["rate"]
+    assert "rates" not in verdicts(assess([one, analyse(speechlike(), 48000, TEXT).public()]))
