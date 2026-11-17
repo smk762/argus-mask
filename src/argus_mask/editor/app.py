@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import json
 import re
 import time
@@ -109,7 +110,7 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
             return reply.status, json.loads(reply.read()), None
     except urllib.error.HTTPError as exc:
         return exc.code, None, f"{exc.code} {exc.reason}"
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         return None, None, f"no argus-mask server answers at {base} ({getattr(exc, 'reason', exc)})"
 
 
@@ -831,7 +832,10 @@ def create_editor_app(
                 raise HTTPException(403, f"this voice may not be made: {why}")
         if voice_store.record(req.id) is not None:
             raise HTTPException(409, f"there is already a voice called {req.id}: delete it first, or pick another name")
-        existing = await asyncio.to_thread(client.tts_voices, tts)
+        try:
+            existing = await asyncio.to_thread(client.tts_voices, tts)
+        except client.ClientError as exc:
+            raise HTTPException(502, str(exc)) from exc
         if existing and any(v["name"] == f"clone:{req.id}" for v in existing):
             raise HTTPException(409, f"the TTS service already has a voice called {req.id}: pick another name")
         reports = []
