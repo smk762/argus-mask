@@ -416,10 +416,13 @@ def test_export_again_replaces_the_editors_own_export(client, rig) -> None:
     assert leftovers(rig["assets"]) == []
 
 
-@pytest.mark.parametrize("face_id", ["nothing-here", "..", "Bad Id"])
-def test_export_needs_a_finished_preview(client, rig, face_id) -> None:
-    # ".." never reaches the route: the client resolves /export/.. to /, which only takes GET.
-    assert client.post(f"/export/{face_id}").status_code in (404, 405)
+@pytest.mark.parametrize(
+    ("face_id", "why"), [("nothing-here", "no preview"), ("%2E%2E", "not a face id"), ("Bad%20Id", "not a face id")]
+)
+def test_export_needs_a_finished_preview(client, rig, face_id, why) -> None:
+    # Encoded, so ".." reaches the route as the id rather than being resolved away by the client.
+    reply = client.post(f"/export/{face_id}")
+    assert reply.status_code == 404 and why in reply.json()["detail"], reply.text
     assert nothing_built(rig["assets"])
 
 
@@ -1264,10 +1267,15 @@ def test_only_recordings_are_served_from_the_recordings_directory(recording_rig,
     run, clips, _ = recording_rig
     clips.mkdir(parents=True, exist_ok=True)
     (clips / "kept.mp4").write_bytes(b"clip")
+    # Each refused name is there to serve, so only the handler's rules can refuse it.
+    for name in ("kept.exe", ".hidden.mp4"):
+        (clips / name).write_bytes(b"there")
+    (clips / "linked.mp4").symlink_to(tmp_path / "secret.mp4")
     (tmp_path / "secret.mp4").write_bytes(b"not yours")
     with run() as c:
         assert c.get("/recordings/kept.mp4").content == b"clip"
-        for bad in ["../secret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "nothere.mp4"]:
+        # ".." encoded, so the client sends it as it is rather than resolving it away.
+        for bad in ["%2E%2E%2Fsecret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "linked.mp4", "nothere.mp4"]:
             assert c.get(f"/recordings/{bad}").status_code == 404, bad
 
 
@@ -1439,10 +1447,10 @@ def test_a_garment_colourway_reaches_blender_and_only_for_clothes_worn(client, r
     sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
     assert sent["garment_colours"] == {top: {"colour": "#1d2b4f", "mode": "solid"}}
     # Another colour is another build: the cache does not hand back the navy one.
-    assert (
-        client.post("/build", json=preset(garment_colours={top: {"colour": "#7a1c1c"}})).json().get("cached")
-        is not True
-    )
+    red = client.post("/build", json=preset(garment_colours={top: {"colour": "#7a1c1c"}}))
+    assert red.status_code == 200 and red.json().get("cached") is not True, red.text
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
+    assert sent["garment_colours"][top]["colour"] == "#7a1c1c"
     stray = client.post("/build", json=preset(garment_colours={"clothes/hat1/hat1.mhclo": {"colour": "#000000"}}))
     assert stray.status_code == 422 and "does not wear" in stray.text
     assert client.post("/build", json=preset(garment_colours={top: {"colour": "navy"}})).status_code == 422
