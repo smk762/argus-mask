@@ -52,7 +52,8 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 | Demo clips made by an older engine are deployed | `test_demo::test_the_committed_clips_were_made_by_the_engine_at_head` (re-record with `demo/make_clips.py`) |
 | A demo or docs page runs an inline script the CSP doesn't hash | `test_demo::test_the_page_pastes_the_strip_and_allows_its_import_map_by_hash`, `::test_a_docs_page_is_csp_neutral_and_links_stay_on_site` |
 | A file Blender loads by path imports the package | `must_never::test_what_blender_loads_by_path_imports_nothing_from_the_package` |
-| LAM or VHAP code is copied into the repo; a splat head is made outside `lam/`'s checked pipeline | **UNENFORCED** in CI (`make_head.py` refuses at run time): [#136](https://github.com/smk762/argus-mask/issues/136) |
+| LAM or VHAP code is copied into the repo | `must_never::test_no_file_carries_a_lam_or_vhap_licence_header`, `::test_no_lam_or_vhap_package_is_in_the_repo_or_imported_outside_the_head_builder` |
+| A splat head is made outside `lam/`'s checked pipeline | CI's `lam` job (`test_lam.py`, with CPU torch): the preflight's refusals (`lam/preflight.py`: FLAME 2023 Open by sha256, our embedding), `flame_core` against a synthetic FLAME, `overrides.verify()` against stand-ins; `make_head.py` refuses at run time too |
 | A version is hand-edited | Structural: `hatch-vcs` writes `_version.py` (gitignored) from the tag |
 
 ## Layout
@@ -68,7 +69,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - `viewer/`: static, no build step. three.js r187, the splat renderer and JSZip are vendored unchanged with their licences. The editor's previews import `look.js`, `motion.js` and `splat.js`.
 - `editor/`: a separate optional process. `build_head.py` runs inside Blender, handed over by path, never imported.
 - `bake/` makes bound splats from a mesh head (#126 route A): Cycles renders, gsplat training on a GPU host, `package.py` into a face; steps and results in `bake/README.md`.
-- `a2f/` (the Audio2Face server's image), `lam/` (splat heads from portraits, #126) and `demo/` (the hosted demo, #118) are not part of the package; CI does not lint or test `a2f/`, `lam/` or `bake/`. Read `a2f/README.md` before building (about 25 GB of Docker disk) and `lam/README.md` for licences per part.
+- `a2f/` (the Audio2Face server's image), `lam/` (splat heads from portraits, #126) and `demo/` (the hosted demo, #118) are not part of the package; CI does not lint `a2f/`, `lam/` or `bake/`, and tests only `lam/`'s pure-Python parts (`tests/test_lam.py`, CI's `lam` job). Read `a2f/README.md` before building (about 25 GB of Docker disk) and `lam/README.md` for licences per part.
 - `tests/helpers.py` builds every fixture in code: a one-triangle `.glb`, tone WAVs, a fake Audio2Face server, a fake TTS service, `live_server()`.
 
 ## Commands
