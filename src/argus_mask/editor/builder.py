@@ -486,23 +486,40 @@ class Builder:
                     raise NotOwned(f"{face_id!r} is a face the editor did not make")
             if new_id != face_id and any((self.root(p) / new_id).exists() for p in PLACES):
                 raise Taken(f"there is already a face {new_id!r}")
-            # Every copy is rewritten before any is moved: a failure part way leaves both as they were,
-            # not the export under the new id and the preview under the old one.
+            # Every copy is rewritten, then every one moved into place, before any old copy is removed: a failure
+            # part way puts back what was moved, so the export and the preview never end up under different ids.
             staged: list[tuple[Path, Path]] = []
+            moved: list[tuple[Path, Path | None]] = []  # (now in place, the copy it replaced: kept until the end)
             try:
                 for place in places:
                     root = self.root(place)
                     staged.append((root, await asyncio.to_thread(self._rewrite, root, face_id, new_id, name)))
                 for root, work in staged:
-                    if new_id == face_id:
-                        self._install(work, root / face_id, root)
-                    else:
-                        work.rename(root / new_id)
-                        shutil.rmtree(root / face_id, ignore_errors=True)
+                    target, old = root / new_id, None
+                    if target.exists():  # the same id: the copy being replaced
+                        old = root / f".old-{uuid.uuid4().hex}"
+                        target.rename(old)
+                    try:
+                        work.rename(target)
+                    except OSError:
+                        if old is not None:
+                            old.rename(target)
+                        raise
+                    moved.append((target, old))
+            except BaseException:
+                for target, old in reversed(moved):
+                    undo = target.with_name(f".undo-{uuid.uuid4().hex}")
+                    target.rename(undo)
+                    if old is not None:
+                        old.rename(target)
+                    shutil.rmtree(undo, ignore_errors=True)
+                raise
             finally:
                 for _, work in staged:
                     if work.exists():
                         shutil.rmtree(work, ignore_errors=True)
+            for target, old in moved:
+                shutil.rmtree(old if old is not None else target.with_name(face_id), ignore_errors=True)
             log.info("face_renamed", face=face_id, to=new_id, name=name)
             return new_id
 
