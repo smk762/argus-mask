@@ -763,10 +763,20 @@ async function loadStarts() {
     const chosen = presets.find((p) => p.id === select.value);
     if (chosen) adopt(chosen); else preset = structuredClone(DEFAULT);
     // A saved face is already built: live update has nothing to do until the form moves on from it.
+    const before = shownContent;
     if (chosen) shownContent = contentOf(current());
     syncForm();
     if (chosen) {
-      await showFace(chosen.id).catch(() => {});
+      try {
+        await showFace(chosen.id);
+      } catch (err) {
+        // The stage still shows the face before: the form is not what is shown, so a build (or live update) runs.
+        shownContent = before;
+        status(`Could not show ${chosen.id}: ${err.message}`, true);
+        meta();
+        if (live()) schedule(0);
+        return;
+      }
       detached = true;
       showBefore();
       built = JSON.stringify(current());

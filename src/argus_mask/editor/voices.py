@@ -127,8 +127,14 @@ class VoiceStore:
             return None
 
     def write(self, record: dict, clips: list[Path]) -> None:
-        folder = self.root / record["id"]
+        voice_id = record.get("id")
+        if not isinstance(voice_id, str) or not re.fullmatch(VOICE_ID, voice_id):
+            raise VoiceError(f"{voice_id!r} is not a voice id")
+        folder = self.root / voice_id
         folder.mkdir(parents=True, exist_ok=True)
+        # The folder holds this record's clips and no others: one left from an earlier voice would be cloned from.
+        for old in folder.glob("clip-*.wav"):
+            old.unlink()
         for i, path in enumerate(clips):
             shutil.copyfile(path, folder / f"clip-{i + 1}.wav")
         tmp = folder / "voice.json.part"

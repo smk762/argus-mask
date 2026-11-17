@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -160,14 +161,23 @@ class ConsentStore:
         path = self.path(record.release_sha256)
         text = record.model_dump_json(indent=2) + "\n"
         if new:
+            # Written whole to a private file, then linked into place: link fails if a record exists, and a write
+            # that fails or dies part-way leaves no truncated record to block the release or be read half-written.
+            fd, name = tempfile.mkstemp(dir=self.dir, prefix=f".{record.release_sha256}.", suffix=".part")
+            tmp = Path(name)
             try:
-                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            except FileExistsError as exc:
-                raise ConsentError(
-                    "there is already a record for this release: a re-signed release has a new hash"
-                ) from exc
-            with os.fdopen(fd, "w", encoding="utf-8") as out:
-                out.write(text)
+                with os.fdopen(fd, "w", encoding="utf-8") as out:
+                    out.write(text)
+                    out.flush()
+                    os.fsync(out.fileno())
+                try:
+                    os.link(tmp, path)
+                except FileExistsError as exc:
+                    raise ConsentError(
+                        "there is already a record for this release: a re-signed release has a new hash"
+                    ) from exc
+            finally:
+                tmp.unlink(missing_ok=True)
             return
         tmp = path.with_suffix(".part")
         tmp.unlink(missing_ok=True)  # a crashed write's leftover: O_EXCL below keeps the file private from birth

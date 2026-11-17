@@ -85,7 +85,8 @@ function wavFrom(buffer) {
 // ---- clips -----------------------------------------------------------------------------------------------
 
 async function check(clip, blob) {
-  clip.checking = true; clip.error = null; paintClips();
+  // The last report was for the clip as it was (its transcript, say): it no longer speaks for it, pass or fail.
+  clip.checking = true; clip.error = null; clip.report = null; paintClips(); paintMake();
   try {
     if (!blob && !clip.url && !clip.sha) throw new Error('This clip could not be read: remove it and add the file again.');
     const body = blob ?? await (await fetch(clip.url || `/voice/clip/${clip.sha}`)).blob();
@@ -203,14 +204,15 @@ function paintMake() {
   $('v-confirm-wrap').hidden = kind === 'personal';
   const used = clips.filter((c) => c.use && c.report);
   const why = !state.can_make ? state.reason
-    : !used.length ? 'Choose at least one checked clip.'
-      : used.some((c) => !c.transcript) ? 'Every clip needs its transcript.'
-        : used.some((c) => c.report.verdict === 'not suitable') ? 'A chosen clip is not suitable: fix or drop it.'
-          : setReport?.verdict === 'not suitable' ? 'The set is not enough yet.'
-            : !/^[a-z0-9][a-z0-9-]{0,62}$/.test($('v-id').value) ? 'An id: lower case letters, digits and dashes.'
-              : !$('v-name').value.trim() ? 'A name.'
-                : kind === 'personal' ? (!$('v-origin').value.trim() ? 'Say where the clips come from, for your own record.' : '')
-                  : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
+    : clips.some((c) => c.use && (c.checking || c.error)) ? 'A chosen clip is not checked yet: wait for it, or fix or drop it.'
+      : !used.length ? 'Choose at least one checked clip.'
+        : used.some((c) => !c.transcript) ? 'Every clip needs its transcript.'
+          : used.some((c) => c.report.verdict === 'not suitable') ? 'A chosen clip is not suitable: fix or drop it.'
+            : setReport?.verdict === 'not suitable' ? 'The set is not enough yet.'
+              : !/^[a-z0-9][a-z0-9-]{0,62}$/.test($('v-id').value) ? 'An id: lower case letters, digits and dashes.'
+                : !$('v-name').value.trim() ? 'A name.'
+                  : kind === 'personal' ? (!$('v-origin').value.trim() ? 'Say where the clips come from, for your own record.' : '')
+                    : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
   $('v-make').disabled = Boolean(why);
   $('v-note').textContent = why;
 }

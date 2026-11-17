@@ -117,6 +117,37 @@ def test_a_thumbnail_off_the_community_site_is_not_shown(tmp_path: Path) -> None
     assert "thumb" not in load_catalogue(path)["hair09"].assets[0]
 
 
+@pytest.mark.parametrize(
+    "thumb",
+    [
+        "https://evil.example\\@x.makehumancommunity.org/a.png",  # a browser reads the backslash as a slash
+        "https://evil.example@static.makehumancommunity.org/a.png",
+        "https://static.makehumancommunity.org:8443/a.png",
+        "https://static.makehumancommunity.org/a b.png",
+        "https://static.makehumancommunity.org/" + "a" * 600 + ".png",
+    ],
+)
+def test_a_thumbnail_the_browser_could_read_another_way_is_not_shown(tmp_path: Path, thumb: str) -> None:
+    assets = [{"name": "x", "type": "hair", "license": "CC0", "thumb": thumb}]
+    path = write_catalogue(tmp_path / "c.json", pack_zip(), assets=assets)
+    assert "thumb" not in load_catalogue(path)["hair09"].assets[0]
+
+
+def test_a_download_is_fenced_to_the_hosts_on_every_redirect() -> None:
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    from argus_mask.editor.packs import _FencedRedirects, _open  # noqa: PLC0415
+
+    with pytest.raises(PackError):
+        _open("http://169.254.169.254/latest/meta-data/")
+    handler, req = _FencedRedirects(), urllib.request.Request(URL)
+    for off in ("http://files2.makehumancommunity.org/x.zip", "https://169.254.169.254/", "https://evil.example/x"):
+        with pytest.raises(urllib.error.HTTPError):
+            handler.redirect_request(req, None, 302, "Found", {}, off)
+    assert handler.redirect_request(req, None, 302, "Found", {}, MIRROR).full_url == MIRROR
+
+
 def test_a_pack_without_a_hash_or_with_another_licence_is_not_installable(tmp_path: Path) -> None:
     data = pack_zip()
     assert load_catalogue(write_catalogue(tmp_path / "a.json", data, sha256=None))["hair09"].why_not()
@@ -412,6 +443,20 @@ def test_the_script_keeps_a_hash_while_the_zip_is_unchanged(monkeypatch: pytest.
     monkeypatch.setattr(make_asset_catalogue, "sha256_of", lambda url: ("b" * 64, 999))
     assert make_asset_catalogue.main(["--out", str(out)]) == 0
     assert json.loads(out.read_text())["packs"][0]["sha256"] == "b" * 64
+
+
+def test_no_hash_drops_the_old_hash_when_the_zip_moved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Same size, another zip: the old file's hash would vouch for a download it never measured."""
+    out = tmp_path / "catalogue.json"
+    old = {"id": "hair09", "urls": ["https://files.makehumancommunity.org/old/hair09.zip"], "bytes": 1234}
+    out.write_text(json.dumps({"packs": [{**old, "sha256": "a" * 64}]}))
+    monkeypatch.setattr(make_asset_catalogue, "fetch", lambda url: PAGE.encode())
+    monkeypatch.setattr(make_asset_catalogue, "pack_ids", lambda: ["hair09"])
+    monkeypatch.setattr(make_asset_catalogue, "head_size", lambda url: 1234)
+    monkeypatch.setattr(make_asset_catalogue, "sha256_of", lambda url: pytest.fail("--no-hash downloads nothing"))
+    assert make_asset_catalogue.main(["--out", str(out), "--no-hash"]) == 0
+    [pack] = json.loads(out.read_text())["packs"]
+    assert pack["sha256"] is None and pack["bytes"] == 1234
 
 
 def test_hair_a_pack_types_as_clothes_is_offered_as_hair(tmp_path: Path, data_dir: Path) -> None:

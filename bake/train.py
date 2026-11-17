@@ -307,11 +307,12 @@ def relocate(params: torch.nn.ParameterDict, opt: torch.optim.Adam) -> None:
             return
         # Revive in place: a dead splat comes back faint with its neighbours' colour, so the area is not lost.
         params["opacity"][dead] = torch.logit(torch.tensor(0.1, device=op.device))
+        rows = dead.reshape(dead.shape[0], -1).any(dim=1)  # one per splat, whatever opacity's shape: (N,) or (N, 1)
         for state in opt.state.values():
             for key in ("exp_avg", "exp_avg_sq"):
-                if key in state and state[key].shape[0] == dead.shape[0]:
-                    state[key][dead] = 0
-        print(f"revived {int(dead.sum())} splats", flush=True)
+                if key in state and state[key].shape[0] == rows.shape[0]:
+                    state[key][rows] = 0
+        print(f"revived {int(rows.sum())} splats", flush=True)
 
 
 def export(out: Path, head, params, tris, tu, tw, rest, tri, u, w) -> None:

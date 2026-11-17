@@ -190,11 +190,16 @@ def find_mpfb():
 
 
 def resolve_asset(services, fragment: str) -> str:
-    """``hair/short02/short02.mhclo`` to a file under one of MPFB's data roots."""
+    """``hair/short02/short02.mhclo`` to a file under one of MPFB's data roots, and never outside them."""
     subdir, _, rest = fragment.partition("/")
+    parts = rest.split("/")
+    if "\\" in fragment or os.path.isabs(rest) or any(p in ("", ".", "..") for p in [subdir, *parts]):
+        raise RecipeError(f"asset {fragment!r} is not a path inside MPFB's data directory")
     for root in services.AssetService.get_asset_roots(subdir):
-        candidate = os.path.join(root, rest)
-        if os.path.isfile(candidate):
+        # Contained by its text, not by resolving links: an asset pack may be installed as a symlink.
+        root = os.path.normpath(root)
+        candidate = os.path.normpath(os.path.join(root, *parts))
+        if os.path.commonpath([candidate, root]) == root and os.path.isfile(candidate):
             return candidate
     raise RecipeError(f"asset {fragment!r} is not installed: is the asset pack that holds it in MPFB's data directory?")
 
@@ -409,7 +414,10 @@ def shade_mouth(head, teeth, tongue, floor: float) -> dict:
         rgba[:, :3] = np.asarray(values, dtype=np.float32)[:, None]
         attribute.data.foreach_set("color", rgba.ravel())
         obj.data.color_attributes.active_color = attribute
-        obj.data.color_attributes.render_color_index = 0
+        # The new attribute's own index: a mesh that already has one (an import's, or an earlier Shade, which makes
+        # this one Shade.001) would otherwise render and export the old one.
+        names = [a.name for a in obj.data.color_attributes]
+        obj.data.color_attributes.render_color_index = names.index(attribute.name)
     return {"lip_front_mm": round(lip_front * 1000, 1), "head_vertices_shaded": inside, "floor": floor}
 
 
@@ -459,6 +467,7 @@ def bake_skin_maps(head, workdir: str, *, strength: float = 0.18, radius: int = 
     n /= np.linalg.norm(n, axis=2, keepdims=True)
     rough = np.clip(0.62 - 0.05 * height, 0.4, 0.85)
     report = {"made": True, "source": colour.name, "size": [w, h]}
+    made = {}  # the images made here: a name already taken gets a suffix, so never look them up by name
     for name, data in (
         ("skin_detail_normal", n * 0.5 + 0.5),
         ("skin_detail_roughness", np.dstack([rough, rough, rough])),
@@ -473,15 +482,16 @@ def bake_skin_maps(head, workdir: str, *, strength: float = 0.18, radius: int = 
         image.save(filepath=path, quality=92)
         image.source = "FILE"
         image.reload()
+        made[name] = image
         report[name] = path
     normal_tex = nodes.new("ShaderNodeTexImage")
-    normal_tex.image = bpy.data.images["skin_detail_normal"]
+    normal_tex.image = made["skin_detail_normal"]
     normal_map = nodes.new("ShaderNodeNormalMap")
     normal_map.name = SKIN_DETAIL
     links.new(normal_tex.outputs["Color"], normal_map.inputs["Color"])
     links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
     rough_tex = nodes.new("ShaderNodeTexImage")
-    rough_tex.image = bpy.data.images["skin_detail_roughness"]
+    rough_tex.image = made["skin_detail_roughness"]
     split = nodes.new("ShaderNodeSeparateColor")
     links.new(rough_tex.outputs["Color"], split.inputs["Color"])
     links.new(split.outputs["Green"], bsdf.inputs["Roughness"])  # glTF reads roughness from green
@@ -637,7 +647,8 @@ def recolour(image, target) -> None:
     *target* is linear RGB (hair: the strands' variation kept), or a garment colourway's ``(mode, linear RGB)``:
     ``tint`` keeps the fabric's variation the same way, ``solid`` paints it flat.
     """
-    mode, rgb = target if isinstance(target, tuple) else ("tint", target)
+    colourway = isinstance(target, tuple | list) and len(target) == 2 and isinstance(target[0], str)
+    mode, rgb = target if colourway else ("tint", target)
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
     image.pixels.foreach_get(pixels)
     paint = hair_colour.solid if mode == "solid" else hair_colour.recolour
@@ -708,7 +719,12 @@ def fit_textures(
     larger per pixel, so they get their own, usually smaller, cap *max_alpha_px*.
     """
     scene = bpy.context.scene
-    scene.view_settings.view_transform = "Standard"  # save_render must not grade the texture
+    # save_render writes through the scene's colour management, which must not grade the texture: no look,
+    # exposure or gamma (a user's startup file may set them), and a data image (Non-Color) written raw below.
+    scene.display_settings.display_device = "sRGB"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
     report = []
     for image in sorted(used_images(), key=lambda i: i.name):
         if image.get("argus_baked"):
@@ -734,6 +750,9 @@ def fit_textures(
         scene.render.image_settings.color_mode = "RGBA" if keep_alpha else "RGB"
         scene.render.image_settings.quality = 90
         path = os.path.join(workdir, f"{len(report):02d}.{'png' if keep_alpha else 'jpg'}")
+        # Standard undoes a colour image's sRGB exactly; a data image's values are scene linear, so the display's
+        # sRGB curve would land on them: Raw writes them unconverted.
+        scene.view_settings.view_transform = "Raw" if image.colorspace_settings.is_data else "Standard"
         image.save_render(path, scene=scene)
         image.source = "FILE"
         image.filepath = path
@@ -1087,7 +1106,13 @@ def add_accessories(specs: list, basemesh, rig) -> list:
             mesh = studs(count=2, radius=0.0032, spacing=0.010) if hit else None
         elif kind == "earpiece":  # on the side of the head at the ear (the head alone: hair would stop the ray)
             found = head_tree.ray_cast(Vector((sign * 0.5, 0.0, -0.022)), Vector((-sign, 0, 0)))
-            hit = (found[0], found[1]) if found[0] is not None else None
+            # The tree is the basemesh's own (local) space; the other accessories are cast in the world's.
+            world = basemesh.matrix_world
+            hit = (
+                (world @ found[0], (world.to_3x3().inverted_safe().transposed() @ found[1]).normalized())
+                if found[0] is not None
+                else None
+            )
             mesh = bud(radius=0.0075) if hit else None
         else:
             raise RecipeError(f"no accessory {kind!r}: there are {', '.join(ACCESSORY_BONES)}")

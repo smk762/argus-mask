@@ -115,6 +115,51 @@ def test_a_second_source_for_a_face_is_refused(client) -> None:
         assert third.receive_json()["type"] == "ready"
 
 
+def test_a_late_cleanup_never_frees_a_source_that_claimed_the_face_since(assets) -> None:
+    import asyncio
+    import threading
+
+    from argus_mask.drivers.energy import EnergyDriver, EnergySession
+
+    closing, let_close = threading.Event(), threading.Event()
+
+    class SlowToClose(EnergySession):
+        first = True
+
+        async def close(self) -> None:
+            if SlowToClose.first:  # the first source's performer is still closing when the next one claims the face
+                SlowToClose.first = False
+                closing.set()
+                while not let_close.is_set():
+                    await asyncio.sleep(0.01)
+            await super().close()
+
+    class Driver(EnergyDriver):
+        async def open(self, fps: int) -> EnergySession:
+            return SlowToClose(fps)
+
+    app = create_app(Settings(assets_dir=assets), driver=Driver())
+    with TestClient(app) as client, client.websocket_connect("/session/test-head/source") as first:
+        first.send_text(HELLO)
+        assert first.receive_json()["type"] == "ready"
+        first.send_bytes(pcm(0.1))
+        first.send_text(json.dumps({"type": "end"}))
+        assert closing.wait(5)  # the face is free, the first performer not yet closed
+        with client.websocket_connect("/session/test-head/source") as second:
+            second.send_text(HELLO)
+            session = second.receive_json()["session_id"]
+            let_close.set()
+            assert first.receive_json()["type"] == "done"
+            stage = app.state.stages["test-head"]
+            assert stage.claimed and stage.header is not None and stage.header.session_id == session
+            assert client.get("/health").json()["live"] == ["test-head"]
+            with client.websocket_connect("/session/test-head/source") as third:
+                assert third.receive_json() == {"type": "error", "detail": "face 'test-head' already has a source"}
+            second.send_text(json.dumps({"type": "end"}))
+            assert second.receive_json()["type"] == "done"
+        assert client.get("/health").json()["live"] == []
+
+
 def test_a_viewer_that_joins_mid_stream_gets_the_header_then_live_frames(client) -> None:
     with client.websocket_connect("/session/test-head/source") as source:
         source.send_text(HELLO)

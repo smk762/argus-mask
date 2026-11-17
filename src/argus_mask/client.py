@@ -182,21 +182,29 @@ class TtsReply:
 
     Kept together so a cancelled ``say`` can cut the socket from another thread:
     closing a response does not wake a thread blocked in a read, a shutdown does.
+    The socket is the one the request went out on: a reply that closes the connection
+    (``Connection: close``, HTTP/1.0, a body with no length) leaves ``connection.sock``
+    ``None`` and the socket owned by the response.
     """
 
     def __init__(
-        self, connection: http.client.HTTPConnection, response: http.client.HTTPResponse, fmt: AudioFormat
+        self,
+        connection: http.client.HTTPConnection,
+        response: http.client.HTTPResponse,
+        fmt: AudioFormat,
+        sock: socket.socket | None = None,
     ) -> None:
         self.connection = connection
         self.response = response
         self.fmt = fmt
+        self.sock = sock if sock is not None else connection.sock
 
     def read(self, n: int = -1) -> bytes:
         return self.response.read() if n < 0 else self.response.read1(n)
 
     def cut(self) -> None:
         """Stop a read in progress, from any thread."""
-        sock = self.connection.sock
+        sock = self.sock
         if sock is not None:
             with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
@@ -586,6 +594,7 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
             body=json.dumps(body).encode(),
             headers={"Content-Type": "application/json", "Connection": "close"},
         )
+        sock = connection.sock  # getresponse() hands it to the response, and drops it here, when the reply closes
         response = connection.getresponse()
     except TimeoutError as exc:
         connection.close()
@@ -613,7 +622,7 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
             "the TTS service did not state a PCM format this understands "
             f"(X-Sample-Rate={response.getheader('X-Sample-Rate')!r}, X-Audio-Format={declared!r})"
         ) from exc
-    return TtsReply(connection, response, fmt)
+    return TtsReply(connection, response, fmt, sock)
 
 
 async def say(

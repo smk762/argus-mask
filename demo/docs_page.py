@@ -90,11 +90,11 @@ def opsec_hits(text: str, deny: list[str] = ()) -> list[tuple[int, str, str]]:
     for kind, pattern in OPSEC:
         hits += [(line(m.start()), kind, m.group(0)) for m in pattern.finditer(text)]
     lower = text.lower()
-    for term in deny:
-        start = lower.find(term.lower())
+    for term in filter(None, (t.strip().lower() for t in deny)):  # an empty term matches everywhere, forever
+        start = lower.find(term)
         while start >= 0:
             hits.append((line(start), "denylisted term", "(withheld)"))
-            start = lower.find(term.lower(), start + len(term))
+            start = lower.find(term, start + len(term))
     return sorted(hits)
 
 
@@ -177,6 +177,17 @@ def plain(token: Token) -> str:
     return "".join(c.content for c in token.children or () if c.type in ("text", "code_inline"))
 
 
+def in_repo(path: str) -> str | None:
+    """*path* normalised, if it names something inside the repo: never an absolute path, one that climbs out, or a
+    symlink that leads out, so a doc cannot publish a file from elsewhere on the build host."""
+    resolved = os.path.normpath(path)
+    if PurePosixPath(resolved).is_absolute() or resolved == ".." or resolved.startswith("../"):
+        return None
+    if not (ROOT / resolved).resolve().is_relative_to(ROOT):
+        return None
+    return resolved
+
+
 class Doc:
     """One imported markdown file, rendered: its title, the headings on it, its HTML and the images it shows."""
 
@@ -242,11 +253,12 @@ class Doc:
     def _repo_target(self, target: str) -> str | None:
         """A link or image *target* as a path in the repo, or None if it points elsewhere."""
         if found := RAW.match(target):
-            return found.group(1)
-        if re.match(r"^[a-z][a-z0-9+.-]*:|^//|^#", target, re.I):
+            target = found.group(1)
+        elif re.match(r"^[a-z][a-z0-9+.-]*:|^//|^#", target, re.I):
             return None
-        resolved = os.path.normpath(PurePosixPath(self.path).parent.joinpath(target).as_posix())
-        return None if resolved.startswith("..") else resolved
+        else:
+            target = PurePosixPath(self.path).parent.joinpath(target).as_posix()
+        return in_repo(target)
 
     def _href(self, href: str, commit: str) -> tuple[str, bool]:
         if href.startswith("#"):
@@ -264,6 +276,8 @@ class Doc:
     def _image(self, src: str) -> str | None:
         path = self._repo_target(src)
         if path is None:
+            if RAW.match(src) or not re.match(r"^[a-z][a-z0-9+.-]*:|^//", src, re.I):
+                raise Refused(f"{self.path}: the image {src!r} is outside the repo")
             return None
         if not (ROOT / path).is_file():
             raise Refused(f"{self.path}: the image {src!r} is not in the repo")

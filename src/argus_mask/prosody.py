@@ -165,8 +165,9 @@ class Prosody:
         sounding = level_db > ACTIVE_DB
         f0 = _pitch(self._window(end, PITCH_WINDOW)) if sounding else None
 
-        # Forget audio no window will reach again.
-        keep_from = end - PITCH_WINDOW
+        # Forget audio no window will reach again, but never past what has arrived: cues may run ahead of late
+        # audio, and the samples still to come must land at their own index when they are pushed.
+        keep_from = min(end - PITCH_WINDOW, self._start + self._buf.size)
         if keep_from > self._start + DRIVER_RATE:  # trim in steps of a second, not every frame
             cut = keep_from - self._start
             self._buf = self._buf[cut:]

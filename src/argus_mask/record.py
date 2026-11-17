@@ -272,7 +272,9 @@ def video_refusal(base: str, face_id: str) -> str | None:
         return None  # unreachable: capture says so in its own words
     except ValueError:
         return f"{face_id} may not be recorded: the server's consent check did not answer in JSON"
-    if isinstance(verdict, dict) and verdict.get("ok") is False:
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("ok"), bool):
+        return f"{face_id} may not be recorded: the server's consent check gave no verdict"
+    if verdict["ok"] is not True:
         return f"{face_id} may not be recorded: {verdict.get('detail') or 'its consent record does not cover video'}"
     return None
 

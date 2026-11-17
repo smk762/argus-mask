@@ -50,6 +50,7 @@ MAX_MEMBERS = 20_000
 DOWNLOAD_SLACK = 1.05  # a download may run this much over the catalogued size before it is cut
 TIMEOUT_S = 60
 JOBS_KEEP = 20
+MAX_THUMB_URL = 500
 AGENT = "argus-mask editor (+https://github.com/smk762/argus-mask)"
 _STAGING = ".argus-mask-staging"  # under the data directory, so the final moves stay on one file system
 
@@ -110,11 +111,30 @@ def _asset(raw: object) -> dict | None:
     out = {k: str(raw.get(k) or "")[:200] for k in ("name", "type", "author", "license")}
     thumb = raw.get("thumb")
     # A thumbnail is shown by the browser, straight from the community's site: an https URL there, or none.
-    if isinstance(thumb, str) and urllib.parse.urlsplit(thumb).scheme == "https":
-        host = urllib.parse.urlsplit(thumb).hostname or ""
-        if host.endswith(".makehumancommunity.org"):
-            out["thumb"] = thumb
+    if isinstance(thumb, str) and (safe := _thumb_url(thumb)):
+        out["thumb"] = safe
     return out
+
+
+def _thumb_url(thumb: str) -> str | None:
+    """*thumb* rebuilt from its parts if it is an https URL on the community's site, else None.
+
+    The browser parses what is stored, not Python: a backslash (``https://evil\\@x.makehumancommunity.org``
+    is evil's to a browser), userinfo, a port, spaces or control characters would let the two disagree on the host.
+    """
+    if len(thumb) > MAX_THUMB_URL or "\\" in thumb or any(c.isspace() or not c.isprintable() for c in thumb):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(thumb)
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname or ""
+    if parts.scheme != "https" or parts.username or parts.password or port is not None:
+        return None
+    if not host.endswith(".makehumancommunity.org") or parts.netloc.lower() != host:
+        return None
+    return urllib.parse.urlunsplit(("https", host, parts.path, parts.query, ""))
 
 
 def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
@@ -285,9 +305,28 @@ def unpack(zip_path: Path, data_dir: Path, pack_id: str) -> dict:
 Opener = Callable[[str], object]  # url -> a response with .read(n); the tests pass their own
 
 
+def _on_hosts(url: str) -> bool:
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme == "https" and parts.hostname in HOSTS
+
+
+class _FencedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to https on :data:`HOSTS`: the catalogue's fence holds on every hop, not just the first."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201 - urllib's signature
+        if not _on_hosts(newurl):
+            raise urllib.error.HTTPError(newurl, code, f"redirected off the catalogue's hosts ({msg})", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_FencedRedirects)
+
+
 def _open(url: str) -> object:
+    if not _on_hosts(url):
+        raise PackError(f"{url!r} is not https on the catalogue's hosts")
     req = urllib.request.Request(url, headers={"User-Agent": AGENT})  # noqa: S310 - https, HOSTS only
-    return urllib.request.urlopen(req, timeout=TIMEOUT_S)  # noqa: S310
+    return _OPENER.open(req, timeout=TIMEOUT_S)
 
 
 def download(pack: Pack, dest: Path, progress: Callable[[int], None], opener: Opener = _open) -> str:

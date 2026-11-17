@@ -117,7 +117,11 @@ def check_plate(directory: Path) -> PlateManifest:
         if file.is_symlink() or not file.is_file():  # a link could point anywhere: a plate holds its own files
             problems.append(f"{role}: {image.file} is missing or not a plain file")
             continue
-        data = file.read_bytes()
+        try:
+            data = file.read_bytes()
+        except OSError as exc:  # gone since it was looked at
+            problems.append(f"{role}: {image.file} could not be read: {exc.strerror or exc}")
+            continue
         total += len(data)
         if len(data) > MAX_IMAGE_BYTES:
             problems.append(f"{role}: {image.file} is {len(data) // 1024} KB, over {MAX_IMAGE_BYTES // 1024} KB")
@@ -214,7 +218,7 @@ class Darkroom:
                 raise PlateError("darkroom's stream ended without a record")
             except urllib.error.HTTPError as exc:
                 detail = exc.read()
-                if exc.code == 409 and time.monotonic() < deadline:
+                if exc.code == 409 and _busy(detail) and time.monotonic() < deadline:
                     self.sleep(self.busy_wait)
                     continue
                 raise PlateError(f"darkroom refused the generation: {exc.code} {_detail(detail)}") from exc
@@ -320,7 +324,9 @@ def _check_record(record: dict, body: dict) -> DarkroomRender:
     policy = (record.get("guard") or {}).get("enforcing_policy")
     if policy != POLICY:
         raise PlateError(f"darkroom record {rid}: enforced {policy!r}, not {POLICY!r}")
-    checkpoint = (asked.get("checkpoint") or {}).get("name") or body["checkpoint"]
+    checkpoint = (asked.get("checkpoint") or {}).get("name")
+    if checkpoint != body["checkpoint"]:  # the plate's provenance names the model the record confirms, or none
+        raise PlateError(f"darkroom record {rid}: checkpoint {checkpoint!r}, not {body['checkpoint']!r}")
     sampling = asked.get("sampling") or {}
     return DarkroomRender(
         record_id=rid,
@@ -446,7 +452,18 @@ class PlateStore:
 
     @staticmethod
     def _version(directory: Path) -> tuple:
-        return tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in directory.iterdir()))
+        """Each entry's name, mtime and size; a link is fingerprinted, not followed, so a dangling one is no error."""
+        try:
+            found = []
+            for p in directory.iterdir():
+                try:
+                    stat = p.lstat()
+                except FileNotFoundError:  # gone since iterdir(): it is not part of the plate now
+                    continue
+                found.append((p.name, stat.st_mtime_ns, stat.st_size))
+        except OSError as exc:  # the directory, or an entry, went while it was read
+            raise PlateError(f"{directory}: could not be read: {exc.strerror or exc}") from exc
+        return tuple(sorted(found))
 
     def load(self, name: str) -> tuple[PlateManifest, Path]:
         """The plate *name* and its directory; raises :class:`PlateError` saying why it is not served."""

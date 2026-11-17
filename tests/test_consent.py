@@ -177,6 +177,36 @@ def test_a_release_has_one_record_and_a_revocation_stands(tmp_path) -> None:
         store.find("ab")
 
 
+def test_a_create_that_fails_part_way_leaves_no_record_behind(tmp_path, monkeypatch) -> None:
+    import argus_mask.consent as consent_module
+
+    real_fdopen = consent_module.os.fdopen
+
+    class Full:
+        def __init__(self, fd, *args, **kwargs):
+            self.out = real_fdopen(fd, *args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.out.close()
+
+        def write(self, text):
+            self.out.write(text[:10])
+            self.out.flush()
+            raise OSError("no space left on device")
+
+    store = ConsentStore(tmp_path)
+    monkeypatch.setattr(consent_module.os, "fdopen", Full)
+    with pytest.raises(OSError, match="no space"):
+        store.create(consent_record())
+    monkeypatch.undo()
+    assert store.get(RELEASE) is None and list(store.dir.iterdir()) == []  # nothing half-written, nothing to block
+    store.create(consent_record())
+    assert store.get(RELEASE) == consent_record()
+
+
 def test_a_record_filed_under_another_hash_or_broken_is_refused(tmp_path) -> None:
     store = ConsentStore(tmp_path)
     store.dir.mkdir()

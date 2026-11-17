@@ -97,11 +97,13 @@ def _preprocess(self, input_image_path):
 
     if not os.path.exists(input_image_path):
         return FAILED_TO_DETECT
-    frame = torchvision.io.read_image(input_image_path)[:3, ...]
+    # RGB always: a grey, grey+alpha or palette portrait would otherwise decode to 1 or 2 channels and fail detection.
+    frame = torchvision.io.read_image(input_image_path, mode=torchvision.io.ImageReadMode.RGB)
     try:
         _, bbox, _ = self.vgghead_encoder(frame, 0)
-    except Exception:
-        bbox = None
+    except Exception as exc:  # noqa: BLE001 - the detector's failures are not typed; say what it was
+        print(f"frontend: the head detector failed: {exc!r}", file=sys.stderr)
+        return FAILED_TO_DETECT
     if bbox is None:
         print("frontend: no head found", file=sys.stderr)
         return FAILED_TO_DETECT
