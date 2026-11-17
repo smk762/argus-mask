@@ -110,7 +110,7 @@ class AssetLibrary:
             except OSError:
                 continue
             for sub in subs:
-                paths += [sub, sub / f"{sub.name}{ext}"]
+                paths += [sub, sub / f"{sub.name}{ext}", sub / f"{sub.name}.thumb"]
         out = []
         for path in paths:
             try:
