@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -580,6 +581,22 @@ def test_the_cache_keeps_the_most_recently_used(rig) -> None:
     asyncio.run(builder.build(presets[1]))  # used again: now the newest
     asyncio.run(builder.build(Preset.model_validate(preset(targets={"head-square": 0.4}))))
     assert builder.cached(keys[1]) and builder.cached(keys[2]) is None
+
+
+def test_the_cache_keeps_the_most_recently_used_when_the_clock_has_not_moved(rig, monkeypatch) -> None:
+    """A coarse clock gives builds a moment apart the same time: recency must not rest on the clock moving on."""
+    builder = builder_for(rig, cache_size=2)
+    presets = [Preset.model_validate(preset(targets={"head-square": v})) for v in (0.1, 0.2, 0.3, 0.4)]
+    keys = [builder.key(p) for p in presets]
+    for p in presets[:3]:
+        asyncio.run(builder.build(p))
+    tick = time.time_ns() + 3600 * 10**9  # one tick, and it never moves: every entry and every read share it
+    monkeypatch.setattr(time, "time_ns", lambda: tick)
+    for entry in (builder.cached(keys[1]), builder.cached(keys[2])):
+        os.utime(entry, ns=(tick, tick))
+    asyncio.run(builder.build(presets[1]))  # used again: now the newest
+    asyncio.run(builder.build(presets[3]))
+    assert builder.cached(keys[1]) and builder.cached(keys[3]) and builder.cached(keys[2]) is None
 
 
 def test_a_changed_or_damaged_cache_entry_is_rebuilt(client, rig) -> None:
