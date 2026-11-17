@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -240,3 +241,61 @@ def test_what_blender_loads_by_path_imports_nothing_from_the_package(name: str) 
     }
     assert "argus_mask" not in imported and "argus_cortex" not in imported, imported
     assert not any(isinstance(n, ast.ImportFrom) and n.level for n in ast.walk(tree)), "a relative import"
+
+
+# -- LAM and VHAP code is never copied into the repo (#136) ----------------------------------------------------------
+
+# The headers that mark LAM's and VHAP's own files, as each source file carries them: Max-Planck's proprietary notice
+# on FLAME's layer (in LAM and in VHAP), Toyota Motor Europe's on VHAP (CC BY-NC-SA), and LAM's own copyright line.
+# A credit that names LAM (the demo's) is not a header and does not match.
+COPIED_HEADERS = (
+    "holder of all proprietary rights on this computer program",
+    "Toyota Motor Europe NV/SA and its affiliated companies retain all intellectual",
+    "The Alibaba 3DAIGC Team Authors",
+)
+# LAM's and VHAP's packages: `lam/make_head.py` and `lam/overrides.py` import them inside LAM's container, where LAM
+# is installed; nothing else may.
+LAM_PACKAGES = {"lam", "vhap"}
+RUNS_LAM = {"lam/make_head.py", "lam/overrides.py"}
+
+
+def _tracked() -> list[str]:
+    try:
+        out = subprocess.run(  # noqa: S603 - fixed arguments
+            ["git", "-C", str(ROOT), "ls-files", "-z"],  # noqa: S607
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("not a git checkout: the tracked files are what is checked")
+    return [p for p in out.decode().split("\0") if p and (ROOT / p).is_file()]
+
+
+def test_no_file_carries_a_lam_or_vhap_licence_header() -> None:
+    this = Path(__file__).resolve().relative_to(ROOT).as_posix()  # it names the headers to find them
+    found = []
+    for rel in _tracked():
+        if rel == this or (ROOT / rel).stat().st_size > 5_000_000:
+            continue
+        text = (ROOT / rel).read_bytes().decode("utf-8", errors="ignore")
+        found += [f"{rel}: {header!r}" for header in COPIED_HEADERS if header in text]
+    assert not found, "LAM's or VHAP's code is in the repo:\n" + "\n".join(found)
+
+
+def test_no_lam_or_vhap_package_is_in_the_repo_or_imported_outside_the_head_builder() -> None:
+    tracked = _tracked()
+    assert not [p for p in tracked if "vhap" in Path(p).parts[:-1]], "a vhap/ directory"
+    found = []
+    for rel in tracked:
+        if not rel.endswith(".py") or rel in RUNS_LAM:
+            continue
+        tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"), filename=rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            found += [f"{rel}:{node.lineno} imports {n}" for n in names if n.split(".")[0] in LAM_PACKAGES]
+    assert not found, "\n".join(found)

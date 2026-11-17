@@ -18,6 +18,24 @@ jobs:
       test-extras: "dev,server,cli"
       post-test: "uv run --no-sync argus-mask schema --check"
 
+  lam:
+    # lam/'s checked pipeline (#136): the preflight, our FLAME core against a synthetic FLAME, overrides.verify().
+    # They need torch, which mask does not depend on: a CPU build here, and the main job skips them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # hatch-vcs derives the dev version from git history
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev,server,cli]"
+      - run: uv pip install "torch==2.15.0" --index-url https://download.pytorch.org/whl/cpu
+      - run: uv run --no-sync pytest --tb=short -q tests/test_lam.py
+        env:
+          ARGUS_MASK_LAM_TESTS: "1" # a missing torch fails here instead of skipping
+
   suite-rules:
     # argus-ci suite rules: lint rules that each eliminate a finding class. New violations fail;
     # existing ones are in .suite-rules-baseline.json, which may only shrink.

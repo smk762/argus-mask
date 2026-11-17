@@ -8,7 +8,6 @@ is FLAME 2023 Open, the landmark embedding is ours (`landmarks/embedding.json`),
 every Max-Planck-noticed function (`overrides.py`) and the tracker's front end is ours (`frontend.py`).
 """
 
-import hashlib
 import os
 import shutil
 import sys
@@ -21,28 +20,10 @@ import overrides  # noqa: E402  (must run before anything from LAM is imported)
 
 overrides.install()
 import frontend  # noqa: E402
-from landmarks import embedding  # noqa: E402
+import preflight  # noqa: E402
 
-# FLAME 2023 Open (CC BY 4.0), as downloaded from flame.is.tue.mpg.de. The academic FLAME 2023 is a different file.
-FLAME_OPEN_SHA256 = "e75a0990728ba038c7da2a420ae4396f7ddd7781366c13026066c5b24f127623"
-FLAME_PATHS = (
-    "model_zoo/human_parametric_models/flame_assets/flame/flame2023.pkl",
-    "model_zoo/human_parametric_models/flame_vhap/flame2023.pkl",
-)
-for path in FLAME_PATHS:
-    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    if digest != FLAME_OPEN_SHA256:
-        sys.exit(f"{path} is not FLAME 2023 Open (sha256 {digest[:12]}…): mount flame2023_Open.pkl over it")
-
-# Ours, measured on cleared heads for MediaPipe's landmarks (landmarks/measure.py), in place of MPI's.
-EMBEDDING_PATHS = (
-    "model_zoo/human_parametric_models/flame_assets/flame/landmark_embedding_with_eyes.npy",
-    "model_zoo/human_parametric_models/flame_vhap/landmark_embedding_with_eyes.npy",
-)
-ours = embedding.load()
-for path in EMBEDDING_PATHS:
-    if not embedding.same(np.load(path, allow_pickle=True, encoding="latin1")[()], ours):
-        sys.exit(f"{path} is not argus-mask's landmark embedding: mount the one embedding.py writes over it")
+if refused := preflight.problems():
+    sys.exit("\n".join(refused))
 
 sys.argv = [sys.argv[0]]
 os.environ.update(
