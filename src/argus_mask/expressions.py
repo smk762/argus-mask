@@ -106,11 +106,12 @@ def check_set(name: str, weights: object, life: object = 1.0) -> RestSet:
     for shape, value in weights.items():
         if shape not in _SHAPES:
             raise ExpressionError(f"{shape!r} is not an ARKit blendshape")
-        if isinstance(value, bool) or not isinstance(value, int | float) or not 0.0 <= float(value) <= 1.0:
+        # Compared as given: float() of a huge JSON integer overflows, a comparison never does.
+        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
             raise ExpressionError(f"{shape}: a weight is a number from 0 to 1")
         if float(value):
             clean[str(shape)] = round(float(value), 4)
-    if isinstance(life, bool) or not isinstance(life, int | float) or not 0.0 <= float(life) <= 2.0:
+    if isinstance(life, bool) or not isinstance(life, int | float) or not 0 <= life <= 2:
         raise ExpressionError("life is a number from 0 (still) to 2")
     return RestSet(name=name, weights=dict(sorted(clean.items())), life=float(life))
 
@@ -125,15 +126,17 @@ class Expressions:
         self._broken: str | None = None  # why the file there could not be read, if it could not
         self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
 
-    def raw(self) -> dict:
-        """The file as written: {"sets": {...}, "faces": {...}}, valid or not."""
+    def raw(self, *, fresh: bool = False) -> dict:
+        """The file as written: {"sets": {...}, "faces": {...}}, valid or not; *fresh* reads it whatever the cache."""
         try:
             stat = self.path.stat()
         except OSError:
             self._seen, self._raw, self._broken = None, {}, None
             return {"sets": {}, "faces": {}}
-        key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)  # every write replaces the file: a new inode
-        if key != self._seen:
+        # Every write replaces the file, but a freed inode can be reused with the same mtime and size: a change
+        # is built on a fresh read (see the writers), never on this key alone.
+        key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        if fresh or key != self._seen:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self._raw = data if isinstance(data, dict) else {}
@@ -199,11 +202,16 @@ class Expressions:
         body = {"sets": dict(sorted(raw["sets"].items())), "faces": dict(sorted(raw["faces"].items()))}
         tmp.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
         tmp.replace(self.path)
+        try:  # what was written is what this instance reads next, whatever the stat says
+            stat = self.path.stat()
+            self._seen, self._raw, self._broken = (stat.st_ino, stat.st_mtime_ns, stat.st_size), body, None
+        except OSError:
+            self._seen = None
 
     def choose(self, face_id: str, name: str | None) -> None:
         """*face_id* shows the set *name*; None (or the default) clears its choice."""
         with self._lock:
-            raw = self.raw()
+            raw = self.raw(fresh=True)
             if name is not None and name not in self.sets(raw):
                 raise ExpressionError(f"no rest set {name!r}")
             faces = {k: v for k, v in raw["faces"].items() if k != face_id}
@@ -214,7 +222,7 @@ class Expressions:
     def define(self, rest: RestSet) -> None:
         """Add or replace a set (a built-in one too: the file's wins)."""
         with self._lock:
-            raw = self.raw()
+            raw = self.raw(fresh=True)
             sets = dict(raw["sets"])
             sets[rest.name] = {"weights": rest.weights, "life": rest.life}
             self._write({"sets": sets, "faces": raw["faces"]})
@@ -222,7 +230,7 @@ class Expressions:
     def remove(self, name: str) -> bool:
         """Remove a set of the file's own (a built-in one comes back); faces that chose it go back to the default."""
         with self._lock:
-            raw = self.raw()
+            raw = self.raw(fresh=True)
             if name not in raw["sets"]:
                 return False
             # Faces that chose a built-in set's name keep it (the built-in one is back); others go to the default.
@@ -233,7 +241,7 @@ class Expressions:
     def repoint(self, old: str, new: str | None) -> None:
         """A face was renamed (*new*) or deleted (None): its choice follows it, or goes."""
         with self._lock:
-            raw = self.raw()
+            raw = self.raw(fresh=True)
             if old not in raw["faces"]:
                 return
             faces = {k: v for k, v in raw["faces"].items() if k != old}
