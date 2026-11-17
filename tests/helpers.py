@@ -185,12 +185,16 @@ def make_splat_zip(
 
 
 def make_splat_face(root: Path, face_id: str = "splat-head", *, provenance: Provenance | None = STOCK) -> Path:
-    """A splat face directory under *root*: the archive and its manifest."""
+    """A splat face directory under *root*: the archive and its manifest. ``provenance=None`` writes it without one."""
     directory = root / face_id
     directory.mkdir(parents=True)
     model = make_splat_zip(directory / "head.zip")
-    manifest = build_manifest(model, face_id=face_id, name="Splat head", provenance=provenance or STOCK)
-    (directory / MANIFEST_NAME).write_text(manifest.model_dump_json(), encoding="utf-8")
+    manifest = build_manifest(model, face_id=face_id, name="Splat head", provenance=provenance or STOCK).model_dump(
+        mode="json"
+    )
+    if provenance is None:
+        del manifest["provenance"]
+    (directory / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
     return directory
 
 

@@ -21,6 +21,7 @@ import json
 import re
 import secrets
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -33,6 +34,7 @@ from argus_mask.models import AudioFormat, SourceHello
 from argus_mask.performance import blocks
 from argus_mask.speech import Edges, join_short, speakable, tidy_audio
 
+_MAX_EVENT_PART = 16 << 20  # bytes: a Wyoming event's line, data or payload larger than this is refused
 LEAD_S = 1.0  # how far ahead of real time a source may run
 TTS_TIMEOUT_S = 180.0  # the first byte waits for a cold model to load
 SAY_LEAD_MS = 150  # silence before a TTS utterance: the output device is awake before the first sound
@@ -74,7 +76,10 @@ def _session_url(base: str, face_id: str, end: str) -> str:
     scheme, sep, rest = base.rstrip("/").partition("://")
     if not sep:
         raise ClientError(f"{base!r} is not a URL")
-    return f"{'wss' if scheme in ('https', 'wss') else 'ws'}://{rest}/session/{face_id}/{end}"
+    secure = {"http": False, "ws": False, "https": True, "wss": True}.get(scheme.lower())
+    if secure is None:
+        raise ClientError(f"{base!r} is not an http(s):// or ws(s):// URL")
+    return f"{'wss' if secure else 'ws'}://{rest}/session/{face_id}/{end}"
 
 
 def source_url(base: str, face_id: str) -> str:
@@ -240,10 +245,26 @@ class WyomingReply:
         sock.sendall(json.dumps(head).encode() + b"\n")
 
     @staticmethod
-    def receive(sock: socket.socket, buffer: bytes) -> tuple[tuple[str, dict, bytes] | None, bytes]:
-        """The next ``(type, data, payload)`` event, or ``None`` at end of stream; and the bytes left over."""
+    def receive(
+        sock: socket.socket, buffer: bytes, deadline: float | None = None
+    ) -> tuple[tuple[str, dict, bytes] | None, bytes]:
+        """The next ``(type, data, payload)`` event, or ``None`` at end of stream; and the bytes left over.
+
+        Past *deadline* (``time.monotonic()``), a read raises ``TimeoutError``.
+        """
+
+        def recv() -> bytes:
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("timed out")
+                sock.settimeout(left)
+            return sock.recv(65536)
+
         while b"\n" not in buffer:
-            more = sock.recv(65536)
+            if len(buffer) > _MAX_EVENT_PART:
+                raise ClientError("the Wyoming server sent an event line too long to be one")
+            more = recv()
             if not more:
                 return None, buffer
             buffer += more
@@ -254,12 +275,19 @@ class WyomingReply:
             payload_length = int(head.get("payload_length") or 0)
         except (ValueError, TypeError, AttributeError) as exc:
             raise ClientError("the Wyoming server sent a line that is not an event") from exc
+        if not (0 <= data_length <= _MAX_EVENT_PART and 0 <= payload_length <= _MAX_EVENT_PART):
+            raise ClientError(
+                f"the Wyoming server sent an event length this will not take ({data_length}, {payload_length})"
+            )
         while len(buffer) < data_length + payload_length:
-            more = sock.recv(65536)
+            more = recv()
             if not more:
                 raise ClientError("the Wyoming server closed mid-event")
             buffer += more
-        data = json.loads(buffer[:data_length]) if data_length else head.get("data") or {}
+        try:
+            data = json.loads(buffer[:data_length]) if data_length else head.get("data") or {}
+        except ValueError as exc:  # UnicodeDecodeError is one
+            raise ClientError("the Wyoming server sent malformed event data") from exc
         payload = buffer[data_length : data_length + payload_length]
         return (str(head.get("type")), data if isinstance(data, dict) else {}, payload), buffer[
             data_length + payload_length :
@@ -306,8 +334,12 @@ class WyomingReply:
 
 def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
     """Ask a Wyoming TTS server for *body*'s speech; the reply once its ``audio-start`` has arrived."""
-    parts = urllib.parse.urlsplit(tts_url)
-    if not parts.hostname or not parts.port:
+    try:
+        parts = urllib.parse.urlsplit(tts_url)
+        port = parts.port
+    except ValueError as exc:
+        raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port") from exc
+    if not parts.hostname or not port:
         raise ClientError(f"{tts_url!r}: a Wyoming URL is wyoming://host:port")
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
@@ -323,7 +355,7 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
         data["voice"] = voice
     data |= {k: v for k, v in body.items() if k not in ("text", "voice", "name", "language", "speaker")}
     try:
-        sock = socket.create_connection((parts.hostname, parts.port), timeout=TTS_TIMEOUT_S)
+        sock = socket.create_connection((parts.hostname, port), timeout=TTS_TIMEOUT_S)
     except OSError as exc:
         raise ClientError(f"the Wyoming server at {tts_url} does not answer: {exc}") from exc
     try:
@@ -338,12 +370,13 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
                 raise ClientError(f"the Wyoming server failed: {info.get('text') or info.get('code') or info}")
             if kind == "audio-start":
                 break
-        width, channels, rate = int(info.get("width") or 0), int(info.get("channels") or 1), int(info.get("rate") or 0)
-        if width != 2:
-            raise ClientError(f"the Wyoming server sends {width * 8}-bit samples; only 16-bit is understood")
         try:
+            width = int(info.get("width") or 0)
+            channels, rate = int(info.get("channels") or 1), int(info.get("rate") or 0)
+            if width != 2:
+                raise ClientError(f"the Wyoming server sends {width * 8}-bit samples; only 16-bit is understood")
             fmt = AudioFormat(sample_rate=rate, channels=channels, format="s16le")
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise ClientError(f"the Wyoming server declared an audio format this cannot use: {info}") from exc
     except TimeoutError as exc:
         sock.close()
@@ -351,13 +384,13 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
             f"the Wyoming server at {tts_url} sent nothing for {TTS_TIMEOUT_S:g}s. A cold model takes a minute or two to load; "
             "longer than that, the service is stuck."
         ) from exc
-    except (OSError, ClientError):
+    except BaseException:
         sock.close()
         raise
     return WyomingReply(sock, fmt, buffer)
 
 
-VOICES_TIMEOUT_S = 5.0
+VOICES_TIMEOUT_S = 5.0  # for the whole describe, not each read
 
 
 def http_base(tts_url: str) -> str | None:
@@ -365,10 +398,10 @@ def http_base(tts_url: str) -> str | None:
     if not tts_url.startswith(("http://", "https://")):
         return None
     parts = urllib.parse.urlsplit(tts_url)
-    base_path = re.sub(r"/synthesi[sz]e(/stream)?/?$", "", parts.path)
-    if base_path == parts.path.rstrip("/"):
+    match = re.search(r"/synthesi[sz]e(/stream)?/?$", parts.path)
+    if match is None:
         return None
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, base_path, "", ""))
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path[: match.start()], "", ""))
 
 
 CLONE_TIMEOUT_S = 300.0  # a cold model loads before it clones
@@ -510,8 +543,9 @@ def tts_voices(tts_url: str) -> list[dict] | None:
         with socket.create_connection((parts.hostname, port), timeout=VOICES_TIMEOUT_S) as sock:
             WyomingReply.send(sock, "describe")
             buffer = b""
+            deadline = time.monotonic() + VOICES_TIMEOUT_S
             while True:
-                event, buffer = WyomingReply.receive(sock, buffer)
+                event, buffer = WyomingReply.receive(sock, buffer, deadline)
                 if event is None:
                     raise ClientError(f"the Wyoming server at {tts_url} closed without describing itself")
                 if event[0] == "info":
@@ -581,9 +615,13 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
             if not tts_url
             else f"ARGUS_MASK_TTS_URL {tts_url!r} is not http(s):// or wyoming://"
         )
-    parts = urllib.parse.urlsplit(tts_url)
+    try:
+        parts = urllib.parse.urlsplit(tts_url)
+        port = parts.port
+    except ValueError as exc:
+        raise ClientError(f"ARGUS_MASK_TTS_URL {tts_url!r} is not a URL: {exc}") from exc
     kind = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
-    connection = kind(parts.hostname or "", parts.port, timeout=TTS_TIMEOUT_S)
+    connection = kind(parts.hostname or "", port, timeout=TTS_TIMEOUT_S)
     path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
     try:
         # One stream per connection. Without "Connection: close" a keep-alive server waits for the next
@@ -606,8 +644,13 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
         connection.close()
         raise ClientError(f"the TTS service at {tts_url} does not answer: {exc}") from exc
     if response.status != 200:
-        detail = response.read(300).decode(errors="replace")
-        connection.close()
+        try:
+            detail = response.read(300).decode(errors="replace")
+        except (OSError, http.client.HTTPException):
+            detail = ""  # the status is the answer; a body that does not arrive adds nothing
+        finally:
+            response.close()
+            connection.close()
         raise ServiceRefused(f"the TTS service answered {response.status}: {detail}", response.status)
     declared = (response.getheader("X-Audio-Format") or "").lower()
     try:
@@ -792,6 +835,30 @@ class _Carry:
             self.previous = None
 
 
+async def _open_tts_cancellable(tts_url: str, body: dict) -> TtsReply | WyomingReply:
+    """`open_tts` in a thread. Cancelled meanwhile, the reply the thread still opens is closed, not leaked."""
+    lock = threading.Lock()
+    held: dict = {"abandoned": False, "reply": None}
+
+    def run() -> TtsReply | WyomingReply:
+        reply = open_tts(tts_url, body)
+        with lock:
+            held["reply"] = reply
+            abandoned = held["abandoned"]
+        if abandoned:
+            reply.close()
+        return reply
+
+    def abandon() -> None:
+        with lock:
+            held["abandoned"] = True
+            reply = held["reply"]
+        if reply is not None:
+            reply.close()
+
+    return await _cancellable(asyncio.to_thread(run), cut=abandon)
+
+
 async def _open_part(
     tts_url: str,
     body: dict,
@@ -805,12 +872,12 @@ async def _open_part(
         on_progress(i + 1, len(parts))
     request = carry.body(body, parts[i][0])
     try:
-        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, request), cut=None)
+        reply = await _open_tts_cancellable(tts_url, request)
     except ServiceRefused as exc:
         if "context" not in request or exc.status not in (400, 422):
             raise
         carry.on = False  # this service does not take context: ask again without it, and stop sending it
-        reply = await _cancellable(asyncio.to_thread(open_tts, tts_url, carry.body(body, parts[i][0])), cut=None)
+        reply = await _open_tts_cancellable(tts_url, carry.body(body, parts[i][0]))
     if fmt is not None and reply.fmt != fmt:
         reply.close()
         raise ClientError(f"the TTS service changed its audio format mid-utterance: {reply.fmt} after {fmt}")
