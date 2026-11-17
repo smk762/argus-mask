@@ -181,7 +181,7 @@ class Builder:
         target = self.cache_dir / key
         if target.exists():
             if self.cached(key) is not None:
-                os.utime(target)
+                self._touch(target)
                 return
             shutil.rmtree(target)  # damaged: replace it with this build, or it is rebuilt every time
         tmp = Path(tempfile.mkdtemp(prefix=".keep-", dir=self.cache_dir))
@@ -191,16 +191,25 @@ class Builder:
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
-        entries = sorted(
-            (p for p in self.cache_dir.iterdir() if _KEY.fullmatch(p.name)), key=lambda p: p.stat().st_mtime
-        )
+        self._touch(target)  # copytree gave it the work directory's time, which may be older than any entry
+        entries = sorted(self._entries(), key=lambda p: p.stat().st_mtime_ns)
         for old in entries[: max(0, len(entries) - self.cache_size)]:
             shutil.rmtree(old, ignore_errors=True)
+
+    def _entries(self) -> list[Path]:
+        return [p for p in self.cache_dir.iterdir() if _KEY.fullmatch(p.name)]
+
+    def _touch(self, entry: Path) -> None:
+        """Mark *entry* the most recently used: later than every other entry, not merely now. The file system's
+        clock is coarse, so two builds a moment apart can read the same time, and a tie evicts either."""
+        newest = max((p.stat().st_mtime_ns for p in self._entries() if p != entry), default=0)
+        stamp = max(time.time_ns(), newest + 1)
+        os.utime(entry, ns=(stamp, stamp))
 
     def _from_cache(self, source: Path, work: Path, preset: Preset) -> tuple[FaceManifest, dict]:
         """Fill *work* from a cached build, with this preset's id and name."""
         shutil.copytree(source, work, dirs_exist_ok=True)
-        os.utime(source)  # recently used: kept longest
+        self._touch(source)  # recently used: kept longest
         manifest = FaceManifest.model_validate_json((work / MANIFEST_NAME).read_text(encoding="utf-8"))
         manifest = manifest.model_copy(update={"id": preset.id, "name": preset.name})
         (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
