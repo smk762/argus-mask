@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import time
@@ -86,13 +87,21 @@ class VoiceStore:
         sha = hashlib.sha256(data).hexdigest()
         self.staged.mkdir(parents=True, exist_ok=True)
         path = self.staged / f"{sha}.wav"
-        if not path.exists():
-            tmp = path.with_suffix(".part")
+        try:
+            os.utime(path)  # already here: now the newest
+        except FileNotFoundError:
+            # a temp name of its own: two requests staging the same clip each write and replace their own
+            tmp = path.with_name(f"{sha}.{uuid.uuid4().hex}.part")
             tmp.write_bytes(data)
             tmp.replace(path)
-        path.touch()
-        old = sorted(self.staged.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True)[STAGED_KEEP:]
-        for p in old:
+        # Another request may evict (or be evicting) the same files: one gone between listing and stat is skipped.
+        dated = []
+        for p in self.staged.glob("*.wav"):
+            try:
+                dated.append((p.stat().st_mtime, p))
+            except FileNotFoundError:
+                continue
+        for _, p in sorted(dated, reverse=True)[STAGED_KEEP:]:
             p.unlink(missing_ok=True)
         return sha
 
@@ -147,7 +156,8 @@ class VoiceStore:
             return False
         bin_ = self.root / ".trash"
         bin_.mkdir(parents=True, exist_ok=True)
-        folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}")
+        # unique: the same id made and deleted again within a second must not land on the first one's folder
+        folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}")
         return True
 
 
@@ -250,7 +260,15 @@ class Generations:
             finally:
                 job.ended = time.monotonic()
 
+        def settled(task: asyncio.Task) -> None:
+            # A cancelled run (stop_all, or cancelled before it began) catches nothing: it must not stay "running",
+            # which would refuse every later start and never be pruned.
+            if job.state == "running":
+                job.state, job.error = "failed", "cancelled" if task.cancelled() else "stopped"
+                job.ended = job.ended or time.monotonic()
+
         job.task = asyncio.create_task(run())
+        job.task.add_done_callback(settled)
         return job
 
     async def stop_all(self) -> None:
