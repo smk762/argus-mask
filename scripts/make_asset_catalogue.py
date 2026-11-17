@@ -252,7 +252,8 @@ def main(argv: list[str] | None = None) -> int:
             entry["sha256"], entry["bytes"] = sha256_of(entry["urls"][0])
             print(f"  {pack}: hashed {entry['bytes'] / 2**20:.0f} MB in {time.monotonic() - t:.0f} s", file=sys.stderr)
         else:
-            entry["bytes"], entry["sha256"] = size, before.get("sha256") if before.get("bytes") == size else None
+            same = before.get("bytes") == size and before.get("urls", [None])[0] == entry["urls"][0]
+            entry["bytes"], entry["sha256"] = size, before.get("sha256") if same else None
         entry.pop("megabytes")
         packs.append(entry)
         print(f"  {pack}: {len(entry['assets'])} assets, {entry['license'] or 'no licence'}", file=sys.stderr)

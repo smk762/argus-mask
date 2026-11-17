@@ -122,6 +122,7 @@ class Expressions:
         self.path = Path(root) / EXPRESSIONS_NAME
         self._seen: tuple[int, int, int] | None = None
         self._raw: dict = {}
+        self._broken: str | None = None  # why the file there could not be read, if it could not
         self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
 
     def raw(self) -> dict:
@@ -129,15 +130,16 @@ class Expressions:
         try:
             stat = self.path.stat()
         except OSError:
-            self._seen, self._raw = None, {}
+            self._seen, self._raw, self._broken = None, {}, None
             return {"sets": {}, "faces": {}}
         key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)  # every write replaces the file: a new inode
         if key != self._seen:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self._raw = data if isinstance(data, dict) else {}
-            except (OSError, ValueError):
-                self._raw = {}
+                self._broken = None if isinstance(data, dict) else "the file is not a JSON object"
+            except (OSError, ValueError) as exc:
+                self._raw, self._broken = {}, f"the file cannot be read: {exc}"
             self._seen = key
         sets = self._raw.get("sets")
         faces = self._raw.get("faces")
@@ -171,6 +173,8 @@ class Expressions:
     def problems(self) -> dict[str, str]:
         raw = self.raw()
         own, problems = self._own(raw)
+        if self._broken:
+            problems[EXPRESSIONS_NAME] = self._broken
         sets = {**BUILTIN, **own}
         for face, name in raw["faces"].items():
             if name not in sets:
@@ -188,6 +192,9 @@ class Expressions:
         return sets.get(self.choices(raw, sets).get(face_id, DEFAULT_SET), sets.get(DEFAULT_SET, BUILTIN["neutral"]))
 
     def _write(self, raw: dict) -> None:
+        # What was read is empty only because the file could not be: writing it would wipe every set and choice.
+        if self._broken:
+            raise ExpressionError(f"{EXPRESSIONS_NAME} was not changed: {self._broken}. Mend it by hand first.")
         tmp = self.path.with_name(EXPRESSIONS_NAME + ".part")
         body = {"sets": dict(sorted(raw["sets"].items())), "faces": dict(sorted(raw["faces"].items()))}
         tmp.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")

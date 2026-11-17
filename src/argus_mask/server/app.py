@@ -107,11 +107,26 @@ class Stage:
     def __init__(self, face_id: str) -> None:
         self.face_id = face_id
         self.header: StreamHeader | None = None
-        self.claimed = False  # a source holds the face, from its connect to its last frame
+        self.owner: object | None = None  # the source holding the face, from its connect to its last frame
         self.viewers: set[asyncio.Queue[str | bytes | None]] = set()
         # The viewers that have said what they are (by their queue): the screens. A socket client
         # that never reports (record, an older page) watches, but is not counted as a screen.
         self.screens: dict[asyncio.Queue[str | bytes | None], Screen] = {}
+
+    @property
+    def claimed(self) -> bool:
+        return self.owner is not None
+
+    def claim(self) -> object:
+        """Hold the face for one source: the token that alone may :meth:`free` it. The caller checks `claimed` first."""
+        self.owner = token = object()
+        return token
+
+    def free(self, token: object) -> None:
+        """Free the face, if *token* still holds it: a late cleanup must not free a source that claimed it since."""
+        if self.owner is token:
+            self.owner = None
+            self.header = None
 
     def send(self, message: str | bytes) -> None:
         for queue in list(self.viewers):
@@ -445,6 +460,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     async def perform(
         face_id: str,
         stage: Stage,
+        claim: object,
         hello: SourceHello,
         chunks: AsyncIterator[bytes],
         on_ready: Callable[[StreamHeader], Awaitable[None]] | None = None,
@@ -550,8 +566,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 )
             # Free the face before telling the source it is over: a source that reconnects the moment
             # it reads "done" must not be told the face is taken.
-            stage.header = None
-            stage.claimed = False
+            stage.free(claim)
             return Played(header.session_id, frames, duration_ms, failure)
         finally:
             try:
@@ -559,8 +574,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     await performer.close()
             finally:
                 await leases.aclose()
-            stage.header = None
-            stage.claimed = False
+            stage.free(claim)  # only if still ours: a source may have claimed the face while the performer closed
 
     @app.websocket("/session/{face_id}/source")
     async def source(ws: WebSocket, face_id: str) -> None:
@@ -579,7 +593,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         if stage.claimed:
             await refuse(ws, f"face {face_id!r} already has a source", TRY_LATER)
             return
-        stage.claimed = True
+        claim = stage.claim()
         try:
             if (reason := await probe.reason()) is not None:
                 await refuse(ws, f"the {driver.name} driver is down: {reason}", TRY_LATER)
@@ -616,7 +630,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 await ws.send_text(json.dumps({"type": "ready", "session_id": header.session_id, "fps": cfg.fps}))
 
             try:
-                played = await perform(face_id, stage, hello, received(), ready)
+                played = await perform(face_id, stage, claim, hello, received(), ready)
             except SourceRefused as exc:
                 await ws.send_text(json.dumps({"type": "error", "detail": str(exc)}))
                 await ws.close(code=TRY_LATER)
@@ -632,8 +646,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except (RuntimeError, WebSocketDisconnect):
                 pass  # the source already went away
         finally:
-            stage.header = None
-            stage.claimed = False
+            stage.free(claim)
 
     # -- HTTP sources: for agents that would rather not speak the socket protocol -------------------------
 
@@ -651,17 +664,16 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         """Claim the face and play *pcm* into it at the pace of speech; the closing numbers, or the HTTP error."""
         if stage.claimed:  # someone started while this request was being read or synthesised
             raise HTTPException(409, f"face {face_id!r} already has a source")
-        stage.claimed = True
+        claim = stage.claim()
         try:
             if (reason := await probe.reason()) is not None:
                 raise HTTPException(503, f"the {driver.name} driver is down: {reason}")
             try:
-                played = await perform(face_id, stage, hello, paced(pcm, hello))
+                played = await perform(face_id, stage, claim, hello, paced(pcm, hello))
             except SourceRefused as exc:
                 raise HTTPException(503, str(exc)) from exc
         finally:
-            stage.header = None
-            stage.claimed = False
+            stage.free(claim)
         if played.failure is not None:
             raise HTTPException(502, played.failure)
         return {"session_id": played.session_id, "frames": played.frames, "duration_ms": played.duration_ms}

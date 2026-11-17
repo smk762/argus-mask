@@ -71,6 +71,22 @@ def test_a_hand_edited_file_is_read_again_and_its_bad_entries_ignored(assets) ->
     assert not ex.remove("calm")  # built in: nothing of the file's to remove
 
 
+@pytest.mark.parametrize("body", ['{"sets": {"cheery": ', "[]"])
+def test_a_file_that_cannot_be_read_is_never_overwritten(assets, body) -> None:
+    ex = Expressions(assets)
+    (assets / EXPRESSIONS_NAME).write_text(body)  # a hand edit with a typo, or not an object
+    assert ex.for_face("test-head").name == "warm"  # read as no sets and no choices
+    assert set(ex.problems()) == {EXPRESSIONS_NAME}
+    with pytest.raises(ExpressionError, match="not changed"):
+        ex.choose("test-head", "calm")
+    with pytest.raises(ExpressionError, match="not changed"):
+        ex.define(check_set("cheery", {"mouthSmileLeft": 0.4}))
+    assert (assets / EXPRESSIONS_NAME).read_text() == body
+    write(assets, {"sets": {}, "faces": {}})  # mended: writes go through again
+    ex.choose("test-head", "calm")
+    assert ex.choices() == {"test-head": "calm"} and ex.problems() == {}
+
+
 def test_a_choice_follows_a_renamed_face_and_goes_with_a_deleted_one(assets) -> None:
     ex = Expressions(assets)
     ex.choose("test-head", "calm")

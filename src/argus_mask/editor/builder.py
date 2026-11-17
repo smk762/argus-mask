@@ -294,6 +294,10 @@ class Builder:
             return manifest
 
     async def _build(self, preset: Preset) -> BuildResult:
+        # The id names a directory that is replaced: check it here as every other entry point does, not only
+        # in the model (a preset made with model_construct or model_copy skips its validators).
+        if not _FACE_ID.fullmatch(preset.id):
+            raise BuildError(f"{preset.id!r} is not a face id")
         if reason := self.check():
             raise BuildError(reason)
         assets = self.library.resolve(preset)

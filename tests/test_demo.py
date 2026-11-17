@@ -152,6 +152,30 @@ def test_the_opsec_gate_refuses_and_never_echoes_the_denylist() -> None:
     assert docs.denylist({"OPSEC_DENYLIST": "a, b\nc"}) == ["a", "b", "c"]
 
 
+def test_an_empty_denylist_term_matches_nothing_and_ends() -> None:
+    docs = _build().docs_page
+
+    class Bounded(str):  # an empty term that gives up rather than loop forever, so a regression fails, not hangs
+        calls = 0
+
+        def lower(self) -> str:
+            Bounded.calls += 1
+            assert Bounded.calls < 100, "the search for an empty term never ends"
+            return super().lower()
+
+    assert docs.opsec_hits("nothing to see", [Bounded(""), "  "]) == []
+
+
+def test_a_doc_cannot_publish_a_file_from_outside_the_repo() -> None:
+    docs = _build().docs_page
+    raw = "https://raw.githubusercontent.com/smk762/argus-mask/dev/"
+    for src in ("/etc/passwd", "../../etc/passwd", f"{raw}../../etc/passwd", f"{raw}/etc/passwd"):
+        with pytest.raises(docs.Refused, match="outside the repo"):
+            docs.Doc("docs/x.md", f"# X\n\n![leak]({src})\n", "0" * 40)
+    shown = docs.Doc("docs/x.md", "# X\n\n![ok](../README.md) ![badge](https://example.com/b.svg)\n", "0" * 40)
+    assert shown.images == {"/docs/files/README.md": "README.md"}
+
+
 def test_versions_and_clip_commits_read_as_hatch_and_git_do() -> None:
     docs = _build().docs_page
     assert docs.version_from_describe("v0.2.0-65-g1cdb94f") == "0.2.1.dev65+g1cdb94f"

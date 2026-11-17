@@ -124,7 +124,9 @@ def _bandwidth(mono: np.ndarray, rate: int, mask: np.ndarray) -> float:
         if segs == 0:
             return None
         power = (np.abs(np.fft.rfft(audio[: segs * n].reshape(segs, n) * np.hanning(n), axis=1)) ** 2).mean(axis=0)
-        return np.convolve(10 * np.log10(power + 1e-20), np.ones(9) / 9, mode="same")
+        # Smoothed over 9 bins, the ends padded with their own level: zeros here are 0 dB, far over a quiet top bin.
+        db = np.pad(10 * np.log10(power + 1e-20), 4, mode="edge")
+        return np.convolve(db, np.ones(9) / 9, mode="valid")
 
     speech = spectrum(np.flatnonzero(mask))
     if speech is None:

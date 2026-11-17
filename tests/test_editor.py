@@ -1487,3 +1487,77 @@ def test_a_preset_may_ask_for_more_than_the_weak_screen_budget() -> None:
         Preset.model_validate(preset(max_triangles=MAX_TRIANGLES + 1))
     # build_head.py runs in Blender and cannot import the package: it carries the same ceiling.
     assert f"MAX_TRIANGLES = {MAX_TRIANGLES:_}" in SCRIPT.read_text()
+
+
+async def test_a_build_refuses_an_id_that_is_not_a_face_id(rig) -> None:
+    # The model checks the id, but a preset built past its validators must not name a path either.
+    builder = builder_for(rig)
+    bad = Preset.model_validate(preset()).model_copy(update={"id": "../elsewhere"})
+    with pytest.raises(BuildError, match="not a face id"):
+        await builder.build(bad)
+    assert not (rig["assets"] / "elsewhere").exists(), "nothing is written beside the previews"
+
+
+@pytest.fixture
+def recipe_module(monkeypatch):
+    """``build_head.py`` loaded outside Blender, its Blender modules stood in for: for its pure-python parts only."""
+    import types  # noqa: PLC0415
+    from unittest import mock  # noqa: PLC0415
+
+    for name in ("bpy", "bmesh", "mathutils", "mathutils.bvhtree"):
+        monkeypatch.setitem(sys.modules, name, mock.MagicMock(name=name))
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert source.endswith("\nmain()\n"), "the recipe runs main() as its last line"
+    module = types.ModuleType("build_head_outside_blender")
+    module.__file__ = str(SCRIPT)
+    exec(compile(source.removesuffix("main()\n"), str(SCRIPT), "exec"), module.__dict__)  # noqa: S102
+    return module
+
+
+def test_an_asset_fragment_never_climbs_out_of_mpfbs_data(recipe_module, tmp_path) -> None:
+    build_head = recipe_module
+    root = tmp_path / "data" / "hair"
+    (root / "short02").mkdir(parents=True)
+    (root / "short02" / "short02.mhclo").write_text("x")
+    (tmp_path / "secret").write_text("x")
+
+    class Services:
+        class AssetService:
+            @staticmethod
+            def get_asset_roots(subdir):
+                return [str(tmp_path / "data" / subdir)]
+
+    assert build_head.resolve_asset(Services, "hair/short02/short02.mhclo") == str(root / "short02" / "short02.mhclo")
+    for fragment in ("hair/../../secret", f"hair/{tmp_path}/secret", "hair//secret", "../secret", "hair/./x"):
+        with pytest.raises(build_head.RecipeError, match="not a path inside"):
+            build_head.resolve_asset(Services, fragment)
+
+
+def test_a_plain_rgb_tuple_is_a_tint_not_a_colourway(recipe_module) -> None:
+    import numpy as np  # noqa: PLC0415
+
+    build_head = recipe_module
+
+    class Image:
+        size, channels = (1, 1), 4
+
+        def __init__(self) -> None:
+            self.pixels = self
+            self.data = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
+
+        def foreach_get(self, out) -> None:
+            out[:] = self.data
+
+        def foreach_set(self, values) -> None:
+            self.data = np.asarray(values, dtype=np.float32)
+
+        def update(self) -> None:
+            pass
+
+    painted = []
+    for target in ((0.2, 0.1, 0.05), [0.2, 0.1, 0.05], np.array([0.2, 0.1, 0.05]), ("solid", (0.2, 0.1, 0.05))):
+        image = Image()
+        build_head.recolour(image, target)
+        painted.append(image.data)
+    assert np.allclose(painted[0], painted[1]) and np.allclose(painted[0], painted[2]), "the container doesn't matter"
+    assert painted[3][3] == 1.0, "a colourway still keeps the alpha"

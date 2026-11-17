@@ -48,6 +48,7 @@ def fake_darkroom(
     expand: bool = False,
     depth_busy: int = 0,
     busy_detail: str = "a generation is already running",
+    checkpoint: dict | None = None,
 ) -> Iterator[tuple[str, list[str]]]:
     """argus-darkroom's generation, image and depth routes, as mask uses them. Yields (url, calls)."""
     picture = image if image is not None else png()
@@ -73,7 +74,7 @@ def fake_darkroom(
                 "expanded_prompt": "more" if expand else None,
                 "negative_prompt": body["negative_prompt"],
                 "seed": body["seed"],
-                "checkpoint": {"name": body["checkpoint"]},
+                "checkpoint": checkpoint if checkpoint is not None else {"name": body["checkpoint"]},
                 "sampling": body["sampling"],
                 "workflow": "flux",
             },
@@ -167,6 +168,8 @@ def test_only_a_released_image_becomes_a_plate(tmp_path: Path, outcome: str) -> 
         ({"image_sha": "0" * 64}, "image does not match"),
         ({"depth_sha": "0" * 64}, "depth map does not match"),
         ({"expand": True}, "expanded"),
+        ({"checkpoint": {"name": "flux/flux1-dev.safetensors"}}, "checkpoint 'flux/flux1-dev"),
+        ({"checkpoint": {}}, "checkpoint None"),
     ],
 )
 def test_a_record_that_does_not_hold_up_writes_nothing(tmp_path: Path, over: dict, match: str) -> None:
@@ -210,6 +213,15 @@ def test_a_busy_darkroom_is_waited_for_on_both_routes(tmp_path: Path, detail: st
         plate = make(url, tmp_path / "garden")
     assert plate.depth is not None
     assert calls == ["generate", "generate", "image rec1", "make_depth rec1", "make_depth rec1", "depth rec1"]
+
+
+def test_a_conflict_that_is_not_busy_is_an_answer_at_once(tmp_path: Path) -> None:
+    with (
+        fake_darkroom(busy=1, busy_detail="no such checkpoint") as (url, calls),
+        pytest.raises(PlateError, match="no such checkpoint"),
+    ):
+        make(url, tmp_path / "garden")
+    assert calls == ["generate"] and not (tmp_path / "garden").exists()
 
 
 def test_depth_can_be_added_later(tmp_path: Path) -> None:
@@ -381,6 +393,18 @@ def test_a_plate_that_does_not_hold_up_is_not_served(assets: Path) -> None:
         assert c.get("/scene/rain/background.json").status_code == 404, "re-checked once a file changes"
         assert c.get("/scene/rain/plate.png").status_code == 404
         assert "rain" not in [s["name"] for s in c.get("/scenes").json()]
+
+
+def test_a_dangling_link_in_a_plate_refuses_only_that_plate(assets: Path, tmp_path: Path) -> None:
+    rain = assets / "backgrounds" / "rain"
+    (rain / "notes.png").symlink_to(tmp_path / "nowhere.png")  # not named by the manifest: no part of the plate
+    store = backgrounds.PlateStore(assets)
+    assert [m.name for m in store.scan()[0]] == ["rain"]
+    (rain / "depth.png").unlink()
+    (rain / "depth.png").symlink_to(tmp_path / "nowhere.png")
+    accepted, refused = store.scan()
+    assert accepted == [] and "depth.png is missing or not a plain file" in refused["rain"]
+    assert [s.name for s in store.scenes()] == list(backgrounds.BUILT_IN_SCENES)
 
 
 def test_a_plate_cannot_take_a_built_in_name(assets: Path) -> None:

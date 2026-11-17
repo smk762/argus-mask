@@ -193,6 +193,28 @@ def test_the_video_check_refuses_when_the_server_cannot_check(monkeypatch) -> No
     assert record.video_refusal("http://127.0.0.1:9", "someone") is None
 
 
+@pytest.mark.parametrize("reply", [b"null", b"[]", b'"ok"', b"{}", b'{"ok": "true"}', b'{"ok": 1}', b'{"error": "x"}'])
+def test_the_video_check_refuses_a_reply_that_is_not_a_verdict(monkeypatch, reply: bytes) -> None:
+    import io
+
+    monkeypatch.setattr(record.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(reply))
+    assert "gave no verdict" in record.video_refusal("http://127.0.0.1:9", "someone")
+
+
+def test_the_video_check_allows_only_an_ok_verdict(monkeypatch) -> None:
+    import io
+
+    def answer(body: bytes):  # noqa: ANN202 - stands in for urlopen
+        return lambda url, timeout: io.BytesIO(body)
+
+    monkeypatch.setattr(record.urllib.request, "urlopen", answer(b'{"ok": true}'))
+    assert record.video_refusal("http://127.0.0.1:9", "someone") is None
+    monkeypatch.setattr(
+        record.urllib.request, "urlopen", answer(b'{"ok": false, "reason": "expired", "detail": "gone"}')
+    )
+    assert record.video_refusal("http://127.0.0.1:9", "someone") == "someone may not be recorded: gone"
+
+
 @pytest.mark.skipif(not _can_render(), reason="needs playwright with a browser, and ffmpeg")
 @pytest.mark.parametrize("scene", ["", *record.SCENES])
 def test_two_recordings_of_one_take_match_at_high(server, tmp_path: Path, scene: str) -> None:

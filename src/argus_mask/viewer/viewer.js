@@ -362,8 +362,19 @@ let anchor = null;         // { clock, t }: clock time (s) at which timeline pos
 let nextPlay = 0;          // where the next audio chunk goes on the audio clock
 let sampleRate = 24000;
 
+let clockDomain = null;    // which clock clockNow() last read: 'audio' or 'page'
+
+// The audio clock while the context runs, the page's otherwise. The two have unrelated origins (and the audio clock
+// stands still while suspended), so on every switch the anchor is carried across by the offset between them, read
+// at the same moment: the timeline goes on where it was, rather than jumping by the gap between the clocks.
 function clockNow() {
-  return audio && audio.state === 'running' ? audio.currentTime : performance.now() / 1000;
+  const domain = audio && audio.state === 'running' ? 'audio' : 'page';
+  const page = performance.now() / 1000;
+  if (domain !== clockDomain) {
+    if (anchor && clockDomain && audio) anchor.clock += domain === 'audio' ? audio.currentTime - page : page - audio.currentTime;
+    clockDomain = domain;
+  }
+  return domain === 'audio' ? audio.currentTime : page;
 }
 
 function unlockAudio() {
@@ -374,9 +385,9 @@ function unlockAudio() {
   const settle = () => {
     const was = state.audio;
     state.audio = audio.state === 'running' ? 'running' : 'locked';
+    clockNow();   // carry the anchor across to the clock now in use, at the switch (not a frame later)
     if (audio.state === 'running' && was !== 'running') {
       startEl.classList.remove('show');
-      anchor = null;   // re-anchor on the audio clock
       announce();
     }
     if (state.audio !== was) report();

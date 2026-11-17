@@ -183,7 +183,8 @@ def test_a_synthetic_candidate_is_generated_and_checked(voices_page) -> None:
         assert next(ch for ch in result["report"]["checks"] if ch["id"] == "edges")["verdict"] == "good"
         assert c.get(f"/voice/clip/{result['sha']}").status_code == 200
         described = c.post("/voice/generate", json={"script": script, "description": "warm, calm, alto"}).json()
-        while described["state"] == "running":
+        end = time.monotonic() + 10
+        while described["state"] == "running" and time.monotonic() < end:
             time.sleep(0.05)
             described = c.get(f"/voice/generate/{described['id']}").json()
         assert seen[-1] == {"text": script, "voice_description": "warm, calm, alto"}

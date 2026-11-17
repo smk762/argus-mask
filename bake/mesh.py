@@ -88,14 +88,23 @@ def _accessor(gltf: dict, blob: bytes, index: int) -> np.ndarray:
             sparse["values"].get("byteOffset", 0),
         ).reshape(-1, width)
         out[idx.astype(np.int64)] = values
+    if acc.get("normalized") and np.issubdtype(out.dtype, np.integer):
+        # Quantised attributes (KHR_mesh_quantization, gltfpack): unsigned to [0, 1], signed to [-1, 1].
+        top = np.iinfo(out.dtype).max
+        out = np.maximum(out.astype(np.float32) / top, -1.0).astype(np.float32)
     return out
 
 
 def load(path: Path, blendshapes: list[str]) -> Head:
     gltf, blob = _glb(Path(path))
     meshes = {i for i, node in enumerate(gltf["nodes"]) if "mesh" in node}
-    parents = {i for i, node in enumerate(gltf["nodes"]) if meshes & set(node.get("children", []))}
-    for i in meshes | parents:
+    parent = {child: i for i, node in enumerate(gltf["nodes"]) for child in node.get("children", [])}
+    chain = set()  # every mesh node and all its ancestors up to the root: a transform anywhere moves the vertices
+    for i in meshes:
+        while i is not None and i not in chain:
+            chain.add(i)
+            i = parent.get(i)
+    for i in sorted(chain):
         node = gltf["nodes"][i]
         if any(k in node for k in ("translation", "rotation", "scale", "matrix")):
             raise ValueError(f"{path}: node {node.get('name')!r} has a transform; the bake expects identity nodes")

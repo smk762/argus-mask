@@ -109,21 +109,37 @@ function clear() {
   shown = null;
 }
 
+// Each load has a token; a click while one is in flight starts another, and only the latest may touch the stage.
+// After every wait a load that is no longer the latest gives back what it made and stops.
+let loadSeq = 0;
+const stale = (token) => token !== loadSeq;
+
+// Show this splat head's canvas (or, with none, the mesh renderer's) and hide every other one, including a head
+// still being made for a load that was overtaken.
+function showOnly(host) {
+  for (const h of stageEl.querySelectorAll(':scope > .splat')) h.hidden = h !== host;
+  renderer.domElement.hidden = Boolean(host);
+}
+
 const faces = new Map();   // id -> manifest
-async function load(clipId) {
+async function load(clipId, token) {
   statusEl.textContent = 'Loading…';
   const base = `clips/${clipId}/`;
   const [clip, take, sound] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`), audioUrl(`${base}audio.m4a`)]);
+  if (stale(token)) { URL.revokeObjectURL(sound); return; }
   if (!faces.has(clip.face)) faces.set(clip.face, await json(`faces/${clip.face}/manifest.json`));
+  if (stale(token)) { URL.revokeObjectURL(sound); return; }
   const manifest = faces.get(clip.face);
-  if (manifest.model?.format === 'lam-splat') return loadSplat(clip, take, sound, manifest);
+  if (manifest.model?.format === 'lam-splat') return loadSplat(clip, take, sound, manifest, token);
   const framed = clip.framing !== 'head' && manifest.framings?.[clip.framing];
   const model = framed ? framed.model : manifest.model;
   const framing = (framed ? framed.framing : manifest.framing) || {};
   const gltf = await new GLTFLoader().loadAsync(`faces/${clip.face}/${model.file}`);
-  const backdrop = clip.scene ? await Backdrop.create(THREE, renderer, clip.scene, { quality: look.summary.quality }) : null;
+  const backdrop = clip.scene && !stale(token) ? await Backdrop.create(THREE, renderer, clip.scene, { quality: look.summary.quality }) : null;
+  if (stale(token)) { dispose(gltf.scene); backdrop?.dispose(); URL.revokeObjectURL(sound); return; }
 
   clear();
+  showOnly(null);
   const root = gltf.scene;
   scene.add(root);
   look.apply(root);
@@ -172,30 +188,43 @@ function ready(clip, manifest, sound) {
 // A splat head: its own renderer, on a canvas over the stage (splat.js). Each splat face is made once and kept for
 // the page's life, hidden while a mesh clip plays: a second renderer made in the same page after one was disposed can
 // stall while it loads, and the demo shows the same face in more than one clip.
-const splats = new Map();   // face id -> { splat, host, skin }
-async function loadSplat(clip, take, sound, manifest) {
-  const { SplatHead, readSkin, jawCap, JAW } = await import('./viewer/splat.js');
-  let kept = splats.get(clip.face);
-  if (!kept) {
-    const url = `faces/${clip.face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
-    const skin = await readSkin(url);
-    clear();
-    const host = document.createElement('div');
-    host.className = 'splat';
-    stageEl.prepend(host);
-    try {
-      kept = { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
-    } catch (error) {   // leave the stage as it was: no half-built head
-      host.remove();
-      throw error;
-    }
-    splats.set(clip.face, kept);
+// The map holds the promise of the head, so two loads of the same face at once share one head, never make two.
+const splats = new Map();   // face id -> Promise<{ splat, host, skin }>
+async function makeSplat(face, manifest, token, { SplatHead, readSkin }) {
+  const url = `faces/${face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
+  const skin = await readSkin(url);
+  if (!stale(token)) clear();
+  const host = document.createElement('div');
+  host.className = 'splat';
+  host.hidden = stale(token);
+  stageEl.prepend(host);
+  try {
+    return { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
+  } catch (error) {   // leave the stage as it was: no half-built head
+    host.remove();
+    throw error;
   }
+}
+
+async function loadSplat(clip, take, sound, manifest, token) {
+  const mod = await import('./viewer/splat.js');
+  const { jawCap, JAW } = mod;
+  let making = splats.get(clip.face);
+  if (!making) {
+    making = makeSplat(clip.face, manifest, token, mod);
+    splats.set(clip.face, making);
+    making.catch(() => { if (splats.get(clip.face) === making) splats.delete(clip.face); });   // a later click retries
+  }
+  const kept = await making;
+  // Overtaken: the head is kept for later (it is in the map); the latest load's showOnly decides what is seen.
+  const leave = () => URL.revokeObjectURL(sound);
+  if (stale(token)) return leave();
   await kept.splat.setScene(clip.scene || null, { quality: look.summary.quality });
+  if (stale(token)) return leave();
   clear();
-  renderer.domElement.hidden = true;
-  kept.host.hidden = false;
+  showOnly(kept.host);
   await kept.splat.exact();   // a frame sorted for this canvas and camera before the clip shows: no stale depth order
+  if (stale(token)) return leave();   // the latest load has the stage, or will clear it
   const motion = new Motion({ budget: kept.skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(JAW.knee) });
   shown = { clip, take, splat: kept.splat, host: kept.host, motion, names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
   ready(clip, manifest, sound);
@@ -316,7 +345,10 @@ document.addEventListener('keydown', (e) => {
 async function choose(clipId, button) {
   audio.pause();
   for (const b of document.querySelectorAll('#clips button')) b.setAttribute('aria-pressed', String(b === button));
-  try { await load(clipId); } catch (error) { statusEl.textContent = `This clip did not load: ${error.message}`; }
+  const token = ++loadSeq;
+  try { await load(clipId, token); } catch (error) {
+    if (!stale(token)) statusEl.textContent = `This clip did not load: ${error.message}`;
+  }
   playing();
 }
 
