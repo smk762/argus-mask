@@ -21,7 +21,23 @@ SPLATS = os.environ.get("SPLATS", "splats.ply")  # or an SPZ beside it
 
 
 def psnr(a: np.ndarray, b: np.ndarray) -> float:
-    return float(-10 * np.log10(((a.astype(float) - b.astype(float)) ** 2).mean() / 255**2))
+    """In dB; identical images give 100, a finite ceiling, so an average or a JSON report stays a number."""
+    mse = ((a.astype(float) - b.astype(float)) ** 2).mean()
+    return 100.0 if mse == 0 else float(-10 * np.log10(mse / 255**2))
+
+
+def compare(i: int, shot: np.ndarray, out: Path) -> str:
+    """One view's line: PSNR against the trainer's render and Cycles', when both are on disk."""
+    trained, gt = out / f"view{i:04d}_trained.png", out / f"view{i:04d}_gt.png"
+    if MODE != "splat" or not trained.exists():
+        return f"view {i}: drawn"
+    if not gt.exists():
+        return f"view {i}: drawn, not compared: no {gt.name}"
+    tr, g = np.asarray(Image.open(trained).convert("RGB")), np.asarray(Image.open(gt).convert("RGB"))
+    return (
+        f"view {i}: viewer~trainer {psnr(shot, tr):.1f} dB, viewer~cycles {psnr(shot, g):.1f} dB, "
+        f"trainer~cycles {psnr(tr, g):.1f} dB"
+    )
 
 
 async def main(run: str, root: Path, views: list[int] | None) -> None:
@@ -38,15 +54,7 @@ async def main(run: str, root: Path, views: list[int] | None) -> None:
             Image.fromarray(shot).save(
                 out / f"view{i:04d}_{MODE}{'' if SPLATS == 'splats.ply' else '_' + Path(SPLATS).stem}.png"
             )
-            trained, gt = out / f"view{i:04d}_trained.png", out / f"view{i:04d}_gt.png"
-            if MODE != "splat" or not trained.exists():
-                print(f"view {i}: drawn")
-                continue
-            tr, g = np.asarray(Image.open(trained).convert("RGB")), np.asarray(Image.open(gt).convert("RGB"))
-            print(
-                f"view {i}: viewer~trainer {psnr(shot, tr):.1f} dB, viewer~cycles {psnr(shot, g):.1f} dB, "
-                f"trainer~cycles {psnr(tr, g):.1f} dB"
-            )
+            print(compare(i, shot, out))
         await browser.close()
 
 
