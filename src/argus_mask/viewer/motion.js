@@ -123,6 +123,7 @@ export function lipBudget(root) {
   const funnel = delta('mouthFunnel');
   const pucker = delta('mouthPucker');
   const jaw = delta('jawOpen');
+  if (!funnel || !pucker || !jaw) return null;   // listed but with no position deltas (normals only, say)
   const moved = new Float32Array(n);
   for (let i = 0; i < n; i += 1) moved[i] = len(funnel, i) + len(pucker, i);
   const cut = percentile(moved, 0.975);

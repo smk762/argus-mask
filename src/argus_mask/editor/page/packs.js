@@ -121,7 +121,8 @@ function packCard(pack, assets, narrowed) {
       action(pack)),
     pack.description ? el('div', { className: 'desc', textContent: pack.description }) : null);
   if (shown.length) card.append(el('div', { className: 'thumbs' }, ...shown.map(assetCard)));
-  if (assets.length > (pictures ? SHOWN : 0)) {
+  // An open pack can always be closed again, however few its assets: its pictures come from another site.
+  if (assets.length > (pictures ? SHOWN : 0) || (all && !narrowed)) {
     const label = all ? (narrowed ? 'Show fewer' : 'Hide assets') : narrowed ? `Show all ${assets.length}` : `Show ${assets.length} asset${assets.length === 1 ? '' : 's'}`;
     const more = el('button', { type: 'button', className: 'small', textContent: label });
     more.onclick = () => { all ? open.delete(pack.id) : open.add(pack.id); render(); };

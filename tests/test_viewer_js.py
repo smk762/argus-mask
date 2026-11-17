@@ -66,3 +66,72 @@ def test_a_splat_head_that_fails_to_come_up_is_disposed() -> None:
     assert rest.lstrip().startswith("catch (")
     handler = _block(rest, 0)
     assert handler.index("head.dispose()") < handler.index("throw ")
+
+
+def _module(script: str) -> object:
+    """Run ``script`` as a module in node, from the viewer's folder, with three.js's core as ``THREE``."""
+    prelude = "const THREE = await import('./vendor/three.core.js');\n"
+    run = subprocess.run(
+        ["node", "--input-type=module", "-e", prelude + script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        cwd=VIEWER,
+    )
+    return json.loads(run.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_backdrop_frees_its_quad() -> None:
+    """Each scene switch disposes the backdrop: its full-screen quad's geometry goes with it."""
+    out = _module("""
+const { Backdrop } = await import('./backdrop.js');
+const material = new THREE.ShaderMaterial({ uniforms: { uRes: { value: new THREE.Vector2() }, uTime: { value: 0 } } });
+const b = new Backdrop(THREE, {}, 'ftl', { title: 'FTL' }, material, { maxPx: 960, maxFps: 60 });
+const freed = [];
+b.scene.traverse((node) => { if (node.isMesh) node.geometry.addEventListener('dispose', () => freed.push('geometry')); });
+material.addEventListener('dispose', () => freed.push('material'));
+b.dispose();
+console.log(JSON.stringify(freed.sort()));
+""")
+    assert out == ["geometry", "material"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_rims_get_their_own_colour_back_for_no_backdrop_colour() -> None:
+    """``Color.set`` never throws: a null or unreadable colour still restores the rims, never leans them to white."""
+    source = (VIEWER / "look.js").read_text(encoding="utf-8")
+    method = _block(source, source.index("  tintRims("))
+    out = _module(f"""
+const look = {{ rims: [{{ color: new THREE.Color(0x3355ff), userData: {{}} }}], {method} }};
+const own = look.rims[0].color.getHexString();
+const seen = [];
+console.warn = () => {{}};
+for (const c of ['#ff8800', null, '#ff8800', undefined, '#ff8800', 'no-such-colour']) {{
+  look.tintRims(c);
+  seen.push(look.rims[0].color.getHexString());
+}}
+console.log(JSON.stringify({{ own, seen }}));
+""")
+    own = out["own"]
+    tinted, back = out["seen"][0], out["seen"][1::2]
+    assert tinted != own
+    assert out["seen"][::2] == [tinted] * 3
+    assert back == [own] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_lip_budget_is_none_for_shapes_with_no_position_deltas() -> None:
+    """A face listing jawOpen, mouthFunnel and mouthPucker with only normal deltas gets the jaw-only shaper."""
+    out = _module("""
+const { lipBudget } = await import('./motion.js');
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(30), 3));
+geo.morphAttributes.normal = [0, 1, 2].map(() => new THREE.Float32BufferAttribute(new Float32Array(30), 3));
+const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
+mesh.morphTargetDictionary = { jawOpen: 0, mouthFunnel: 1, mouthPucker: 2 };
+const root = new THREE.Group(); root.add(mesh);
+console.log(JSON.stringify(lipBudget(root)));
+""")
+    assert out is None
