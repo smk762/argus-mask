@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -45,14 +46,26 @@ def args() -> argparse.Namespace:
 
 def look_at(eye: np.ndarray, target: np.ndarray) -> np.ndarray:
     """Camera-to-world, OpenGL convention, glTF frame."""
-    f = target - eye
-    f /= np.linalg.norm(f)
-    r = np.cross(f, [0.0, 1.0, 0.0])
+    f = np.asarray(target, float) - np.asarray(eye, float)
+    length = np.linalg.norm(f)
+    if length < 1e-9:
+        raise ValueError("the camera is at its target: no direction to look in")
+    f /= length
+    # Looking straight up or down, +Y is the view direction itself: take +Z as up instead.
+    up = [0.0, 1.0, 0.0] if abs(f[1]) < 1 - 1e-6 else [0.0, 0.0, 1.0]
+    r = np.cross(f, up)
     r /= np.linalg.norm(r)
     u = np.cross(r, f)
     m = np.eye(4)
     m[:3, 0], m[:3, 1], m[:3, 2], m[:3, 3] = r, u, -f, eye
     return m
+
+
+def save_index(path: Path, cameras: list[dict]) -> None:
+    """Write the camera index whole or not at all: a bake killed mid-write keeps the last good one to resume from."""
+    part = path.with_name(path.name + ".part")
+    part.write_text(json.dumps(cameras) + "\n")
+    os.replace(part, path)
 
 
 def views(rng: np.random.Generator, n: int) -> list[np.ndarray]:
@@ -196,7 +209,7 @@ def main() -> None:
                             "height": a.size,
                         }
                     )
-                    index_path.write_text(json.dumps(cameras) + "\n")
+                    save_index(index_path, cameras)
             print(f"{label} expression {e + 1}/{len(weights_list)} done", flush=True)
 
 

@@ -28,13 +28,17 @@ def frames(paths: list[Path]) -> tuple[list[str], np.ndarray]:
 
 
 def spread(weights: np.ndarray, n: int, start: np.ndarray | None = None) -> list[int]:
-    """Farthest-point sampling: each pick is the frame farthest from every pick so far (and from *start*)."""
+    """Farthest-point sampling: each pick is the frame farthest from every pick so far (and from *start*).
+
+    Picks are distinct frames, so fewer than *n* come back once every frame left repeats a pick (or *start*)."""
     picked: list[int] = []
     seen = np.full(len(weights), np.inf)
-    if start is not None:
+    if start is not None and len(weights):
         seen = np.linalg.norm(weights - start, axis=1)
-    for _ in range(n):
+    for _ in range(min(n, len(weights))):
         i = int(np.argmax(seen))
+        if seen[i] <= 0:
+            break
         picked.append(i)
         seen = np.minimum(seen, np.linalg.norm(weights - weights[i], axis=1))
     return picked
