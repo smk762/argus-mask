@@ -33,8 +33,19 @@ from markdown_it.token import Token
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "smk762/argus-mask"
 PYPI = "argus-mask"
-# The allowlist: the public docs. Agent and planning files (CLAUDE.md, AGENTS.md, spec.md, TODO.md) never go here.
-DOCS = ("README.md", *sorted(f"docs/{p.name}" for p in (ROOT / "docs").glob("*.md")))
+# Agent and planning files: never published, wherever they sit.
+PRIVATE = frozenset({"claude.md", "agents.md", "spec.md", "todo.md"})
+
+
+def public_docs(root: Path = ROOT) -> tuple[str, ...]:
+    """The allowlist: the README and docs/*.md, less any agent or planning file."""
+    return (
+        "README.md",
+        *sorted(f"docs/{p.name}" for p in (root / "docs").glob("*.md") if p.name.lower() not in PRIVATE),
+    )
+
+
+DOCS = public_docs()
 # The code a take depends on: a change here since a clip was recorded means the clip is stale.
 ENGINE = (
     "src/argus_mask/arkit.py",
@@ -84,17 +95,22 @@ def denylist(env: dict[str, str] | None = None) -> list[str]:
 
 
 def opsec_hits(text: str, deny: list[str] = ()) -> list[tuple[int, str, str]]:
-    """Every hit in *text* as (line, kind, match). A denylisted term is never echoed, so a CI log can't leak it."""
-    hits = []
+    """Every hit in *text* as (line, kind, match). A denylisted term is never echoed, so a CI log can't leak it.
+
+    That holds for a pattern's hit too: one that overlaps a denylisted term is withheld.
+    """
     line = lambda i: text.count("\n", 0, i) + 1  # noqa: E731
+    # Searched in the text itself, not a lowercased copy: lowercasing can change its length, and so the offsets.
+    denied = [
+        m.span()
+        for term in filter(None, (t.strip() for t in deny))  # an empty term matches everywhere, forever
+        for m in re.finditer(re.escape(term), text, re.IGNORECASE)
+    ]
+    hits = [(line(start), "denylisted term", "(withheld)") for start, _ in denied]
     for kind, pattern in OPSEC:
-        hits += [(line(m.start()), kind, m.group(0)) for m in pattern.finditer(text)]
-    lower = text.lower()
-    for term in filter(None, (t.strip().lower() for t in deny)):  # an empty term matches everywhere, forever
-        start = lower.find(term)
-        while start >= 0:
-            hits.append((line(start), "denylisted term", "(withheld)"))
-            start = lower.find(term, start + len(term))
+        for m in pattern.finditer(text):
+            secret = any(start < m.end() and m.start() < end for start, end in denied)
+            hits.append((line(m.start()), kind, "(withheld)" if secret else m.group(0)))
     return sorted(hits)
 
 
