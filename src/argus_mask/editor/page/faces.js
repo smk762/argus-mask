@@ -188,15 +188,20 @@ async function watchScreens() {
 // ---- review --------------------------------------------------------------------------------
 
 const stage = new Stage();
+// Reviews may overlap (a quick switch of copy or framing, another face): after each wait, only the latest one goes
+// on, so the stage, the buttons and the side panel are all for one face.
+let reviewSeq = 0;
 async function openReview(row, place = main(row), framing = 'head') {
+  const token = ++reviewSeq;
   const manifest = await json(`/face/${enc(row.id)}?from=${place}`).catch((err) => { status(err.message, true); return null; });
-  if (!manifest) return;
+  if (!manifest || token !== reviewSeq) return;
   $('modal').hidden = false;
   stage.attach($('stage'));
   const framed = framing !== 'head' && manifest.framings?.[framing];
   const shown = framed || { model: manifest.model, framing: manifest.framing };
   await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${shown.model.sha256}`, framed ? framing : 'head'),
     shown.framing || {}, manifest.model.format, { body: framed ? framing : null });
+  if (token !== reviewSeq) return;
   // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
   const keep = place === 'export' ? async (name) => {
     try {
@@ -223,7 +228,8 @@ async function openReview(row, place = main(row), framing = 'head') {
     which.append(b);
   }
   const prov = manifest.provenance;
-  const backdrop = await backdropPicker(row, place);
+  const backdrop = await backdropPicker(row, place, token);
+  if (!backdrop) return;
   $('m-side').replaceChildren(
     el('h2', { textContent: 'Where' }), el('p', { textContent: place === 'export' ? `assets/${row.id}: on the server's /faces` : `assets/.preview/${row.id}: the editor's preview` }),
     ...backdrop,
@@ -238,8 +244,9 @@ async function openReview(row, place = main(row), framing = 'head') {
 }
 // The backdrop a face shows on screens that do not ask for one (scenes.json), previewed on the stage. An exported
 // face keeps the choice; a preview only previews, as for rest sets.
-async function backdropPicker(row, place) {
+async function backdropPicker(row, place, token) {
   const [scenes, chosen] = await Promise.all([json('/scenes').catch(() => []), json('/scenes/faces').catch(() => ({}))]);
+  if (token !== reviewSeq) return null;   // a later review has the stage
   const current = place === 'export' ? chosen[row.id] || '' : '';
   const select = el('select', { id: 'm-scene', ariaLabel: 'Backdrop' },
     el('option', { value: '', textContent: 'None: a plain background' }),
