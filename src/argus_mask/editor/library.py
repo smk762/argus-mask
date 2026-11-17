@@ -24,6 +24,7 @@ _SHOE_TAGS = {"shoes"}
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Pack licences as SPDX ids. Anything else is kept as the pack states it.
 _SPDX = {"CC0": "CC0-1.0", "CC-0": "CC0-1.0", "CC0-1.0": "CC0-1.0"}
+_COMPOUND = re.compile(r"\b(?:AND|OR)\b", re.IGNORECASE)
 
 
 class LibraryError(ValueError):
@@ -89,10 +90,12 @@ class AssetLibrary:
         self._scanned: tuple[tuple, dict[str, list[Asset]]] | None = None
 
     def _signature(self) -> tuple:
-        """What a scan depends on, cheaply: the pack files and the part directories, by mtime.
+        """What a scan depends on, cheaply: the pack files, the part directories, each asset's directory and its
+        file, by mtime.
 
-        Installing or removing a pack or an asset changes it, so a cached scan is only reused while
-        the library is as it was.
+        Installing or removing a pack or an asset changes it, and so does a file written into an asset directory
+        that already existed (an install part way through, a thumbnail, an edited ``.mhclo``), so a cached scan is
+        only reused while the library is as it was.
         """
         if self.data_dir is None:
             return ()
@@ -100,6 +103,14 @@ class AssetLibrary:
         packs = self.data_dir / "packs"
         if packs.is_dir():
             paths += sorted(packs.glob("*.json"))
+        for part, directory in (*PART_DIRS.items(), (CLOTHES, CLOTHES_DIR)):
+            ext = ".mhmat" if part == "skin" else ".mhclo"
+            try:
+                subs = sorted(p for p in (self.data_dir / directory).iterdir() if p.is_dir())
+            except OSError:
+                continue
+            for sub in subs:
+                paths += [sub, sub / f"{sub.name}{ext}"]
         out = []
         for path in paths:
             try:
@@ -209,8 +220,15 @@ class AssetLibrary:
 
 
 def licence_expression(assets: dict[str, Asset]) -> str:
-    """One licence line for a face built from *assets* (the face units are CC0 and not listed)."""
+    """One licence line for a face built from *assets* (the face units are CC0 and not listed).
+
+    A compound licence (``MIT OR Apache-2.0``) is put in parentheses when joined: AND binds tighter than OR.
+    """
     licences = sorted({a.license for a in assets.values()})
+    if not licences:
+        return _SPDX["CC0"]
+    if len(licences) > 1:
+        licences = [f"({lic})" if _COMPOUND.search(lic) else lic for lic in licences]
     return " AND ".join(licences)
 
 
