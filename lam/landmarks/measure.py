@@ -129,6 +129,8 @@ def ray_hits(origins, dirs, tris, chunk=1024, with_triangle=False):
 
     With `with_triangle`, also each hit's triangle index (-1 for a miss).
     """
+    if len(origins) == 0:
+        return (np.empty((0, 3)), np.empty(0, dtype=np.int64)) if with_triangle else np.empty((0, 3))
     a, b, c = (torch.as_tensor(np.ascontiguousarray(tris[:, i]), device=DEVICE, dtype=torch.float32) for i in range(3))
     e1, e2 = b - a, c - a
     hits, which = [], []
@@ -258,6 +260,8 @@ def head_landmarks(head: Path):
             continue
         o, d = rays(scene, v, pts[list(MEDIAPIPE_68), :2])
         hits.append(ray_hits(o, d, tris))
+    if len(hits) < 3:
+        raise SystemExit(f"{head}: only {len(hits)} views had a detection")
     hits = np.stack(hits)  # (views, 68, 3)
     seen = (~np.isnan(hits[..., 0])).sum(0)
     if seen.min() < 3:
@@ -277,6 +281,21 @@ def nose_tip(points, eyes):
     band = (points[:, 0].abs() < 0.01) & (points[:, 1] < y - 0.015) & (points[:, 1] > y - 0.06)
     cand = torch.nonzero(band)[:, 0]
     return cand[torch.argmax(points[cand, 2])]
+
+
+def matched(a, b):
+    """Mean squared distance from each of a to its nearest in b, ignoring pairs beyond TRUNCATE.
+
+    With no pair kept, the loss is TRUNCATE squared (saturated, no gradient), never the NaN of an empty mean.
+    """
+    if len(a) == 0 or len(b) == 0:
+        raise SystemExit("no surface within FACE_RADIUS of the face's centre: the starting alignment is off")
+    near = knn_points(a[None].float(), b[None].float(), K=1).idx[0, :, 0]
+    d2 = ((a - b[near]) ** 2).sum(1)
+    keep = d2 < TRUNCATE**2
+    if not keep.any():
+        return d2.sum() * 0 + TRUNCATE**2, keep.float().mean()
+    return d2[keep].mean(), keep.float().mean()
 
 
 def fit(flame: Flame, head: Path, log=print):
@@ -318,13 +337,6 @@ def fit(flame: Flame, head: Path, log=print):
     def to_flame(p):
         R = axis_angle_matrix(params["rot"])
         return (scale0 * torch.exp(params["log_s"])) * (p @ R.T) + shift0 + params["shift"]
-
-    def matched(a, b):
-        """Mean squared distance from each of a to its nearest in b, ignoring pairs beyond TRUNCATE."""
-        near = knn_points(a[None].float(), b[None].float(), K=1).idx[0, :, 0]
-        d2 = ((a - b[near]) ** 2).sum(1)
-        keep = d2 < TRUNCATE**2
-        return d2[keep].mean(), keep.float().mean()
 
     rms = math.nan
     for stage, (steps, free) in enumerate(STAGES):
@@ -373,9 +385,10 @@ def front_pole(verts, ids):
 
 def vertex_on_face(faces, vid):
     """A face holding a vertex, and barycentric weights that put the point exactly on it."""
-    fidx = int(torch.nonzero((faces == vid).any(1))[0, 0])
-    w = (faces[fidx] == vid).to(DT)
-    return fidx, w
+    on = faces == vid
+    fidx = int(torch.nonzero(on.any(1))[0, 0])
+    w = on[fidx].to(DT)
+    return fidx, w / w.sum()  # a degenerate face can list the vertex twice
 
 
 # ── all heads ───────────────────────────────────────────────────────────────────────────────────────────────────

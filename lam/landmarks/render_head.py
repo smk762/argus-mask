@@ -96,15 +96,18 @@ def surface(objects):
     for obj in objects:
         ev = obj.evaluated_get(depsgraph)
         mesh = ev.to_mesh()
-        mesh.calc_loop_triangles()
-        m = np.array(ev.matrix_world)
-        v = np.array([tuple(m[:3, :3] @ np.array(p.co) + m[:3, 3]) for p in mesh.vertices])
-        f = np.array([tuple(t.vertices) for t in mesh.loop_triangles], dtype=np.int64)
+        try:
+            mesh.calc_loop_triangles()
+            m = np.array(ev.matrix_world)
+            # reshape: an empty mesh still gives (0, 3), so it concatenates with the rest.
+            v = np.array([tuple(m[:3, :3] @ np.array(p.co) + m[:3, 3]) for p in mesh.vertices]).reshape(-1, 3)
+            f = np.array([tuple(t.vertices) for t in mesh.loop_triangles], dtype=np.int64).reshape(-1, 3)
+        finally:
+            ev.to_mesh_clear()
         all_v.append(v)
         all_f.append(f + base)
         base += len(v)
         counts.append(len(v))
-        ev.to_mesh_clear()
     return np.concatenate(all_v), np.concatenate(all_f), np.array(counts)
 
 
