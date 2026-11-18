@@ -1022,7 +1022,8 @@ def create_editor_app(
         if not root.is_dir():
             return []
         clips = []
-        for p in root.iterdir():  # nosemgrep: handler-scans-all - the response is every recording; an index would not shrink it
+        # nosemgrep: handler-scans-all - the response is every recording; an index would not shrink it
+        for p in root.iterdir():
             if p.suffix in (".mp4", ".webm") and _RECORDING.fullmatch(p.name):
                 with contextlib.suppress(OSError):  # gone, or not a file, between the listing and the look
                     if p.is_file():
