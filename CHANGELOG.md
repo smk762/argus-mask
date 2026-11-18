@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **132 ai-code-auditor findings checked; 125 fixed or already fixed, 7 closed as not a bug.** Fixes that change
+  what a caller sees:
+  - A `RestSet`'s weights must be 0 to 1, as documented (the wire schema says so too).
+  - `record` refuses when the consent check times out, rather than treating a slow server as an unreachable one.
+  - A plate's darkroom record must report the negative prompt the request sent.
+  - `bake` refuses a glTF primitive that isn't triangles, and mesh nodes that share a name.
+  - Session and TTS URLs read their scheme in any case, and anything but http(s)/ws(s) is an error rather than
+    plain `ws://`. A bad port is a `ClientError`, not a `ValueError`.
+  - A pack install refuses to replace a file another writer created during the move (it hard-links into MPFB's
+    data, so that directory needs hard-link support).
+
+  Other fixes close leaked sockets and TTS replies, make cancelled voice candidates release the one-at-a-time slot,
+  write plates, depth maps, consent revocations and `cameras.json` atomically, and fix races in the editor and demo
+  pages. The demo clips are re-recorded at the new engine.
 - **Id and name checks match the whole string** (argus-cortex's `fullmatch` codemod, ai-code-auditor#56). With
   `re.match`, an anchored check like `^[a-z0-9][a-z0-9_-]{0,63}$` also accepted the value followed by a newline,
   because `$` matches before a final `\n`. Face ids, pack ids, cache keys, recording names, library asset names, LAM
