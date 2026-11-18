@@ -81,6 +81,7 @@ def log(message: str) -> None:
     print(f"a2f-server: {message}", file=sys.stderr, flush=True)
 
 
+# nosemgrep: cortex-copy - standalone sidecar image, no argus-cortex dep; exits on a bad value
 def env_flag(name: str) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     if raw in ("", "0", "false", "no", "off"):
