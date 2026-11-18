@@ -108,12 +108,51 @@ def _placeholder_regions(self, flame_parts_path=None):
     self.create_custom_mask()
 
 
+def _tracking_config(text: str):
+    """The tracking config as plain data. LAM's is tyro YAML: a YAML string holding YAML with tyro's own tags."""
+    import yaml
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    def untagged(loader, _suffix, node):
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node, deep=True)
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node, deep=True)
+        return loader.construct_scalar(node)
+
+    Loader.add_multi_constructor("!", untagged)
+    Loader.add_multi_constructor("tag:yaml.org,2002:python/", untagged)
+    data = yaml.load(text, Loader=Loader)  # noqa: S506 - SafeLoader, with unknown tags read as plain data
+    return yaml.load(data, Loader=Loader) if isinstance(data, str) else data  # noqa: S506
+
+
+def _photometric(node) -> list:
+    """Every value of a key named exactly `photometric`, at any depth."""
+    if isinstance(node, dict):
+        found = [v for k, v in node.items() if k == "photometric"]
+        return found + [x for v in node.values() for x in _photometric(v)]
+    if isinstance(node, list):
+        return [x for v in node for x in _photometric(v)]
+    return []
+
+
 def check_photometric_off(config_path: str = TRACKING_CONFIG) -> None:
-    """Refuse photometric tracking: it is what reads the painted texture and the MPI regions we replace."""
+    """Refuse photometric tracking: it is what reads the painted texture and the MPI regions we replace.
+
+    The YAML is parsed, not matched as text: every `photometric` key (the tracker's is `exp.photometric`) must be
+    there and false.
+    """
     from pathlib import Path
 
-    text = Path(config_path).read_text()
-    if "photometric: false" not in text or "photometric: true" in text:
+    import yaml
+
+    try:
+        values = _photometric(_tracking_config(Path(config_path).read_text()))
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"{config_path}: cannot read it as YAML ({exc})") from exc
+    if not values or any(v is not False for v in values):
         raise RuntimeError(f"{config_path}: photometric tracking must be off (the texture and masks are placeholders)")
 
 

@@ -861,6 +861,8 @@ $('export').addEventListener('click', async () => {
   } finally {
     busy = false;
     meta();
+    // A build asked for while the export ran (a submit, live update) follows it now, as runBuild's own do.
+    if (again) { again = false; schedule(0); }
   }
 });
 

@@ -4,22 +4,22 @@
   "face": "splat-01",
   "framing": "head",
   "scene": "lake",
-  "duration_ms": 14552,
-  "frames": 437,
+  "duration_ms": 13912,
+  "frames": 418,
   "captions": [
     {
       "start_ms": 0,
-      "end_ms": 2965,
+      "end_ms": 3381,
       "text": "Hello. I'm a face made by argus-mask."
     },
     {
-      "start_ms": 3265,
-      "end_ms": 8225,
+      "start_ms": 3681,
+      "end_ms": 8417,
       "text": "Give me any voice and I'll speak it, with my lips and jaw in step with every syllable."
     },
     {
-      "start_ms": 8525,
-      "end_ms": 14552,
+      "start_ms": 8717,
+      "end_ms": 13912,
       "text": "Between words I blink, glance around and breathe, so I never freeze."
     }
   ],
@@ -39,7 +39,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.2.0-107-gb93f53f",
+    "argus_mask": "v0.2.0-153-geeb873f",
     "driver": {
       "name": "a2f",
       "model": null

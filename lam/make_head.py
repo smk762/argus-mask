@@ -69,10 +69,14 @@ lam = _build_model(cfg).to("cuda").eval()
 tracker = FlameTrackingSingleImage(output_dir="output/tracking")  # frontend.py's constructor
 raw = os.path.join(out_dir, "raw.png")
 Image.open(image_in).convert("RGB").save(raw)
-assert tracker.preprocess(raw) == 0, "tracking: preprocessing failed"
-assert tracker.optimize() == 0, "tracking: FLAME fit failed"
+# Explicit checks, not assert: under python -O the steps themselves would be skipped.
+if tracker.preprocess(raw) != 0:
+    sys.exit("tracking: preprocessing failed")
+if tracker.optimize() != 0:
+    sys.exit("tracking: FLAME fit failed")
 rc, tracked = tracker.export()
-assert rc == 0, "tracking: export failed"
+if rc != 0:
+    sys.exit("tracking: export failed")
 
 image, _, _, shape_param = preprocess_image(
     os.path.join(tracked, "images/00000_00.png"),

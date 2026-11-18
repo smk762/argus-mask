@@ -399,6 +399,7 @@ def test_say_sends_the_previous_sentence_as_context(server) -> None:
                 app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, *extra]
             )
         assert result.exit_code == 0, result.output
+        assert len(seen) == 3  # one request per sentence, so every check below runs
         assert "context" not in seen[0]
         for before, now in zip(seen, seen[1:], strict=False):
             (ctx,) = now["context"]

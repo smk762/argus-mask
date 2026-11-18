@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
 
 import numpy as np
@@ -128,11 +129,14 @@ async def test_take_round_trips_and_a_broken_one_is_refused(tmp_path) -> None:
     path = tmp_path / "take.ndjson"
     path.write_text(render_take(header, frames, end), encoding="utf-8")
     assert read_take(path) == (header, frames, end)
-    (tmp_path / "no-header.ndjson").write_text(frames[0].model_dump_json() + "\n", encoding="utf-8")
-    with pytest.raises(TakeError):
+    # Each broken take is the whole valid one with only the property under test changed.
+    first, *rest = render_take(header, frames, end).splitlines(keepends=True)
+    (tmp_path / "no-header.ndjson").write_text("".join(rest), encoding="utf-8")
+    with pytest.raises(TakeError, match=":1: unexpected 'frame' message"):
         read_take(tmp_path / "no-header.ndjson")
-    (tmp_path / "v9.ndjson").write_text(
-        header.model_dump_json().replace(f'"{MASK_VERSION}"', '"9.0"') + "\n", encoding="utf-8"
-    )
-    with pytest.raises(TakeError):
+    v9 = json.loads(first)
+    assert v9["mask_version"] == MASK_VERSION
+    v9["mask_version"] = "9.0"
+    (tmp_path / "v9.ndjson").write_text(json.dumps(v9) + "\n" + "".join(rest), encoding="utf-8")
+    with pytest.raises(TakeError, match="mask_version 9.0 is not supported"):
         read_take(tmp_path / "v9.ndjson")

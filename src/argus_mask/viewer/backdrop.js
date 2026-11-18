@@ -50,9 +50,9 @@ export class Backdrop {
     // Half float: the scene writes linear light, and 8 bits of dark linear values band into rings.
     this.target = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false, type: THREE.HalfFloatType });
     this.scene = new THREE.Scene();
-    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
-    quad.frustumCulled = false;
-    this.scene.add(quad);
+    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
+    this.quad.frustumCulled = false;
+    this.scene.add(this.quad);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.drawnAt = -Infinity;   // page time of the last draw, for the rate cap
   }
@@ -82,6 +82,7 @@ export class Backdrop {
 
   dispose() {
     this.target.dispose();
+    this.quad.geometry.dispose();
     for (const uniform of Object.values(this.material.uniforms)) if (uniform.value && uniform.value.isTexture) uniform.value.dispose();
     this.material.dispose();
   }

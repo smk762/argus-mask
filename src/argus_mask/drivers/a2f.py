@@ -45,6 +45,13 @@ def _ws_url(base: str) -> str:
     return f"{'wss' if scheme in ('https', 'wss') else 'ws'}://{rest}/drive"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer from the configured server, not a pointer to follow: it fails the probe."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201, PLR0913
+        return None
+
+
 class A2FSession:
     def __init__(self, ws, order: list[int | None], fps: int) -> None:  # noqa: ANN001 - websockets is optional
         self._ws = ws
@@ -149,7 +156,7 @@ class A2FDriver:
             return "ARGUS_MASK_A2F_URL is not set"
         try:
             # The operator's own configured service: no proxy, no redirects to follow blindly.
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
             with opener.open(f"{self.url.rstrip('/')}/health", timeout=HEALTH_TIMEOUT_S) as reply:
                 body = json.loads(reply.read(65536) or b"{}")
         except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -187,10 +194,10 @@ class A2FDriver:
             names = hello.get("blendshapes")
             if not isinstance(names, list) or not names:
                 raise DriverError("a2f did not say which blendshapes it sends")
-        except (TimeoutError, ValueError, websockets.WebSocketException) as exc:
+        except (OSError, TimeoutError, ValueError, websockets.WebSocketException) as exc:
             await ws.close()
             raise DriverError(f"a2f did not open the stream: {exc}") from exc
-        except DriverError:
+        except BaseException:  # a DriverError, or cancelled while it opened: the socket is closed either way
             await ws.close()
             raise
         return A2FSession(ws, [INDEX.get(name) if isinstance(name, str) else None for name in names], fps)

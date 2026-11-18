@@ -137,6 +137,11 @@ def _thumb_url(thumb: str) -> str | None:
     return urllib.parse.urlunsplit(("https", host, parts.path, parts.query, ""))
 
 
+def _list(value: object) -> list:
+    """*value* if it is a list, else empty: a malformed field drops its entries, not the catalogue."""
+    return value if isinstance(value, list) else []
+
+
 def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
     """The catalogue's packs by id. Entries that are not well formed, or point anywhere but :data:`HOSTS`, are dropped."""
     try:
@@ -144,16 +149,10 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
     except (OSError, ValueError):
         return {}
     packs: dict[str, Pack] = {}
-    for raw in doc.get("packs", []) if isinstance(doc, dict) else []:
+    for raw in _list(doc.get("packs") if isinstance(doc, dict) else None):
         if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.fullmatch(raw["id"]):
             continue
-        urls = tuple(
-            u
-            for u in raw.get("urls") or []
-            if isinstance(u, str)
-            and urllib.parse.urlsplit(u).scheme == "https"
-            and urllib.parse.urlsplit(u).hostname in HOSTS
-        )
+        urls = tuple(u for u in _list(raw.get("urls")) if isinstance(u, str) and _on_hosts(u))
         if not urls:
             continue
         sha = raw.get("sha256")
@@ -166,7 +165,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
             bytes=size if isinstance(size, int) and size > 0 else None,
             sha256=sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None,
             page=str(raw.get("page") or ""),
-            assets=tuple(a for a in map(_asset, raw.get("assets") or []) if a is not None),
+            assets=tuple(a for a in map(_asset, _list(raw.get("assets"))) if a is not None),
         )
     return packs
 
@@ -241,11 +240,14 @@ def plan(zip_path: Path, data_dir: Path, pack_id: str) -> tuple[list[tuple[zipfi
             target = (root / rel).resolve()
             if not target.is_relative_to(root) or target == root:
                 raise PackError(f"the zip has a member outside the pack: {info.filename!r}")
+            # Resolving follows links, so look for them on the path as named: an installed link is never written through.
+            if (root / rel) != target:
+                raise PackError(f"{rel} would be written through a link in the data directory; nothing was installed")
             if str(rel) in names:
                 raise PackError(f"the zip has {info.filename!r} twice")
             names.add(str(rel))
-            if target.exists() or target.is_symlink():
-                if target.is_file() and not target.is_symlink() and _same(target, zf, info):
+            if target.exists():
+                if target.is_file() and _same(target, zf, info):
                     skipped += 1
                     continue
                 conflicts.append(str(rel))
@@ -283,9 +285,10 @@ def unpack(zip_path: Path, data_dir: Path, pack_id: str) -> dict:
         for _, rel in sorted(todo, key=lambda t: t[1] == index):
             target = root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():  # appeared since the plan: never replace
-                raise PackError(f"{rel} appeared while installing; nothing more was installed")
-            os.replace(staging / rel, target)
+            try:  # a link fails if the target exists, so a file that appeared since the plan is never replaced
+                os.link(staging / rel, target)
+            except FileExistsError:
+                raise PackError(f"{rel} appeared while installing; nothing more was installed") from None
             moved.append(target)
     except BaseException:
         for path in moved:  # all or nothing
@@ -306,8 +309,11 @@ Opener = Callable[[str], object]  # url -> a response with .read(n); the tests p
 
 
 def _on_hosts(url: str) -> bool:
-    parts = urllib.parse.urlsplit(url)
-    return parts.scheme == "https" and parts.hostname in HOSTS
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return parts.scheme == "https" and parts.hostname in HOSTS
+    except ValueError:  # an unbalanced IPv6 bracket, say: not on the hosts
+        return False
 
 
 class _FencedRedirects(urllib.request.HTTPRedirectHandler):

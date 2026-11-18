@@ -147,16 +147,21 @@ class _DriverProbe:
         self._driver = driver
         self._at = float("-inf")
         self._reason: str | None = None
+        self._forgotten = 0  # bumped by forget(): an answer asked for before then is not kept
 
     async def reason(self) -> str | None:
         if time.monotonic() - self._at > DRIVER_CHECK_TTL_S:
-            self._reason = await self._driver.check()
-            self._at = time.monotonic()
+            forgotten = self._forgotten
+            reason = await self._driver.check()
+            if forgotten != self._forgotten:
+                return reason  # the driver failed while this was asked: answer, but ask again next time
+            self._reason, self._at = reason, time.monotonic()
         return self._reason
 
     def forget(self) -> None:
-        """The driver just failed: ask it again next time."""
+        """The driver just failed: ask it again next time, even if a check in flight answers after this."""
         self._at = float("-inf")
+        self._forgotten += 1
 
 
 class SourceRefused(RuntimeError):
@@ -243,8 +248,11 @@ def audio_of(request: Request, data: bytes, seed: int) -> tuple[SourceHello, byt
         )
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, f"the PCM headers do not describe a format this plays: {exc}") from exc
-    if len(data) < client._frame_bytes(hello):
+    frame = client._frame_bytes(hello)
+    if len(data) < frame:
         raise HTTPException(422, "no audio: less than one sample")
+    if len(data) % frame:
+        raise HTTPException(422, f"the PCM is not whole samples: {len(data)} bytes, {frame} to a sample")
     return hello, data
 
 
@@ -338,6 +346,23 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     def stage_for(face_id: str) -> Stage:
         return stages.setdefault(face_id, Stage(face_id))
+
+    # One source per face, whatever name it came by: an alias and its face id share a face, not a stage.
+    holders: dict[str, object] = {}  # the face itself -> the claim holding it
+
+    def taken(face_id: str, stage: Stage) -> bool:
+        return stage.claimed or aliases.resolve(face_id) in holders
+
+    def take(face_id: str, stage: Stage) -> object:
+        """Claim the face for one source, by its name's stage and by the face itself. The caller checks `taken`."""
+        claim = holders[aliases.resolve(face_id)] = stage.claim()
+        return claim
+
+    def free(stage: Stage, claim: object) -> None:
+        stage.free(claim)
+        for face, owner in list(holders.items()):
+            if owner is claim:
+                del holders[face]
 
     def face_or_404(face_id: str) -> tuple[FaceManifest, Path]:
         try:
@@ -566,7 +591,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 )
             # Free the face before telling the source it is over: a source that reconnects the moment
             # it reads "done" must not be told the face is taken.
-            stage.free(claim)
+            free(stage, claim)
             return Played(header.session_id, frames, duration_ms, failure)
         finally:
             try:
@@ -574,7 +599,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                     await performer.close()
             finally:
                 await leases.aclose()
-            stage.free(claim)  # only if still ours: a source may have claimed the face while the performer closed
+            free(stage, claim)  # only if still ours: a source may have claimed the face while the performer closed
 
     @app.websocket("/session/{face_id}/source")
     async def source(ws: WebSocket, face_id: str) -> None:
@@ -590,10 +615,10 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await refuse(ws, f"no face {face_id!r}")
             return
         stage = stage_for(face_id)
-        if stage.claimed:
+        if taken(face_id, stage):
             await refuse(ws, f"face {face_id!r} already has a source", TRY_LATER)
             return
-        claim = stage.claim()
+        claim = take(face_id, stage)
         try:
             if (reason := await probe.reason()) is not None:
                 await refuse(ws, f"the {driver.name} driver is down: {reason}", TRY_LATER)
@@ -646,7 +671,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except (RuntimeError, WebSocketDisconnect):
                 pass  # the source already went away
         finally:
-            stage.free(claim)
+            free(stage, claim)
 
     # -- HTTP sources: for agents that would rather not speak the socket protocol -------------------------
 
@@ -654,7 +679,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         """The face's stage, if a source may start on it now; otherwise the HTTP refusal, with the reason."""
         face_or_404(face_id)
         stage = stage_for(face_id)
-        if stage.claimed:
+        if taken(face_id, stage):
             raise HTTPException(409, f"face {face_id!r} already has a source")
         if require_screen and not any(screen.audio_ready for screen in stage.screens.values()):
             raise HTTPException(409, f"no screen watching {face_id!r} can be heard (see /health screens)")
@@ -662,9 +687,9 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     async def play_http(face_id: str, stage: Stage, hello: SourceHello, pcm: bytes) -> dict:
         """Claim the face and play *pcm* into it at the pace of speech; the closing numbers, or the HTTP error."""
-        if stage.claimed:  # someone started while this request was being read or synthesised
+        if taken(face_id, stage):  # someone started while this request was being read or synthesised
             raise HTTPException(409, f"face {face_id!r} already has a source")
-        claim = stage.claim()
+        claim = take(face_id, stage)
         try:
             if (reason := await probe.reason()) is not None:
                 raise HTTPException(503, f"the {driver.name} driver is down: {reason}")
@@ -673,7 +698,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except SourceRefused as exc:
                 raise HTTPException(503, str(exc)) from exc
         finally:
-            stage.free(claim)
+            free(stage, claim)
         if played.failure is not None:
             raise HTTPException(502, played.failure)
         return {"session_id": played.session_id, "frames": played.frames, "duration_ms": played.duration_ms}

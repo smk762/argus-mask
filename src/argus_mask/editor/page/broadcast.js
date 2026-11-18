@@ -102,6 +102,7 @@ async function loadVoices() {
   const want = store.get('voice', '') || state.tts_voice || '';
   let found = { listed: false, voices: [] };
   try { found = await json(`/voices?tts=${encodeURIComponent(tts)}`); } catch { /* keep the free-text fallback */ }
+  if (voicesFor !== tts) return;   // the TTS changed while this list was asked for: the latest call fills the select
   const options = [el('option', { value: '', textContent: state.tts_voice ? `default (${state.tts_voice})` : "the service's default" })];
   for (const v of found.voices || []) {
     const langs = v.languages && v.languages.length ? ` · ${v.languages.join(', ')}` : '';

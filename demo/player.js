@@ -193,14 +193,14 @@ const splats = new Map();   // face id -> Promise<{ splat, host, skin }>
 async function makeSplat(face, manifest, token, { SplatHead, readSkin }) {
   const url = `faces/${face}/${manifest.model.file}`;   // the renderer wants a URL ending .zip
   const skin = await readSkin(url);
-  if (!stale(token)) clear();
+  // The stage is cleared only once the head is up (loadSplat): a head that fails leaves the clip on show as it was.
   const host = document.createElement('div');
   host.className = 'splat';
   host.hidden = stale(token);
   stageEl.prepend(host);
   try {
     return { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
-  } catch (error) {   // leave the stage as it was: no half-built head
+  } catch (error) {   // no half-built head
     host.remove();
     throw error;
   }

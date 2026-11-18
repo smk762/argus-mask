@@ -35,12 +35,20 @@ def load(path: str) -> bytes:
 
 
 def get(url: str) -> tuple[int, dict]:
+    """The status and JSON body; status 0 when the server can't be reached, ``{}`` for a body that isn't an object."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(url, timeout=5) as reply:
-            return reply.status, json.loads(reply.read())
+            status, raw = reply.status, reply.read()
     except urllib.error.HTTPError as exc:
         return exc.code, {}
+    except OSError as exc:  # URLError, refused, timed out
+        return 0, {"error": str(getattr(exc, "reason", exc))}
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return status, {}
+    return status, body if isinstance(body, dict) else {}
 
 
 async def stream(ws_url: str, pcm: bytes, *, fps: int = 30, chunk_ms: int = 40, realtime: bool = False) -> dict:
@@ -66,14 +74,24 @@ async def stream(ws_url: str, pcm: bytes, *, fps: int = 30, chunk_ms: int = 40, 
                 # Frame n shows the face at n / fps seconds into the audio.
                 lag.append(time.monotonic() - start - len(frames) / fps)
                 frames.append(message["weights"])
+            raise RuntimeError(f"the server closed the stream without its end marker, after {len(frames)} frames")
 
         task = asyncio.create_task(reader())
         step = RATE * chunk_ms // 1000 * 4
-        for offset in range(0, len(pcm), step):
-            if realtime:  # a chunk exists once its last sample has been spoken
-                await asyncio.sleep(max(0.0, start + (offset + step) / 4 / RATE - time.monotonic()))
-            await ws.send(pcm[offset : offset + step])
-        await ws.send(json.dumps({"end": True}))
+        try:
+            for offset in range(0, len(pcm), step):
+                if task.done():  # the reader has failed: stop sending, it says why
+                    break
+                if realtime:  # a chunk exists once its last sample has been spoken
+                    await asyncio.sleep(max(0.0, start + (offset + step) / 4 / RATE - time.monotonic()))
+                await ws.send(pcm[offset : offset + step])
+            if not task.done():
+                await ws.send(json.dumps({"end": True}))
+        except websockets.ConnectionClosed:
+            pass  # the server closed the socket: the reader has its error, or that the end never came
+        except BaseException:
+            task.cancel()
+            raise
         await asyncio.wait_for(task, 60)
         return {"names": names, "frames": frames, "lag": lag}
 

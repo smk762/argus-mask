@@ -107,6 +107,9 @@ def download(url: str, size: int, sha256: str, target: Path) -> None:
             raise FetchError(f"{url}: got {got} bytes, the lock expects {size}")
         if digest.hexdigest() != sha256:
             raise FetchError(f"{url}: sha256 is {digest.hexdigest()}, the lock expects {sha256}")
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(partial, 0o666 & ~mask)  # mkstemp's 0600 would otherwise stay on the head
         os.replace(partial, target)
     finally:
         if os.path.exists(partial):

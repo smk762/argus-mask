@@ -48,7 +48,7 @@ def test_every_clip_in_the_spec_is_a_cleared_stock_head_on_a_built_in_scene() ->
 def test_the_index_lists_every_clip_once_in_the_spec_order() -> None:
     order = [c["id"] for c in SPEC["clips"]]
     assert INDEX, "the demo has clips"
-    assert [i for i in order if i in INDEX] == INDEX and len(set(INDEX)) == len(INDEX)
+    assert order == INDEX, "every clip in the spec, once each, in its order"
 
 
 @pytest.mark.parametrize("clip_id", INDEX)
@@ -112,8 +112,10 @@ def test_the_docs_are_every_public_doc_recorded_by_commit_and_sha256(docs_site: 
     out, record = docs_site
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # noqa: S603, S607
     assert record["commit"] == head.stdout.strip() and record["repo"] == "smk762/argus-mask"
-    assert set(record["docs"]) == {"README.md", *(f"docs/{p.name}" for p in (ROOT / "docs").glob("*.md"))}
-    assert not {"CLAUDE.md", "AGENTS.md", "spec.md"} & set(record["docs"]), "agent and planning files never go out"
+    private = {"claude.md", "agents.md", "spec.md", "todo.md"}
+    public = {f"docs/{p.name}" for p in (ROOT / "docs").glob("*.md") if p.name.lower() not in private}
+    assert set(record["docs"]) == {"README.md", *public}
+    assert not private & {Path(p).name.lower() for p in record["docs"]}, "agent and planning files never go out"
     for path, digest in record["docs"].items():
         assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
     for path, digest in record["images"].items():
@@ -150,6 +152,33 @@ def test_the_opsec_gate_refuses_and_never_echoes_the_denylist() -> None:
     with pytest.raises(docs.Refused, match="opsec gate refused"):
         docs.gate("x.md", text, [])
     assert docs.denylist({"OPSEC_DENYLIST": "a, b\nc"}) == ["a", "b", "c"]
+
+
+def test_agent_and_planning_files_never_go_out_from_docs_either(tmp_path: Path) -> None:
+    docs = _build().docs_page
+    (tmp_path / "docs").mkdir()
+    for name in ("consent.md", "spec.md", "AGENTS.md", "CLAUDE.md", "TODO.md"):
+        (tmp_path / "docs" / name).write_text("x", encoding="utf-8")
+    assert docs.public_docs(tmp_path) == ("README.md", "docs/consent.md")
+
+
+def test_a_denylisted_term_is_withheld_from_a_pattern_hit_too() -> None:
+    docs = _build().docs_page
+    hits = docs.opsec_hits("ask ops@mithril.example or 10.1.2.3\nfine", ["mithril", "10.1.2.3"])
+    assert sorted(kind for _, kind, _ in hits) == [
+        "denylisted term",
+        "denylisted term",
+        "email address",
+        "private IPv4 address",
+    ]
+    assert "mithril" not in str(hits).lower() and "10.1.2.3" not in str(hits)
+
+
+def test_a_denylisted_term_is_found_on_its_own_line_whatever_the_case_mapping() -> None:
+    """'İ' lowercases to two code points: offsets from a lowercased copy would land lines too far down."""
+    docs = _build().docs_page
+    hits = docs.opsec_hits("İİİİİİİİİİİİmithril\n\n\n\n\nend", ["Mithril"])
+    assert hits == [(1, "denylisted term", "(withheld)")]
 
 
 def test_an_empty_denylist_term_matches_nothing_and_ends() -> None:
