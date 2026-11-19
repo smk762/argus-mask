@@ -37,7 +37,6 @@ import struct
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -82,6 +81,7 @@ def log(message: str) -> None:
     print(f"a2f-server: {message}", file=sys.stderr, flush=True)
 
 
+# nosemgrep: cortex-copy - standalone sidecar image, no argus-cortex dep; exits on a bad value
 def env_flag(name: str) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     if raw in ("", "0", "false", "no", "off"):
@@ -346,7 +346,7 @@ class Server:
                     self.model_json = await asyncio.to_thread(prepare, self.config, phase)
                 self.phase = "loading the model"
                 worker = await Worker.start(self.config, self.model_json, self.config.fps)
-            except (OSError, RuntimeError, ValueError, KeyError, TimeoutError, urllib.error.URLError) as exc:
+            except Exception as exc:  # noqa: BLE001 - any start-up failure retries; CancelledError still propagates
                 self.phase = f"failed, retrying in {RETRY_S:g} s: {exc}"
                 log(self.phase)
                 await asyncio.sleep(RETRY_S)
@@ -380,7 +380,7 @@ class Server:
         await old.stop()
         try:
             worker = await Worker.start(self.config, self.model_json, fps)
-        except (OSError, RuntimeError, ValueError, KeyError, TimeoutError) as exc:
+        except Exception as exc:  # noqa: BLE001 - any start-up failure recovers; CancelledError still propagates
             self._recover(f"could not load the model at {fps} fps: {exc}")
             raise WorkerDied(f"could not load the model at {fps} fps: {exc}") from exc
         self._adopt(worker)

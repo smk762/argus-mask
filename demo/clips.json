@@ -7,8 +7,8 @@
     {
       "id": "hello",
       "title": "Hello",
-      "face": "stock-02",
-      "framing": "waist",
+      "face": "splat-01",
+      "framing": "head",
       "scene": "lake",
       "voice": "speaker:Rosemary Okafor",
       "seed": 2,
@@ -35,7 +35,7 @@
     {
       "id": "screens",
       "title": "On a screen",
-      "face": "stock-02",
+      "face": "splat-01",
       "framing": "head",
       "scene": "ftl",
       "voice": "speaker:Rosemary Okafor",

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import json
 import re
 import time
@@ -44,10 +45,11 @@ import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import structlog
+from argus_cortex.gpu import GpuLeaseRefused, GpuLeaseTimeout
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -78,6 +80,9 @@ from argus_mask.editor.voices import (
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
 from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
+from argus_mask.gpu import VOICE_MAKE
+from argus_mask.gpu import coordinator as gpu_coordinator
+from argus_mask.gpu import lease as gpu_lease
 from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FRAMINGS, FaceManifest, ModelFile
 from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, read_body
 from argus_mask.voice import analyse, assess
@@ -105,7 +110,7 @@ def server_get(base: str, path: str) -> tuple[int | None, dict | list | None, st
             return reply.status, json.loads(reply.read()), None
     except urllib.error.HTTPError as exc:
         return exc.code, None, f"{exc.code} {exc.reason}"
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         return None, None, f"no argus-mask server answers at {base} ({getattr(exc, 'reason', exc)})"
 
 
@@ -240,6 +245,7 @@ def create_editor_app(
     *,
     builder: Builder | None = None,
     packs: Installs | None = None,
+    gpu: Any = None,  # noqa: ANN401 - a cortex GpuCoordinator; by default the one ARGUS_GPU_COORDINATOR names
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -261,7 +267,8 @@ def create_editor_app(
     previews = FaceStore(builder.preview_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
-    generations = Generations(voice_store)
+    gpu = gpu if gpu is not None else gpu_coordinator()
+    generations = Generations(voice_store, gpu)
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
     packs = packs or Installs(ed.data_dir, load_catalogue())
 
@@ -526,7 +533,7 @@ def create_editor_app(
     @app.put("/scenes/faces/{face_id}")
     def scene_choose(face_id: str, choice: SceneChoice) -> dict:
         """Which backdrop a face shows when a screen does not ask for one. Screens pick it up on their next load."""
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             scene_choices.choose(face_id, choice.scene)
@@ -552,7 +559,7 @@ def create_editor_app(
     @app.put("/expressions/faces/{face_id}")
     def expression_choose(face_id: str, choice: RestChoice) -> dict:
         """Which rest set a face shows. Screens pick it up when they next load the face."""
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             expressions.choose(face_id, choice.set)
@@ -602,7 +609,7 @@ def create_editor_app(
 
     @app.delete("/aliases/{name}")
     def alias_remove(name: str) -> dict:
-        if not _FACE_ID.match(name) or not aliases.remove(name):
+        if not _FACE_ID.fullmatch(name) or not aliases.remove(name):
             raise HTTPException(404, f"no alias {name!r}")
         log.info("alias_removed", alias=name)
         return {"removed": name}
@@ -630,7 +637,7 @@ def create_editor_app(
 
     @app.get("/screen/{face_id}")
     async def screen(face_id: str) -> dict:
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise HTTPException(404, f"{face_id!r} is not a face id")
         target = aliases.resolve(face_id)
         try:
@@ -825,7 +832,10 @@ def create_editor_app(
                 raise HTTPException(403, f"this voice may not be made: {why}")
         if voice_store.record(req.id) is not None:
             raise HTTPException(409, f"there is already a voice called {req.id}: delete it first, or pick another name")
-        existing = await asyncio.to_thread(client.tts_voices, tts)
+        try:
+            existing = await asyncio.to_thread(client.tts_voices, tts)
+        except client.ClientError as exc:
+            raise HTTPException(502, str(exc)) from exc
         if existing and any(v["name"] == f"clone:{req.id}" for v in existing):
             raise HTTPException(409, f"the TTS service already has a voice called {req.id}: pick another name")
         reports = []
@@ -844,9 +854,12 @@ def create_editor_app(
         transcript = " ".join(c.transcript.strip() for c in req.clips)
         clips = [(c.name, await asyncio.to_thread(path.read_bytes)) for c, path in zip(req.clips, paths, strict=True)]
         try:
-            made = await asyncio.to_thread(client.clone_voice, tts, req.id, req.name, clips, transcript)
+            async with gpu_lease(gpu, VOICE_MAKE, f"argus-mask:voice:{req.id}"):  # the service clones on its GPU
+                made = await asyncio.to_thread(client.clone_voice, tts, req.id, req.name, clips, transcript)
         except client.ClientError as exc:
             raise HTTPException(502, str(exc)) from exc
+        except (GpuLeaseRefused, GpuLeaseTimeout) as exc:
+            raise HTTPException(503, f"no GPU for the voice yet: {exc}") from exc
         record = {
             "id": req.id,
             "name": req.name,
@@ -1009,8 +1022,9 @@ def create_editor_app(
         if not root.is_dir():
             return []
         clips = []
+        # nosemgrep: handler-scans-all - the response is every recording; an index would not shrink it
         for p in root.iterdir():
-            if p.suffix in (".mp4", ".webm") and _RECORDING.match(p.name):
+            if p.suffix in (".mp4", ".webm") and _RECORDING.fullmatch(p.name):
                 with contextlib.suppress(OSError):  # gone, or not a file, between the listing and the look
                     if p.is_file():
                         clips.append((p.name, p.stat()))
@@ -1021,7 +1035,7 @@ def create_editor_app(
     def recording(name: str) -> FileResponse:
         """One recorded file: a plain name in the recordings directory, nothing else."""
         path = ed.recordings_dir / name
-        if not _RECORDING.match(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
+        if not _RECORDING.fullmatch(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
             raise HTTPException(404, "no such recording")
         return FileResponse(path, filename=name)
 

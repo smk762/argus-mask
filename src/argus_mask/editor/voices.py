@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import time
@@ -30,12 +31,15 @@ import uuid
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import structlog
+from argus_cortex.gpu import GpuLeaseRefused, GpuLeaseTimeout, NullCoordinator
 
 from argus_mask import client
 from argus_mask.audio import PcmDecoder
+from argus_mask.gpu import VOICE_MAKE, lease
 from argus_mask.voice import analyse
 
 log = structlog.get_logger(__name__)
@@ -83,13 +87,21 @@ class VoiceStore:
         sha = hashlib.sha256(data).hexdigest()
         self.staged.mkdir(parents=True, exist_ok=True)
         path = self.staged / f"{sha}.wav"
-        if not path.exists():
-            tmp = path.with_suffix(".part")
+        try:
+            os.utime(path)  # already here: now the newest
+        except FileNotFoundError:
+            # a temp name of its own: two requests staging the same clip each write and replace their own
+            tmp = path.with_name(f"{sha}.{uuid.uuid4().hex}.part")
             tmp.write_bytes(data)
             tmp.replace(path)
-        path.touch()
-        old = sorted(self.staged.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True)[STAGED_KEEP:]
-        for p in old:
+        # Another request may evict (or be evicting) the same files: one gone between listing and stat is skipped.
+        dated = []
+        for p in self.staged.glob("*.wav"):
+            try:
+                dated.append((p.stat().st_mtime, p))
+            except FileNotFoundError:
+                continue
+        for _, p in sorted(dated, reverse=True)[STAGED_KEEP:]:
             p.unlink(missing_ok=True)
         return sha
 
@@ -124,8 +136,14 @@ class VoiceStore:
             return None
 
     def write(self, record: dict, clips: list[Path]) -> None:
-        folder = self.root / record["id"]
+        voice_id = record.get("id")
+        if not isinstance(voice_id, str) or not re.fullmatch(VOICE_ID, voice_id):
+            raise VoiceError(f"{voice_id!r} is not a voice id")
+        folder = self.root / voice_id
         folder.mkdir(parents=True, exist_ok=True)
+        # The folder holds this record's clips and no others: one left from an earlier voice would be cloned from.
+        for old in folder.glob("clip-*.wav"):
+            old.unlink()
         for i, path in enumerate(clips):
             shutil.copyfile(path, folder / f"clip-{i + 1}.wav")
         tmp = folder / "voice.json.part"
@@ -138,7 +156,8 @@ class VoiceStore:
             return False
         bin_ = self.root / ".trash"
         bin_.mkdir(parents=True, exist_ok=True)
-        folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}")
+        # unique: the same id made and deleted again within a second must not land on the first one's folder
+        folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}")
         return True
 
 
@@ -196,8 +215,9 @@ class Generation:
 class Generations:
     """Synthetic candidates: a TTS service reading a script in a voice no one owns."""
 
-    def __init__(self, store: VoiceStore) -> None:
+    def __init__(self, store: VoiceStore, gpu: Any = None) -> None:  # noqa: ANN401 - a cortex GpuCoordinator
         self.store = store
+        self.gpu = gpu if gpu is not None else NullCoordinator()  # the TTS service's GPU: a VOICE_MAKE lease
         self.jobs: dict[str, Generation] = {}
 
     def start(self, tts_url: str, body: dict) -> Generation:
@@ -210,15 +230,18 @@ class Generations:
 
         async def run() -> None:
             try:
-                reply = await asyncio.to_thread(client.open_tts, tts_url, body)
-                # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the app.
-                limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)
-                try:
-                    data = await client._cancellable(
-                        asyncio.to_thread(client._read_capped, reply, limit), cut=reply.cut
-                    )
-                finally:
-                    reply.close()
+                async with lease(self.gpu, VOICE_MAKE, f"argus-mask:voice-candidate:{job.id}"):
+                    # cancelled while the reply is still opening, the reply is closed when it arrives, not leaked
+                    reply = await client._open_tts_cancellable(tts_url, body)
+                    # Capped, and cut on a stop: a service that never stops must neither fill memory nor hold the
+                    # app.
+                    limit = int(client.MAX_BUFFERED_S * reply.fmt.sample_rate) * client._frame_bytes(reply.fmt)
+                    try:
+                        data = await client._cancellable(
+                            asyncio.to_thread(client._read_capped, reply, limit), cut=reply.cut
+                        )
+                    finally:
+                        reply.close()
                 samples = pcm_to_float(data, reply.fmt)
                 if not len(samples):
                     raise client.ClientError("the TTS service sent no audio")
@@ -230,7 +253,7 @@ class Generations:
                 report = await asyncio.to_thread(analyse, padded, rate, body["text"], generated=True)
                 job.result = {"sha": sha, "transcript": body["text"], "report": report.public()}
                 job.state = "done"
-            except client.ClientError as exc:
+            except (client.ClientError, GpuLeaseRefused, GpuLeaseTimeout) as exc:
                 job.state, job.error = "failed", str(exc)
             except Exception as exc:  # noqa: BLE001 - the page must hear of it
                 job.state, job.error = "failed", f"{type(exc).__name__}: {exc}"
@@ -238,7 +261,15 @@ class Generations:
             finally:
                 job.ended = time.monotonic()
 
+        def settled(task: asyncio.Task) -> None:
+            # A cancelled run (stop_all, or cancelled before it began) catches nothing: it must not stay "running",
+            # which would refuse every later start and never be pruned.
+            if job.state == "running":
+                job.state, job.error = "failed", "cancelled" if task.cancelled() else "stopped"
+                job.ended = job.ended or time.monotonic()
+
         job.task = asyncio.create_task(run())
+        job.task.add_done_callback(settled)
         return job
 
     async def stop_all(self) -> None:

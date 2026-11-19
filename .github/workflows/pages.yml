@@ -2,13 +2,17 @@ name: Deploy demo
 
 # Builds the hosted demo (mask.dragonhound.dev, #118) with demo/build.py and uploads demo/out to Cloudflare Pages:
 # the page, the package's viewer, the committed clips (demo/clips) and the stock heads they show, fetched from the
-# stock-heads release and checked against their locks. Needs the repo secrets CLOUDFLARE_API_TOKEN (Pages: Edit)
-# and CLOUDFLARE_ACCOUNT_ID, and the Pages project created once:
+# stock-heads release and checked against their locks, and /docs/: the README and docs/*.md at this commit (#123).
+# It deploys dev's HEAD, so the docs are always dev's (the suite's rule: demos track dev, never an old tag); a release
+# fast-forwards main to a dev commit already deployed. The build refuses docs that fail the opsec gate and clips the
+# engine has moved on from (demo/docs_page.py). Needs the repo secrets CLOUDFLARE_API_TOKEN (Pages: Edit) and
+# CLOUDFLARE_ACCOUNT_ID, optionally OPSEC_DENYLIST (private terms the docs must not name), and the Pages project
+# created once:
 #   npx wrangler pages project create argus-mask --production-branch main
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the version (git describe) and the clips' drift check need the history and tags
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -31,7 +37,10 @@ jobs:
           python-version: "3.12"
       # The vendored design layer is unedited, and say so (not fail) if dragonhound.dev has a newer one.
       - run: node demo/vendor/dh/sync-shared.mjs --check . --against https://dragonhound.dev/brand/v1/manifest.json --allow-outdated
+      - run: python3 -m pip install markdown-it-py==4.2.0
       - run: python3 demo/build.py
+        env:
+          OPSEC_DENYLIST: ${{ secrets.OPSEC_DENYLIST }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

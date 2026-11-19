@@ -5,12 +5,15 @@
 * :func:`inspect_splat` checks a LAM Gaussian-splat head (a ``.zip``) without
   unpacking it to disk: one folder of known members, bounded in count and size,
   no path tricks, and a ``skin.glb`` whose morph targets are ARKit shapes.
+* :func:`inspect_bound_splats` checks the splats a mesh model carries (``ModelFile.splats``): an SPZ whose
+  header and length agree with the manifest, unpacked in memory under a cap, and a binding whose every triangle is
+  one of the mesh's, counted through the parts the manifest names, which must be the mesh's own.
 * :class:`FaceStore` lists the faces the server may serve. A face whose manifest
   has no provenance, names another id, points outside its directory or no longer
   matches its model's sha256 is refused, with the reason kept for ``inspect``. So is a
   ``consented`` face without a consent record that covers it (:mod:`argus_mask.consent`).
 
-Only the standard library reads the model: the JSON chunk says everything the
+Only the standard library reads the model (numpy reads a binding's numbers): the JSON chunk says everything the
 contract needs, and image sizes come from the PNG and JPEG headers.
 """
 
@@ -22,19 +25,23 @@ import re
 import struct
 import threading
 import zipfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+import numpy as np
 from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.consent import ConsentStore, ConsentUse, refusal
 from argus_mask.models import (
     FACE_ID_PATTERN,
+    MAX_BOUND_SPLATS,
     MODEL_SUFFIXES,
     RESERVED_FACE_IDS,
+    BoundSplats,
     FaceManifest,
     Framing,
     ModelFile,
@@ -152,6 +159,26 @@ def _image_size(blob: bytes) -> tuple[int, int] | None:
     return None
 
 
+_MALFORMED = "not a well-formed glTF"
+
+
+def _objects(holder: dict, key: str) -> list[dict]:
+    """*holder*'s list of objects under *key* (none if absent); :class:`FaceError` for any other shape."""
+    value = holder.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise FaceError(f"{_MALFORMED}: {key} is not a list of objects")
+    return value
+
+
+def _whole(value: object, what: str) -> int:
+    """A glTF count, offset or index: a whole number, not negative; :class:`FaceError` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise FaceError(f"{_MALFORMED}: {what} is not a whole number")
+    return value
+
+
 def _target_names(mesh: dict, count: int) -> list[str]:
     # Blender, three.js and the glTF sample models all put the names in extras.targetNames.
     for holder in (mesh, *(p for p in mesh.get("primitives", []) if isinstance(p, dict))):
@@ -167,26 +194,29 @@ def inspect_glb(path: str | Path) -> GlbReport:
 
 
 def glb_report(doc: dict, binary: bytes) -> GlbReport:
-    """:func:`inspect_glb` of a parsed glTF binary."""
-    accessors = doc.get("accessors") or []
-    views = doc.get("bufferViews") or []
+    """:func:`inspect_glb` of a parsed glTF binary. The JSON is the file's own claim: an entry of the wrong shape is
+    :class:`FaceError`, never another exception."""
+    accessors = _objects(doc, "accessors")
+    views = _objects(doc, "bufferViews")
     report = GlbReport()
 
     def count(index: object) -> int:
         if isinstance(index, int) and 0 <= index < len(accessors):
-            return int(accessors[index].get("count", 0))
+            return _whole(accessors[index].get("count", 0), "an accessor's count")
         return 0
 
-    for i, mesh in enumerate(doc.get("meshes") or []):
-        primitives = [p for p in mesh.get("primitives", []) if isinstance(p, dict)]
+    for i, mesh in enumerate(_objects(doc, "meshes")):
+        primitives = mesh.get("primitives", [])
+        if not isinstance(primitives, list):
+            raise FaceError(f"{_MALFORMED}: a mesh's primitives are not a list")
+        primitives = [p for p in primitives if isinstance(p, dict)]
         triangles = 0
         for prim in primitives:
+            attributes = prim.get("attributes", {})
+            if not isinstance(attributes, dict) or not isinstance(prim.get("targets", []), list):
+                raise FaceError(f"{_MALFORMED}: a primitive's attributes or targets are the wrong shape")
             if prim.get("mode", 4) == 4:
-                n = (
-                    count(prim["indices"])
-                    if "indices" in prim
-                    else count((prim.get("attributes") or {}).get("POSITION"))
-                )
+                n = count(prim["indices"]) if "indices" in prim else count(attributes.get("POSITION"))
                 triangles += n // 3
         targets = max((len(p.get("targets") or []) for p in primitives), default=0)
         report.meshes.append(
@@ -195,12 +225,13 @@ def glb_report(doc: dict, binary: bytes) -> GlbReport:
             )
         )
 
-    for image in doc.get("images") or []:
+    for image in _objects(doc, "images"):
         size = None
         view = image.get("bufferView")
         if isinstance(view, int) and 0 <= view < len(views):
-            start = int(views[view].get("byteOffset", 0))
-            size = _image_size(binary[start : start + int(views[view].get("byteLength", 0))])
+            start = _whole(views[view].get("byteOffset", 0), "a buffer view's byteOffset")
+            length = _whole(views[view].get("byteLength", 0), "a buffer view's byteLength")
+            size = _image_size(binary[start : start + length])
         report.textures.append(size)
 
     found = {name for mesh in report.meshes for name in mesh.targets}
@@ -355,7 +386,7 @@ def inspect_splat(path: str | Path) -> SplatReport:
         if len(folders) != 1:
             raise FaceError(f"{label}: {len(folders)} top-level entries; a LAM head is one folder")
         folder = folders.pop()
-        if not _SPLAT_FOLDER.match(folder):
+        if not _SPLAT_FOLDER.fullmatch(folder):
             raise FaceError(f"{label}: the folder name {folder!r} is not a plain name")
         if missing := [m for m in SPLAT_REQUIRED if m not in files]:
             raise FaceError(f"{label}: missing {', '.join(missing)}")
@@ -408,8 +439,159 @@ def inspect_model(path: str | Path) -> GlbReport | SplatReport:
     return inspect_splat(path) if model_format(path) == "lam-splat" else inspect_glb(path)
 
 
+# ── Splats bound to a mesh (#126 route A) ─────────────────────────────────────
+
+SPZ_MAGIC = 0x5053474E  # "NGSP"
+SPZ_HEADER = 16
+SPZ_SH_COEFFS = {0: 0, 1: 3, 2: 8, 3: 15}
+SPZ_MAX_BYTES = 64 << 20  # the file, packed; stock-01's 149,007 splats at SH 3 are 2.9 MiB
+BINDING_BYTES = 12  # uint32 triangle, float32 u, float32 v
+_BARY_SLACK = 1e-4  # float32 rounding on a point on an edge
+
+
+def spz_point_bytes(version: int, sh_degree: int) -> int:
+    """Bytes a splat takes in an SPZ body: position (3 x 24 bit), alpha, colour, scale, rotation, SH."""
+    return 9 + 1 + 3 + 3 + (4 if version >= 3 else 3) + 3 * SPZ_SH_COEFFS[sh_degree]
+
+
+@dataclass
+class SpzReport:
+    version: int
+    count: int
+    sh_degree: int
+    unpacked: int
+
+
+def inspect_spz(data: bytes, label: str = "splats") -> SpzReport:
+    """Check an SPZ (gzip'd: a 16-byte header, then the splats) without decoding a splat.
+
+    Refused (:class:`FaceError`): not gzip; unpacking past what the header's count could need (a bomb stops at the
+    cap); a magic, version (2 or 3), SH degree (0 to 3) or count (1 to ``MAX_BOUND_SPLATS``) it should not have;
+    a body whose length is not exactly the count's.
+    """
+    if len(data) > SPZ_MAX_BYTES:
+        raise FaceError(f"{label}: over {SPZ_MAX_BYTES >> 20} MiB")
+    try:
+        unzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)  # gzip only
+        head = unzip.decompress(data, SPZ_HEADER)
+    except zlib.error as exc:
+        raise FaceError(f"{label}: not an SPZ file (not gzip: {exc})") from exc
+    if len(head) < SPZ_HEADER:
+        raise FaceError(f"{label}: too short to be an SPZ file")
+    magic, version, count, sh_degree, _bits, _flags, _reserved = struct.unpack_from("<IIIBBBB", head)
+    if magic != SPZ_MAGIC:
+        raise FaceError(f"{label}: not an SPZ file")
+    if version not in (2, 3):
+        raise FaceError(f"{label}: SPZ version {version}; this reader takes 2 and 3")
+    if sh_degree not in SPZ_SH_COEFFS:
+        raise FaceError(f"{label}: SH degree {sh_degree}; at most 3")
+    if not 1 <= count <= MAX_BOUND_SPLATS:
+        raise FaceError(f"{label}: {count} splats; between 1 and {MAX_BOUND_SPLATS}")
+    want = count * spz_point_bytes(version, sh_degree)
+    got = 0
+    try:  # never more than one byte past the count's body: a bomb stops there
+        while got <= want and not unzip.eof:
+            chunk = unzip.decompress(unzip.unconsumed_tail, want + 1 - got)
+            if not chunk and not unzip.unconsumed_tail:
+                break  # the input ran out before the gzip stream ended
+            got += len(chunk)
+    except zlib.error as exc:
+        raise FaceError(f"{label}: the SPZ body does not unpack: {exc}") from exc
+    if got != want or not unzip.eof:
+        raise FaceError(f"{label}: the body holds {'more' if got > want else 'less'} than {count} splats")
+    return SpzReport(version=version, count=count, sh_degree=sh_degree, unpacked=SPZ_HEADER + got)
+
+
+def glb_parts(doc: dict) -> list[tuple[str, int, int]]:
+    """Each mesh node of a glTF, in file order: its name, vertices and triangles (the bake's vertex space).
+
+    An entry of the wrong shape is :class:`FaceError`, as in :func:`glb_report`, never another exception.
+    """
+    accessors = _objects(doc, "accessors")
+    meshes = _objects(doc, "meshes")
+
+    def count(index: object) -> int:
+        if isinstance(index, int) and 0 <= index < len(accessors):
+            return _whole(accessors[index].get("count", 0), "an accessor's count")
+        return 0
+
+    def attributes(prim: dict) -> dict:
+        found = prim.get("attributes") or {}
+        if not isinstance(found, dict):
+            raise FaceError(f"{_MALFORMED}: a primitive's attributes are the wrong shape")
+        return found
+
+    out = []
+    for node in _objects(doc, "nodes"):
+        if not isinstance(node.get("mesh"), int) or not 0 <= node["mesh"] < len(meshes):
+            continue
+        prims = meshes[node["mesh"]].get("primitives") or []
+        if not isinstance(prims, list):
+            raise FaceError(f"{_MALFORMED}: a mesh's primitives are not a list")
+        prims = [p for p in prims if isinstance(p, dict)]
+        vertices = sum(count(attributes(p).get("POSITION")) for p in prims)
+        triangles = sum(
+            (count(p["indices"]) if "indices" in p else count(attributes(p).get("POSITION"))) // 3
+            for p in prims
+            if p.get("mode", 4) == 4
+        )
+        out.append((str(node.get("name", "")), vertices, triangles))
+    return out
+
+
+def check_binding(data: bytes, splats: BoundSplats, label: str = "binding") -> None:
+    """Every splat's triangle is one of the mesh's and its (u, v) lie on it; :class:`FaceError` if not."""
+    if len(data) != splats.count * BINDING_BYTES:
+        raise FaceError(f"{label}: {len(data)} bytes; {splats.count} splats take {splats.count * BINDING_BYTES}")
+    rows = np.frombuffer(data, np.dtype([("tri", "<u4"), ("u", "<f4"), ("v", "<f4")]))
+    if int(rows["tri"].max()) >= splats.triangles:
+        raise FaceError(f"{label}: a splat rides triangle {int(rows['tri'].max())}; the mesh has {splats.triangles}")
+    u, v = rows["u"], rows["v"]
+    if not (np.isfinite(u).all() and np.isfinite(v).all()):
+        raise FaceError(f"{label}: a splat's place on its triangle is not a number")
+    if (u < -_BARY_SLACK).any() or (v < -_BARY_SLACK).any() or (u + v > 1 + _BARY_SLACK).any():
+        raise FaceError(f"{label}: a splat's place is off its triangle (u, v and u + v lie in 0..1)")
+
+
+@dataclass
+class BoundSplatsReport:
+    spz: SpzReport
+
+
+def inspect_bound_splats(directory: Path, model: ModelFile, doc: dict) -> BoundSplatsReport:
+    """Check a mesh model's splats (``model.splats``) against the files beside it and the mesh's glTF *doc*.
+
+    The files must be in *directory* (no link out) and match their sha256; the parts the manifest names must be
+    the mesh's own, in order, vertex for vertex and triangle for triangle; then :func:`inspect_spz` (its count the
+    manifest's) and :func:`check_binding`.
+    """
+    splats = model.splats
+    if splats is None:
+        raise FaceError("the model carries no splats")
+    found = glb_parts(doc)
+    named = [(p.name, p.vertices, p.triangles) for p in splats.parts]
+    if found != named:
+        raise FaceError("the splats' parts are not the mesh's (name, vertices and triangles, in file order)")
+    data = {}
+    for name, sha in ((splats.file, splats.sha256), (splats.binding, splats.binding_sha256)):
+        path = directory / name
+        if not path.is_file() or path.resolve().parent != directory.resolve():
+            raise FaceError(f"the splats' {name} is not in the face's directory")
+        if path.stat().st_size > SPZ_MAX_BYTES:
+            raise FaceError(f"the splats' {name} is over {SPZ_MAX_BYTES >> 20} MiB")
+        data[name] = path.read_bytes()
+        if hashlib.sha256(data[name]).hexdigest() != sha:
+            raise FaceError(f"the splats' {name} does not match its sha256")
+    spz = inspect_spz(data[splats.file], splats.file)
+    if spz.count != splats.count:
+        raise FaceError(f"{splats.file}: {spz.count} splats; the manifest says {splats.count}")
+    check_binding(data[splats.binding], splats, splats.binding)
+    return BoundSplatsReport(spz=spz)
+
+
 # What a face's model is served as, by its format.
 MEDIA_TYPES: dict[str, str] = {"gltf": "model/gltf-binary", "lam-splat": "application/zip"}
+SPLAT_MEDIA_TYPE = "application/octet-stream"  # an SPZ and a binding; neither has a registered type
 
 # Where the camera sits for a LAM head when the manifest does not say: LAM's heads stand at about 1.65 m
 # (FLAME's origin is at the feet). The viewer aims at ``height`` from a tenth of the distance above it.
@@ -465,22 +647,28 @@ class FaceStore:
         self.root = Path(root)
         self.consents = ConsentStore(self.root)
         self.clock = clock
-        self._hashes: dict[tuple[str, int, int], str] = {}  # (path, mtime_ns, size) -> sha256
+        self._hashes: dict[str, tuple[tuple[int, ...], str]] = {}  # path -> (its version, sha256)
         self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
+        # The model's path -> (the splats and each file's version, as _sha256 takes it; the report, or why refused)
+        self._bound: dict[str, tuple[tuple, BoundSplatsReport | str]] = {}
 
     def _sha256(self, path: Path) -> str:
+        """The file's sha256, hashed again once anything about it changes. The version includes the inode and its
+        ctime, which no tool sets: a same-size copy with its mtime kept (``cp -p``, ``rsync -t``) is still new."""
         stat = path.stat()
-        key = (str(path), stat.st_mtime_ns, stat.st_size)
-        if key not in self._hashes:
-            self._hashes[key] = sha256_file(path)
-        return self._hashes[key]
+        version = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+        cached = self._hashes.get(str(path))
+        if cached is None or cached[0] != version:  # one entry per path: an earlier version's goes
+            cached = (version, sha256_file(path))
+            self._hashes[str(path)] = cached
+        return cached[1]
 
     def load(self, face_id: str, *, use: ConsentUse = "avatar") -> tuple[FaceManifest, Path]:
         """A face's manifest and model path, or :class:`FaceError` saying why it is refused.
 
         A consented face must have a consent record that covers *use* now: served on a screen is ``avatar``.
         """
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
         if face_id in RESERVED_FACE_IDS:
             raise FaceError(f"{face_id!r} is reserved: the directory holds no faces")
@@ -503,8 +691,10 @@ class FaceStore:
             if why is not None:
                 raise FaceError(f"consent: {why}")
         model = self._model(directory, manifest.model, "the model")
+        self._bound_splats(directory, manifest.model, model, "the model")
         for name, framed in manifest.framings.items():  # each framing is checked as the head is
-            self._model(directory, framed.model, f"the {name} model")
+            path = self._model(directory, framed.model, f"the {name} model")
+            self._bound_splats(directory, framed.model, path, f"the {name} model")
         if manifest.model.format == "lam-splat":
             report = self._splat(model)
             if unknown := [n for n in manifest.blendshapes if n not in report.present]:
@@ -520,6 +710,31 @@ class FaceStore:
         if self._sha256(path) != model.sha256:
             raise FaceError(f"{what}'s sha256 does not match the manifest")
         return path
+
+    def _bound_splats(self, directory: Path, model: ModelFile, path: Path, what: str) -> None:
+        """A mesh model's splats, checked once per version of the three files; :class:`FaceError` if refused."""
+        if model.splats is None:
+            return
+        files = [path] + [directory / n for n in (model.splats.file, model.splats.binding)]
+        try:
+            # Each file's version as _sha256 takes it: a same-size copy with its mtime kept is still checked again.
+            versions = []
+            for f in files:
+                stat = f.stat()
+                versions.append((stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size))
+        except OSError:
+            raise FaceError(f"{what}'s splats are missing a file") from None
+        key = (model.splats.model_dump_json(), *versions)
+        cached = self._bound.get(str(path))
+        if cached is None or cached[0] != key:  # one entry per model: an earlier version's goes
+            try:
+                found: BoundSplatsReport | str = inspect_bound_splats(directory, model, read_glb(path)[0])
+            except FaceError as exc:
+                found = f"{what}'s splats: {exc}"
+            cached = self._bound[str(path)] = (key, found)
+        found = cached[1]
+        if isinstance(found, str):
+            raise FaceError(found)
 
     def _splat(self, path: Path) -> SplatReport:
         """The archive's report, checked once per version of the file; :class:`FaceError` if it is refused."""
@@ -600,7 +815,7 @@ class Aliases:
         return dict(self._raw)
 
     def _problem(self, name: str, target: str, raw: dict[str, str]) -> str | None:
-        if not _FACE_ID.match(name):
+        if not _FACE_ID.fullmatch(name):
             return f"{name!r} is not a face id"
         if (self.store.root / name).is_dir():
             return f"{name!r} is a face: an alias may not hide it"
@@ -624,7 +839,7 @@ class Aliases:
 
     def resolve(self, name: str) -> str:
         """The face a name stands for: a face's own id is itself, an alias its face; anything else as given."""
-        if not _FACE_ID.match(name) or (self.store.root / name).is_dir():
+        if not _FACE_ID.fullmatch(name) or (self.store.root / name).is_dir():
             return name
         raw = self.raw()
         target = raw.get(name)

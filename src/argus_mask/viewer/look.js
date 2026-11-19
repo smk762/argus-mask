@@ -357,10 +357,12 @@ export class Look {
   // the backdrop is, so a cool starfield or a green garden should colour them a little.
   tintRims(colour, amount = 0.5) {
     // From the rims' own colour each time, so a preview that changes scene does not tint on top of a tint;
-    // a null colour gives them back their own.
+    // a null colour, or one Color cannot read, gives them back their own. Color.set never throws: it leaves the
+    // colour as it was (warning for an unknown name), so a NaN colour that stays NaN was not read.
     for (const rim of this.rims) rim.userData.ownColour ??= rim.color.clone();
-    const tint = new THREE.Color();
-    try { tint.set(colour); } catch { for (const rim of this.rims) rim.color.copy(rim.userData.ownColour); return; }
+    const tint = new THREE.Color(NaN, NaN, NaN);
+    if (colour !== null && colour !== undefined) tint.set(colour);
+    if (Number.isNaN(tint.r)) { for (const rim of this.rims) rim.color.copy(rim.userData.ownColour); return; }
     for (const rim of this.rims) rim.color.copy(rim.userData.ownColour).lerp(tint, amount);
   }
 

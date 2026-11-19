@@ -1,11 +1,11 @@
 {
   "id": "hello",
   "title": "Hello",
-  "face": "stock-02",
-  "framing": "waist",
+  "face": "splat-01",
+  "framing": "head",
   "scene": "lake",
-  "duration_ms": 14424,
-  "frames": 433,
+  "duration_ms": 13912,
+  "frames": 418,
   "captions": [
     {
       "start_ms": 0,
@@ -14,12 +14,12 @@
     },
     {
       "start_ms": 3681,
-      "end_ms": 9484,
+      "end_ms": 8417,
       "text": "Give me any voice and I'll speak it, with my lips and jaw in step with every syllable."
     },
     {
-      "start_ms": 9784,
-      "end_ms": 14424,
+      "start_ms": 8717,
+      "end_ms": 13912,
       "text": "Between words I blink, glance around and breathe, so I never freeze."
     }
   ],
@@ -39,7 +39,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.2.0-56-g0c6a9ec",
+    "argus_mask": "v0.2.0-153-geeb873f",
     "driver": {
       "name": "a2f",
       "model": null

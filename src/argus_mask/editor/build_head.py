@@ -111,6 +111,9 @@ def load_preset(path: str) -> dict:
     for key in PHENOTYPE_KEYS:
         if not 0.0 <= phenotype[key] <= 1.0:
             raise RecipeError(f"{path}: phenotype.{key} must be between 0 and 1")
+    for key in RACE_KEYS:
+        if not 0.0 <= race[key] <= 1.0:
+            raise RecipeError(f"{path}: phenotype.race.{key} must be between 0 and 1")
     age = float(phenotype["age"])
     if age < ADULT_AGE:
         raise RecipeError(
@@ -190,11 +193,16 @@ def find_mpfb():
 
 
 def resolve_asset(services, fragment: str) -> str:
-    """``hair/short02/short02.mhclo`` to a file under one of MPFB's data roots."""
+    """``hair/short02/short02.mhclo`` to a file under one of MPFB's data roots, and never outside them."""
     subdir, _, rest = fragment.partition("/")
+    parts = rest.split("/")
+    if "\\" in fragment or os.path.isabs(rest) or any(p in ("", ".", "..") for p in [subdir, *parts]):
+        raise RecipeError(f"asset {fragment!r} is not a path inside MPFB's data directory")
     for root in services.AssetService.get_asset_roots(subdir):
-        candidate = os.path.join(root, rest)
-        if os.path.isfile(candidate):
+        # Contained by its text, not by resolving links: an asset pack may be installed as a symlink.
+        root = os.path.normpath(root)
+        candidate = os.path.normpath(os.path.join(root, *parts))
+        if os.path.commonpath([candidate, root]) == root and os.path.isfile(candidate):
             return candidate
     raise RecipeError(f"asset {fragment!r} is not installed: is the asset pack that holds it in MPFB's data directory?")
 
@@ -348,7 +356,7 @@ def lower_upper_teeth(teeth, drop_m: float) -> dict:
 def scale_shapes(objects, factors: dict[str, float]) -> None:
     """Exaggerate (or soften) named face shapes on every mesh that carries them."""
     for obj in objects:
-        if not obj.data.shape_keys:
+        if obj.type != "MESH" or not obj.data.shape_keys:
             continue
         basis = key_coords(obj)
         for name, factor in factors.items():
@@ -382,6 +390,11 @@ def shade_mouth(head, teeth, tongue, floor: float) -> dict:
     box = (np.abs(base[:, 0]) < 0.034) & (base[:, 2] < -0.040) & (base[:, 2] > -0.110) & (base[:, 1] < 0.03)
     # The lips themselves: a narrow band on the centre line, below the nose and above the chin's bulge.
     lips = (np.abs(base[:, 0]) < 0.012) & (base[:, 2] < -0.060) & (base[:, 2] > -0.085)
+    if not lips.any():
+        raise RecipeError(
+            "mouth.cavity_shade: no head vertex where the lips should be (|x| < 12 mm, z from -85 to -60 mm "
+            "below the eyes): is the head centred and at MakeHuman's scale?"
+        )
     lip_front = float(base[lips][:, 1].min())
     tree = BVHTree.FromPolygons([tuple(v) for v in base.tolist()], [tuple(p.vertices) for p in head.data.polygons])
     # Straight ahead, and a little up, down and to each side: a vertex seen through the gap
@@ -409,7 +422,10 @@ def shade_mouth(head, teeth, tongue, floor: float) -> dict:
         rgba[:, :3] = np.asarray(values, dtype=np.float32)[:, None]
         attribute.data.foreach_set("color", rgba.ravel())
         obj.data.color_attributes.active_color = attribute
-        obj.data.color_attributes.render_color_index = 0
+        # The new attribute's own index: a mesh that already has one (an import's, or an earlier Shade, which makes
+        # this one Shade.001) would otherwise render and export the old one.
+        names = [a.name for a in obj.data.color_attributes]
+        obj.data.color_attributes.render_color_index = names.index(attribute.name)
     return {"lip_front_mm": round(lip_front * 1000, 1), "head_vertices_shaded": inside, "floor": floor}
 
 
@@ -459,6 +475,7 @@ def bake_skin_maps(head, workdir: str, *, strength: float = 0.18, radius: int = 
     n /= np.linalg.norm(n, axis=2, keepdims=True)
     rough = np.clip(0.62 - 0.05 * height, 0.4, 0.85)
     report = {"made": True, "source": colour.name, "size": [w, h]}
+    made = {}  # the images made here: a name already taken gets a suffix, so never look them up by name
     for name, data in (
         ("skin_detail_normal", n * 0.5 + 0.5),
         ("skin_detail_roughness", np.dstack([rough, rough, rough])),
@@ -473,15 +490,16 @@ def bake_skin_maps(head, workdir: str, *, strength: float = 0.18, radius: int = 
         image.save(filepath=path, quality=92)
         image.source = "FILE"
         image.reload()
+        made[name] = image
         report[name] = path
     normal_tex = nodes.new("ShaderNodeTexImage")
-    normal_tex.image = bpy.data.images["skin_detail_normal"]
+    normal_tex.image = made["skin_detail_normal"]
     normal_map = nodes.new("ShaderNodeNormalMap")
     normal_map.name = SKIN_DETAIL
     links.new(normal_tex.outputs["Color"], normal_map.inputs["Color"])
     links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
     rough_tex = nodes.new("ShaderNodeTexImage")
-    rough_tex.image = bpy.data.images["skin_detail_roughness"]
+    rough_tex.image = made["skin_detail_roughness"]
     split = nodes.new("ShaderNodeSeparateColor")
     links.new(rough_tex.outputs["Color"], split.inputs["Color"])
     links.new(split.outputs["Green"], bsdf.inputs["Roughness"])  # glTF reads roughness from green
@@ -637,7 +655,8 @@ def recolour(image, target) -> None:
     *target* is linear RGB (hair: the strands' variation kept), or a garment colourway's ``(mode, linear RGB)``:
     ``tint`` keeps the fabric's variation the same way, ``solid`` paints it flat.
     """
-    mode, rgb = target if isinstance(target, tuple) else ("tint", target)
+    colourway = isinstance(target, tuple | list) and len(target) == 2 and isinstance(target[0], str)
+    mode, rgb = target if colourway else ("tint", target)
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
     image.pixels.foreach_get(pixels)
     paint = hair_colour.solid if mode == "solid" else hair_colour.recolour
@@ -660,6 +679,8 @@ def is_opaque(image) -> bool:
     """Whether every pixel's alpha is (near enough) 1."""
     if image.channels < 4:
         return True
+    if not image.size[0] * image.size[1]:
+        return True  # no pixels (an image Blender could not load): nothing to keep the alpha of
     pixels = np.empty(image.size[0] * image.size[1] * image.channels, dtype=np.float32)
     image.pixels.foreach_get(pixels)
     return bool(pixels[3 :: image.channels].min() > 0.995)
@@ -708,7 +729,12 @@ def fit_textures(
     larger per pixel, so they get their own, usually smaller, cap *max_alpha_px*.
     """
     scene = bpy.context.scene
-    scene.view_settings.view_transform = "Standard"  # save_render must not grade the texture
+    # save_render writes through the scene's colour management, which must not grade the texture: no look,
+    # exposure or gamma (a user's startup file may set them), and a data image (Non-Color) written raw below.
+    scene.display_settings.display_device = "sRGB"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
     report = []
     for image in sorted(used_images(), key=lambda i: i.name):
         if image.get("argus_baked"):
@@ -734,6 +760,9 @@ def fit_textures(
         scene.render.image_settings.color_mode = "RGBA" if keep_alpha else "RGB"
         scene.render.image_settings.quality = 90
         path = os.path.join(workdir, f"{len(report):02d}.{'png' if keep_alpha else 'jpg'}")
+        # Standard undoes a colour image's sRGB exactly; a data image's values are scene linear, so the display's
+        # sRGB curve would land on them: Raw writes them unconverted.
+        scene.view_settings.view_transform = "Raw" if image.colorspace_settings.is_data else "Standard"
         image.save_render(path, scene=scene)
         image.source = "FILE"
         image.filepath = path
@@ -771,6 +800,18 @@ def patch_glb(path: str, blended: set[str]) -> dict:
     return doc
 
 
+def clear_scene() -> None:
+    """Remove every object, and the data and materials only they used: a mesh or material left in ``bpy.data``
+    keeps its name, so a later one given the same name (``head``, ``rig``) would get a ``.001`` suffix."""
+    data = {obj.data for obj in bpy.data.objects if obj.data is not None}
+    materials = {m for block in data for m in (getattr(block, "materials", None) or ()) if m is not None}
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    # Data first, so the materials it held lose those users; anything something else still uses is kept.
+    for blocks in (data, materials):
+        bpy.data.batch_remove([b for b in blocks if b.users == 0])
+
+
 def build(preset: dict, out: str, framing: str = "head") -> dict:
     mpfb = find_mpfb()
     services = importlib.import_module(mpfb.__name__ + ".services")
@@ -783,8 +824,7 @@ def build(preset: dict, out: str, framing: str = "head") -> dict:
     if not faces.is_faceunits01_installed(force_recheck=True):
         raise RecipeError("MPFB's faceunits01 asset pack is not installed: it holds the ARKit face shapes")
 
-    for obj in list(bpy.data.objects):
-        bpy.data.objects.remove(obj, do_unlink=True)
+    clear_scene()
 
     phenotype = {k: float(preset["phenotype"][k]) for k in PHENOTYPE_KEYS}
     phenotype["race"] = {k: float(preset["phenotype"]["race"][k]) for k in RACE_KEYS}
@@ -1087,7 +1127,13 @@ def add_accessories(specs: list, basemesh, rig) -> list:
             mesh = studs(count=2, radius=0.0032, spacing=0.010) if hit else None
         elif kind == "earpiece":  # on the side of the head at the ear (the head alone: hair would stop the ray)
             found = head_tree.ray_cast(Vector((sign * 0.5, 0.0, -0.022)), Vector((-sign, 0, 0)))
-            hit = (found[0], found[1]) if found[0] is not None else None
+            # The tree is the basemesh's own (local) space; the other accessories are cast in the world's.
+            world = basemesh.matrix_world
+            hit = (
+                (world @ found[0], (world.to_3x3().inverted_safe().transposed() @ found[1]).normalized())
+                if found[0] is not None
+                else None
+            )
             mesh = bud(radius=0.0075) if hit else None
         else:
             raise RecipeError(f"no accessory {kind!r}: there are {', '.join(ACCESSORY_BONES)}")
@@ -1203,9 +1249,9 @@ def hide_covered_skin(basemesh, garments, below_z: float) -> int:
         if hit(vert.co, normal, COVER_OUT_M) or hit(vert.co, -normal, COVER_IN_M):
             covered.add(vert.index)
     gone = [face for face in skin.faces if all(v.index in covered for v in face.verts)]
-    bmesh.ops.delete(skin, geom=gone, context="FACES_ONLY")
-    loose = [v for v in skin.verts if not v.link_faces]
-    bmesh.ops.delete(skin, geom=loose, context="VERTS")
+    # The faces, and the edges and vertices only they used: no wire edges left at the hole, and loose geometry
+    # that was there before is not this function's to remove.
+    bmesh.ops.delete(skin, geom=gone, context="FACES")
     skin.to_mesh(basemesh.data)
     skin.free()
     basemesh.data.update()

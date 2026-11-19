@@ -34,6 +34,7 @@ from argus_mask.models import FRAMINGS, Frame, StreamEnd, StreamHeader
 from argus_mask.take import render_take
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
+MUX_TIMEOUT_S = 3600  # an hour: far over any clip's encode, short of a stalled ffmpeg holding the caller forever
 QUALITIES = ("low", "medium", "high")  # the viewer's look profiles (look.js)
 SCENES = tuple(BUILT_IN_SCENES)  # the viewer's built-in backdrops (backdrop.js: SCENES); a test holds the two together
 # Chromium's rendering backends, tried in order: the host's GPU over EGL, then SwiftShader in software.
@@ -71,7 +72,9 @@ class Recording:
         out = np.zeros(int(round(self.duration_ms * rate / 1000)), dtype=np.float32)
         for start, x in self.audio:
             at = int(round(start * rate / 1000))
-            out[at : at + x.size] = x[: max(0, out.size - at)]
+            skip, at = max(0, -at), max(0, at)  # a chunk starting before 0 loses its head, not its place
+            n = max(0, min(x.size - skip, out.size - at))
+            out[at : at + n] = x[skip : skip + n]
         return out
 
 
@@ -178,10 +181,12 @@ async def render_frames(
                     on_renderer(f"{backend}: {renderer}" + (f", look {look}" if look else ""))
                 break
             except Exception as exc:  # playwright's own error types vary by version
-                failures.append(f"{backend}: {str(exc).splitlines()[0]}")
-                if browser is not None:
-                    await browser.close()
-                browser = page = None
+                try:
+                    if browser is not None:
+                        await browser.close()
+                finally:
+                    browser = page = None
+                    failures.append(f"{backend}: {(str(exc).splitlines() or [type(exc).__name__])[0]}")
         if page is None or browser is None:
             raise RecordError("no browser could render the face: " + "; ".join(failures))
         try:
@@ -219,6 +224,7 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
     webm = out.suffix.lower() == ".webm"
     command = [
         find_ffmpeg(),
+        "-nostdin",
         "-y",
         "-loglevel",
         "error",
@@ -239,7 +245,12 @@ def mux(frames_dir: Path, wav: Path, out: Path, fps: int) -> None:
         "-shortest",
         str(out),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(
+            command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False, timeout=MUX_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RecordError(f"ffmpeg did not finish in {MUX_TIMEOUT_S} s") from exc
     if result.returncode != 0:
         raise RecordError(f"ffmpeg failed: {result.stderr.strip() or result.returncode}")
 
@@ -259,7 +270,8 @@ def scene_refusal(base: str, scene: str) -> str | None:
 def video_refusal(base: str, face_id: str) -> str | None:
     """Why *face_id* may not be recorded to video, if the server says so: a real person's face whose release does
     not cover video. A face the server does not serve, or a server that cannot be reached, is left for the capture
-    to report; any other failure to answer refuses, since the check cannot be skipped."""
+    to report; any other failure to answer refuses, a timeout included (a slow server is not a down one), since the
+    check cannot be skipped."""
     url = f"{base.rstrip('/')}/face/{quote(face_id, safe='')}/consent?use=video"
     try:
         with urllib.request.urlopen(url, timeout=5) as reply:  # noqa: S310 - the server's own http(s) URL
@@ -268,11 +280,15 @@ def video_refusal(base: str, face_id: str) -> str | None:
         if exc.code == 404:
             return None  # no such face: capture says so in its own words
         return f"{face_id} may not be recorded: the server could not check its consent (HTTP {exc.code})"
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError) as exc:
+        if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+            return f"{face_id} may not be recorded: the server's consent check timed out"
         return None  # unreachable: capture says so in its own words
     except ValueError:
         return f"{face_id} may not be recorded: the server's consent check did not answer in JSON"
-    if isinstance(verdict, dict) and verdict.get("ok") is False:
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("ok"), bool):
+        return f"{face_id} may not be recorded: the server's consent check gave no verdict"
+    if verdict["ok"] is not True:
         return f"{face_id} may not be recorded: {verdict.get('detail') or 'its consent record does not cover video'}"
     return None
 
@@ -302,6 +318,11 @@ async def record(
         raise RecordError(f"framing {framing!r}: choose from {', '.join(FRAMINGS)}")
     if quality not in QUALITIES:  # before the wait: a typo should not cost the session
         raise RecordError(f"quality {quality!r}: choose from {', '.join(QUALITIES)}")
+    out = Path(out)
+    stem = out.with_suffix("")
+    wav, take, frames_dir = Path(f"{stem}.wav"), Path(f"{stem}.take.ndjson"), Path(f"{stem}.frames")
+    if out.resolve() in {p.resolve() for p in (wav, take, frames_dir)}:
+        raise RecordError(f"{out.name}: the clip would overwrite its own WAV, take or frames; name it .mp4 or .webm")
     # No scene: the face's own default, as on a screen; `none`: a plain background whatever the default.
     if scene and scene not in (*SCENES, NO_SCENE) and (why := await asyncio.to_thread(scene_refusal, base, scene)):
         raise RecordError(why)
@@ -312,15 +333,12 @@ async def record(
         raise RecordError("the session had no frames")
     if on_captured:
         on_captured(recording)
-    out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    stem = out.with_suffix("")
-    wav, take = Path(f"{stem}.wav"), Path(f"{stem}.take.ndjson")
     # Off the event loop: the editor records inside its own server, and must keep answering meanwhile.
     await asyncio.to_thread(write_wav, wav, recording)
     await asyncio.to_thread(write_take, take, recording)
-    frames_dir = Path(f"{stem}.frames")
-    shutil.rmtree(frames_dir, ignore_errors=True)  # frames kept from an earlier, longer clip would join this one
+    # Frames kept from an earlier, longer clip would join this one.
+    await asyncio.to_thread(shutil.rmtree, frames_dir, ignore_errors=True)
     # The viewer's look profile (look.js). Offline, there is time for all of it: high by default.
     params = {"face": face_id, "record": "1", "hud": "0", "display": display, "quality": quality}
     params |= {"bg": bg} if bg else {}
@@ -341,5 +359,5 @@ async def record(
         await asyncio.to_thread(mux, frames_dir, wav, out, recording.header.fps)
     finally:  # a failed or stopped render must not leave a directory of PNGs behind either
         if not keep:
-            shutil.rmtree(frames_dir, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, frames_dir, ignore_errors=True)
     return recording

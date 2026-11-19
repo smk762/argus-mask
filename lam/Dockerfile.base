@@ -1,0 +1,24 @@
+# The LAM environment: CUDA 12.1, torch 2.3, LAM's requirements, pytorch3d, the rasterisers and the FBX SDK.
+# Code and weights are mounted at run time, not baked in. About 25 GB; the first build compiles for a while.
+#
+#   docker build -f lam/Dockerfile.base -t argus-mask-lam-base \
+#     --build-context lam=$LAM_DIR --build-context fbx=<dir holding the FBX SDK wheel> lam/
+#
+# The FBX SDK (Autodesk, fbx-2020.3.4 cp310 wheel) is needed by LAM's avatar export (ASCII FBX to binary). It is not
+# redistributable: download it yourself and point the `fbx` build context at it.
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+ENV DEBIAN_FRONTEND=noninteractive TORCH_CUDA_ARCH_LIST="8.6" FORCE_CUDA=1 PIP_NO_CACHE_DIR=1 MAX_JOBS=8
+RUN apt-get update && apt-get install -y --no-install-recommends python3.10 python3.10-dev python3.10-venv python3-pip \
+      git build-essential ffmpeg libgl1 libglib2.0-0 libegl1 libgles2 && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/python3.10 /usr/bin/python
+RUN pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121 \
+ && pip install xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu121
+COPY --from=lam requirements.txt /tmp/requirements.txt
+RUN grep -v "git+" /tmp/requirements.txt > /tmp/req-pypi.txt && pip install -r /tmp/req-pypi.txt "numpy==1.23.0"
+RUN pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@v0.7.7" \
+ && pip install --no-build-isolation "git+https://github.com/ashawkey/diff-gaussian-rasterization/" \
+ && pip install --no-build-isolation "nvdiffrast@git+https://github.com/ShenhanQian/nvdiffrast@backface-culling" \
+ && pip install --no-build-isolation "git+https://github.com/camenduru/simple-knn/"
+COPY --from=fbx fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl /tmp/
+RUN pip install /tmp/fbx-2020.3.4-cp310-cp310-manylinux1_x86_64.whl
+WORKDIR /lam

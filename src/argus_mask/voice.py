@@ -22,6 +22,7 @@ TARGET_TOTAL_S = (12.0, 20.0)  # speech across the set; Miso keeps the first 20 
 MIN_TOTAL_S = 6.0
 WPS = (1.8, 3.8)  # words a second of speech a matching transcript gives
 WPS_GENERATED = (2.7, 4.2)  # a TTS reading its script: slower usually means it repeated or added words
+PEAK_DB_BELOW = 60  # with no noise to measure, speech reaches as far as the spectrum stands within this of its peak
 PENALTY = {"bad": 30, "warn": 8, "good": 0, "info": 0}
 
 
@@ -114,7 +115,7 @@ def _pitch(mono: np.ndarray, rate: int, mask: np.ndarray) -> np.ndarray:
 
 def _bandwidth(mono: np.ndarray, rate: int, mask: np.ndarray) -> float:
     """The highest frequency the speech reaches: where its long-term spectrum stands 10 dB over the clip's own noise
-    (the frames between words), or, with too little quiet to measure, within 50 dB of its peak."""
+    (the frames between words), or, with too little quiet to measure, within ``PEAK_DB_BELOW`` (60 dB) of its peak."""
     hop = int(FRAME_S * rate)
     n = 2048
 
@@ -124,13 +125,15 @@ def _bandwidth(mono: np.ndarray, rate: int, mask: np.ndarray) -> float:
         if segs == 0:
             return None
         power = (np.abs(np.fft.rfft(audio[: segs * n].reshape(segs, n) * np.hanning(n), axis=1)) ** 2).mean(axis=0)
-        return np.convolve(10 * np.log10(power + 1e-20), np.ones(9) / 9, mode="same")
+        # Smoothed over 9 bins, the ends padded with their own level: zeros here are 0 dB, far over a quiet top bin.
+        db = np.pad(10 * np.log10(power + 1e-20), 4, mode="edge")
+        return np.convolve(db, np.ones(9) / 9, mode="valid")
 
     speech = spectrum(np.flatnonzero(mask))
     if speech is None:
         return rate / 2
     noise = spectrum(np.flatnonzero(~mask))
-    floor = speech.max() - 60 if noise is None else np.maximum(noise + 10, speech.max() - 60)
+    floor = speech.max() - PEAK_DB_BELOW if noise is None else np.maximum(noise + 10, speech.max() - PEAK_DB_BELOW)
     above = np.flatnonzero(speech > floor)
     return float(above[-1] * rate / n) if len(above) else 0.0
 
@@ -173,8 +176,9 @@ def analyse(samples: np.ndarray, rate: int, transcript: str = "", *, generated: 
     gaps = [(a - b) * FRAME_S for a, b in zip(runs[2::2], runs[1:-1:2], strict=False)]
     longest_pause = max(gaps, default=0.0)
     peak = float(np.abs(mono).max())
-    clipped = int((np.abs(mono) >= 0.999).sum())
-    flat = int(((np.abs(mono[1:]) > 0.95) & (np.diff(mono) == 0)).sum())
+    # At full scale, or held flat near it (a clipped run): a sample that is both is counted once.
+    flat = np.r_[False, (np.abs(mono[1:]) > 0.95) & (np.diff(mono) == 0)]
+    clipped = int(((np.abs(mono) >= 0.999) | flat).sum())
     speech_db = 10 * np.log10(np.mean(10 ** (db[mask] / 10)))
     quiet = db[~mask]
     noise_db = float(np.median(quiet)) if len(quiet) >= 10 else floor
@@ -188,7 +192,7 @@ def analyse(samples: np.ndarray, rate: int, transcript: str = "", *, generated: 
         "tail_seconds": round(tail, 2),
         "longest_pause_seconds": round(longest_pause, 2),
         "peak_dbfs": round(_db(peak), 1),
-        "clipped_samples": clipped + flat,
+        "clipped_samples": clipped,
         "speech_dbfs": round(float(speech_db), 1),
         "noise_dbfs": round(noise_db, 1),
         "snr_db": round(float(snr), 1),
@@ -289,22 +293,22 @@ def analyse(samples: np.ndarray, rate: int, transcript: str = "", *, generated: 
         add(Check("bandwidth", "Bandwidth", f"{bandwidth / 1000:.1f} kHz", "good"))
 
     # level and clipping
-    if clipped + flat > max(3, len(mono) * 1e-4):
+    if clipped > max(3, len(mono) * 1e-4):
         add(
             Check(
                 "clipping",
                 "Clipping",
-                f"{clipped + flat} samples at full scale",
+                f"{clipped} samples at full scale",
                 "bad",
                 "The recording overloaded: the clone will crackle. Record again with the gain lower, peaks around -6 dBFS.",
             )
         )  # noqa: E501
-    elif clipped + flat:
+    elif clipped:
         add(
             Check(
                 "clipping",
                 "Clipping",
-                f"{clipped + flat} samples at full scale",
+                f"{clipped} samples at full scale",
                 "warn",
                 "A few samples touch full scale. Fine if they are rare; lower the gain next time.",
             )
@@ -542,7 +546,7 @@ def assess(clips: list[dict]) -> Report:
                     "The clips sit at quite different pitches: different deliveries, or different speakers? Keep one delivery per voice; make a variant for another (see the guide).",
                 )
             )  # noqa: E501
-        rates = {c["metrics"]["rate"] for c in usable}
+        rates = {r for c in usable if (r := c["metrics"].get("rate")) is not None}
         if len(rates) > 1:
             add(Check("rates", "Formats", ", ".join(f"{r} Hz" for r in sorted(rates)), "info"))
     return report

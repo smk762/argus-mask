@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
-from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, inspect_glb, read_glb
+from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, glb_report, inspect_glb, read_glb
 from argus_mask.models import FACE_DISCLOSURE, FaceManifest, Provenance
 from tests.helpers import RELEASE, make_face, make_glb, write_consent
 
@@ -117,6 +119,61 @@ def test_a_manifest_must_match_its_directory_and_its_model(tmp_path) -> None:
         FaceStore(tmp_path).load("swapped")
 
 
+def test_a_same_size_model_with_its_mtime_kept_is_hashed_again(tmp_path) -> None:
+    directory = make_face(tmp_path, "copied")
+    store = FaceStore(tmp_path)
+    store.load("copied")
+    model = directory / "head.glb"
+    data, stat = bytearray(model.read_bytes()), model.stat()
+    data[-1] ^= 0xFF  # a byte of the binary chunk: the same size, other content
+    time.sleep(0.05)  # past a coarse clock's tick, so the ctime moves
+    model.write_bytes(bytes(data))
+    os.utime(model, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # as cp -p or rsync -t leave it
+    assert model.stat().st_mtime_ns == stat.st_mtime_ns and model.stat().st_size == stat.st_size
+    with pytest.raises(FaceError, match="sha256 does not match"):
+        store.load("copied")
+
+
+def test_the_hash_cache_keeps_one_entry_per_file(tmp_path) -> None:
+    directory = make_face(tmp_path, "edited")
+    store = FaceStore(tmp_path)
+    for shapes in (["jawOpen"], ["jawOpen", "mouthClose"], ["mouthClose"]):
+        (directory / "head.glb").write_bytes(make_glb(shapes))
+        with pytest.raises(FaceError, match="sha256 does not match"):
+            store.load("edited")
+    assert len(store._hashes) == 1
+
+
+PNG_HEAD = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x10\x00\x00\x00\x09"
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {"meshes": [{"primitives": [{"indices": 0}]}], "accessors": [{"count": "9"}]},
+        {"meshes": [{"primitives": [{"indices": 0}]}], "accessors": [{"count": None}]},
+        {"meshes": [{"primitives": [{"indices": 0}]}], "accessors": [{"count": -6}]},
+        {"meshes": [{"primitives": [{"attributes": []}]}]},
+        {"meshes": [{"primitives": 7}]},
+        {"meshes": {"a": 1}},
+        {"accessors": "x"},
+        {"images": [None]},
+        {"images": [{"bufferView": 0}], "bufferViews": ["view"]},
+        {"images": [{"bufferView": 0}], "bufferViews": [{"byteOffset": "0", "byteLength": 24}]},
+        # A negative offset would slice from the end of the buffer: the wrong bytes, read as the image.
+        {"images": [{"bufferView": 0}], "bufferViews": [{"byteOffset": -24, "byteLength": 48}]},
+    ],
+)
+def test_a_malformed_gltf_is_refused_not_raised(doc: dict) -> None:
+    with pytest.raises(FaceError, match="not a well-formed glTF"):
+        glb_report(doc, PNG_HEAD)
+
+
+def test_a_well_formed_gltf_image_is_sized() -> None:
+    doc = {"images": [{"bufferView": 0}], "bufferViews": [{"byteOffset": 0, "byteLength": 24}]}
+    assert glb_report(doc, PNG_HEAD).textures == [(16, 9)]
+
+
 def test_a_model_outside_the_face_directory_is_refused(tmp_path) -> None:
     directory = make_face(tmp_path / "assets", "linked")
     outside = tmp_path / "elsewhere.glb"
@@ -126,7 +183,8 @@ def test_a_model_outside_the_face_directory_is_refused(tmp_path) -> None:
         FaceStore(tmp_path / "assets").load("linked")
 
 
-@pytest.mark.parametrize("face_id", ["../etc", "UPPER", "", "a/b", ".hidden"])
+# "stock-01\n": `$` matches before a final newline, so an id check must use fullmatch.
+@pytest.mark.parametrize("face_id", ["../etc", "UPPER", "", "a/b", ".hidden", "stock-01\n"])
 def test_a_face_id_is_a_plain_name(tmp_path, face_id: str) -> None:
     with pytest.raises(FaceError, match="not a face id"):
         FaceStore(tmp_path).load(face_id)

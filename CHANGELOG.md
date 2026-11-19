@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+### Fixed
+
+- **132 ai-code-auditor findings checked; 125 fixed or already fixed, 7 closed as not a bug.** Fixes that change
+  what a caller sees:
+  - A `RestSet`'s weights must be 0 to 1, as documented (the wire schema says so too).
+  - `record` refuses when the consent check times out, rather than treating a slow server as an unreachable one.
+  - A plate's darkroom record must report the negative prompt the request sent.
+  - `bake` refuses a glTF primitive that isn't triangles, and mesh nodes that share a name.
+  - Session and TTS URLs read their scheme in any case, and anything but http(s)/ws(s) is an error rather than
+    plain `ws://`. A bad port is a `ClientError`, not a `ValueError`.
+  - A pack install refuses to replace a file another writer created during the move (it hard-links into MPFB's
+    data, so that directory needs hard-link support).
+
+  Other fixes close leaked sockets and TTS replies, make cancelled voice candidates release the one-at-a-time slot,
+  write plates, depth maps, consent revocations and `cameras.json` atomically, and fix races in the editor and demo
+  pages. The demo clips are re-recorded at the new engine.
+- **Id and name checks match the whole string** (argus-cortex's `fullmatch` codemod, ai-code-auditor#56). With
+  `re.match`, an anchored check like `^[a-z0-9][a-z0-9_-]{0,63}$` also accepted the value followed by a newline,
+  because `$` matches before a final `\n`. Face ids, pack ids, cache keys, recording names, library asset names, LAM
+  head folders, expression names and `scripts/fetch_stock_head.py`'s face id now use `fullmatch`, so `"stock-01\n"`
+  is refused like any other bad id.
+- **A plate's depth map waits for a busy darkroom behind the GPU broker.** With the argus-iris broker
+  (argus-darkroom#53), darkroom answers a full queue with `409 ... already queued or running`, not `already running`.
+  `POST /depth/{id}` retried only the second, so a depth map failed the plate instead of waiting. Both are retried now;
+  any other 409 (no stored image) is still an answer.
+
 ### Added
 
+- **Docs in the hosted demo** (#123). mask.dragonhound.dev/docs/ is the README and `docs/*.md`, rendered at the
+  deployed commit with a version header (version, commit, PyPI, GitHub), recorded in `docs/sources.json` with a
+  sha256 per file. The build fails closed on an opsec hit, and on clips the engine has changed since. The demo page
+  gets a Docs link and a "Made with" line from each clip's record, and unknown paths get a real 404. The demo now
+  deploys from `dev`, not `main`.
 - **Hosted demo** (#118). `demo/`: a static page that replays recorded clips (a take and its audio) with the viewer's
   own modules, with pause, scrub, captions and what made each clip; `demo/make_clips.py` makes the clips (TTS as
   `say`, Audio2Face as `drive`), `make demo` builds the site, and `pages.yml` deploys it to mask.dragonhound.dev.
@@ -29,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- argus-cortex is pinned `>=0.9,<0.10` (was `>=0.7.0,<0.8`), so the suite's paved-road helpers (`fs`, `net`, `auth`,
+  `limits`; ai-code-auditor#56) are available.
 - **Skin under clothes is hidden by the recipe** (#62). Below the neck, skin a garment covers (cloth within 3 cm out
   along its normal) or pokes through (cloth within 12 mm in) is deleted: under the coverall the shins showed through
   at the knees. Every framing has fewer triangles for it.
@@ -372,6 +407,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is given. The server now holds each audio chunk until frames reach its end, and ends a stream whose driver falls
   more than 10 s behind.
 
-[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/smk762/argus-mask/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/smk762/argus-mask/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/smk762/argus-mask/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/smk762/argus-mask/releases/tag/v0.1.0

@@ -126,34 +126,55 @@ export class SplatHead {
       getNeckPose: () => head.pose(),
     });
     head.r = r;
-    const v = r.viewer;
-    cancelAnimationFrame(v.requestFrameId);   // the page drives every frame (step, exact)
-    if (v.resizeObserver) v.resizeObserver.disconnect();   // fit() sizes the canvas before each draw instead
-    head.host = host;
-    if (v.controls && v.controls.stopListenToKeyEvents) v.controls.stopListenToKeyEvents();
-    // Hold LAM's clips still: no action plays, so the mixer moves no bone; pose() puts the rest pose back each frame.
-    if (r.mixer) { r.mixer.stopAllAction(); r.mixer.timeScale = 0; }
-    if (instant) v.sceneRevealMode = 2;   // SceneRevealMode.Instant: no fade-in that depends on the clock
-    const found = new Map();
-    v.boneRoot?.traverse((node) => {
-      if (node.isBone && head.rest.has(node.name)) { head.bones.push([node, head.rest.get(node.name)]); found.set(node.name, node); }
-    });
-    // The bones that turn the head, each with its share, and its world rotation at rest (to turn about world axes).
-    head.pose();
-    v.avatarMesh?.updateMatrixWorld(true);
-    const chain = [NECK_CHAIN, [['neck', 1]], [['head', 1]]].map((c) => c.filter(([n]) => found.has(n))).find((c) => c.length) || [];
-    const total = chain.reduce((sum, [, share]) => sum + share, 0);
-    head.turners = chain.map(([name, share]) => {
-      const bone = found.get(name);
-      const world = bone.getWorldQuaternion(new THREE.Quaternion());
-      return { bone, share: share / total, world, inverse: world.clone().invert() };
-    });
-    head.framing = splatFraming(framing);
-    head.ownFraming = !splatFraming.isDefault(framing);
-    head.aim(head.framing);
-    // create() resolves after the first section of a progressive load; the rest builds afterwards (each build
-    // stops rendering until its sort is done). Wait for the last, or a recording's first frames race it.
-    await until(() => !v.isLoadingOrUnloading() && v.splatRenderReady && v.splatMesh?.finalBuild && v.splatMesh.getSplatCount() > 0, 'load');
+    // From here the renderer holds a canvas in host, a WebGL context and a sort worker: a head that fails to come
+    // up (the 60 s load, above all) is disposed before the error goes on, or each retry would leak all three.
+    try {
+      const v = r.viewer;
+      cancelAnimationFrame(v.requestFrameId);   // the page drives every frame (step, exact)
+      if (v.resizeObserver) v.resizeObserver.disconnect();   // fit() sizes the canvas before each draw instead
+      head.host = host;
+      if (v.controls && v.controls.stopListenToKeyEvents) v.controls.stopListenToKeyEvents();
+      // Hold LAM's clips still: no action plays, so the mixer moves no bone; pose() puts the rest pose back each frame.
+      if (r.mixer) { r.mixer.stopAllAction(); r.mixer.timeScale = 0; }
+      if (instant) v.sceneRevealMode = 2;   // SceneRevealMode.Instant: no fade-in that depends on the clock
+      const found = new Map();
+      v.boneRoot?.traverse((node) => {
+        if (node.isBone && head.rest.has(node.name)) { head.bones.push([node, head.rest.get(node.name)]); found.set(node.name, node); }
+      });
+      // The bones that turn the head, each with its share, and its world rotation at rest (to turn about world axes).
+      head.pose();
+      v.avatarMesh?.updateMatrixWorld(true);
+      const chain = [NECK_CHAIN, [['neck', 1]], [['head', 1]]].map((c) => c.filter(([n]) => found.has(n))).find((c) => c.length) || [];
+      const total = chain.reduce((sum, [, share]) => sum + share, 0);
+      head.turners = chain.map(([name, share]) => {
+        const bone = found.get(name);
+        const world = bone.getWorldQuaternion(new THREE.Quaternion());
+        return { bone, share: share / total, world, inverse: world.clone().invert() };
+      });
+      head.framing = splatFraming(framing);
+      head.ownFraming = !splatFraming.isDefault(framing);
+      head.aim(head.framing);
+      // create() resolves after the first section of a progressive load; the rest builds afterwards (each build
+      // stops rendering until its sort is done). Wait for the last, or a recording's first frames race it.
+      // The build only advances in the renderer's frame loop, cancelled above, so draw a frame per animation frame
+      // until it is done: waiting without drawing hangs whenever the load had not finished by create()'s return.
+      // A minute: a phone or a software renderer builds slowly. A timeout only; no pose depends on it.
+      // Known: a second renderer created in the same page after one was disposed can still stall here, in headless
+      // Chromium, its build waiting on a sort that never answers. A page that shows a splat face more than once keeps
+      // its SplatHead (demo/player.js) rather than make another.
+      const loaded = () => !v.isLoadingOrUnloading() && v.splatRenderReady && v.splatMesh?.finalBuild && v.splatMesh.getSplatCount() > 0;
+      const start = performance.now();
+      while (!loaded()) {
+        if (performance.now() - start > 60000) throw new Error('The splat head did not load in 60 s.');
+        head.fit();
+        r.render();
+        cancelAnimationFrame(v.requestFrameId);
+        await nextFrame();
+      }
+    } catch (error) {
+      head.dispose();
+      throw error;
+    }
     return head;
   }
 
@@ -260,6 +281,20 @@ export class SplatHead {
 
   dispose() {
     this.backdrop?.dispose();
+    // The renderer takes its canvas off the page, then starts its viewer's async dispose, which removes the same
+    // canvas from its root again: that throws (removeChild: not a child) before the WebGL renderer is disposed, so
+    // each splat head shown would leak a context. Put the canvas back (hidden) for the viewer to remove itself.
+    const viewer = this.r?.viewer;
+    const canvas = viewer?.renderer?.domElement;
+    const root = viewer?.rootElement;
+    // The viewer's dispose first waits for its last sort, which settles only in a frame the page no longer draws: it
+    // would wait for ever, the old renderer would stay alive, and the next splat head would stall beside it. Ending
+    // the sort worker now settles it, so the dispose runs through.
+    try { viewer?.disposeSortWorker?.(); } catch { /* no worker */ }
     try { this.r.dispose(); } catch { /* already gone */ }
+    if (canvas && root && !canvas.parentNode && !viewer.usingExternalRenderer) {
+      canvas.hidden = true;   // back only for the viewer to remove: never seen, if its dispose is slow or fails
+      root.appendChild(canvas);
+    }
   }
 }

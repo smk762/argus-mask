@@ -8,7 +8,7 @@ import pytest
 
 from argus_mask.faces import FaceStore, build_manifest
 from argus_mask.models import FaceManifest
-from tests.helpers import STOCK, make_glb
+from tests.helpers import STOCK, make_glb, make_splat_zip
 
 _SPEC = importlib.util.spec_from_file_location(
     "fetch_stock_head", Path(__file__).resolve().parent.parent / "scripts" / "fetch_stock_head.py"
@@ -180,3 +180,64 @@ def test_a_framing_the_lock_cannot_fetch_is_refused(tmp_path, monkeypatch) -> No
     path.write_text(json.dumps(lock))
     with pytest.raises(fetch_stock_head.FetchError, match="nowhere to get it"):
         fetch_stock_head.read_lock("stock-test", locks)
+
+
+def _splat_lock(tmp_path: Path, monkeypatch, *, file: str | None = None) -> tuple[Path, bytes]:
+    """A lock for a LAM splat head (#126): a .zip model, its manifest's format lam-splat."""
+    built = tmp_path / "built"
+    built.mkdir()
+    model = make_splat_zip(built / "splat-test.zip").read_bytes()
+    manifest = build_manifest(built / "splat-test.zip", face_id="splat-test", name="Splat", provenance=STOCK)
+    body = manifest.model_dump(mode="json")
+    if file is not None:
+        body["model"]["file"] = file
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    url = "https://example.invalid/splat-test.zip"
+    (locks / "splat-test.lock.json").write_text(json.dumps({"url": url, "size": len(model), "manifest": body}))
+
+    class Reply:
+        def __init__(self) -> None:
+            self._rest = model
+
+        def read(self, n: int) -> bytes:
+            block, self._rest = self._rest[:n], self._rest[n:]
+            return block
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            pass
+
+    monkeypatch.setattr(fetch_stock_head.urllib.request, "urlopen", lambda requested, timeout: Reply())
+    return locks, model
+
+
+def test_a_fetched_splat_head_is_one_the_server_will_serve(tmp_path, monkeypatch) -> None:
+    locks, model = _splat_lock(tmp_path, monkeypatch)
+    directory, downloaded = fetch_stock_head.fetch("splat-test", tmp_path / "assets", lock_dir=locks)
+    assert downloaded
+    manifest, served = FaceStore(tmp_path / "assets").load("splat-test")
+    assert manifest.model.format == "lam-splat" and served.suffix == ".zip" and served.read_bytes() == model
+
+
+def test_a_splat_lock_must_name_a_zip(tmp_path, monkeypatch) -> None:
+    locks, _ = _splat_lock(tmp_path, monkeypatch, file="splat-test.glb")
+    with pytest.raises(fetch_stock_head.FetchError, match=r"plain \.zip name"):
+        fetch_stock_head.read_lock("splat-test", locks)
+
+
+def test_a_fetched_head_gets_the_usual_file_mode_not_mkstemps(tmp_path, published) -> None:
+    """mkstemp makes the download 0600; another user (a service, a container) must still read the head."""
+    import os  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+
+    locks, _ = published
+    old = os.umask(0o022)
+    try:
+        directory, _ = fetch_stock_head.fetch("stock-test", tmp_path / "assets", lock_dir=locks)
+    finally:
+        os.umask(old)
+    model = next(directory.glob("*.glb"))
+    assert stat.S_IMODE(model.stat().st_mode) == 0o644

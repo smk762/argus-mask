@@ -45,9 +45,9 @@ def read_take(path: str | Path) -> tuple[StreamHeader, list[Frame], StreamEnd | 
                 kind = data.get("type") if isinstance(data, dict) else None
                 if kind == "header" and header is None:
                     header = StreamHeader.model_validate(data)
-                elif kind == "frame" and header is not None:
+                elif kind == "frame" and header is not None and end is None:
                     frames.append(Frame.model_validate(data))
-                elif kind == "end" and header is not None:
+                elif kind == "end" and header is not None and end is None:
                     end = StreamEnd.model_validate(data)
                 else:
                     raise TakeError(f"{path}:{number}: unexpected {kind!r} message")

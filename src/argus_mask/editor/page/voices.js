@@ -11,10 +11,12 @@ const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(`mask-voices.${key}`)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(`mask-voices.${key}`, JSON.stringify(value)); } catch { /* private window */ } },
 };
+// A refusal's detail as text: a validation error's detail is a list, not a string.
+const detailOf = (body, reply) => (typeof body.detail === 'string' ? body.detail : (body.detail ? JSON.stringify(body.detail) : reply.statusText));
 async function json(url, options) {
   const reply = await fetch(url, options);
   const body = await reply.json().catch(() => ({}));
-  if (!reply.ok) throw new Error(typeof body.detail === 'string' ? body.detail : (body.detail ? JSON.stringify(body.detail) : reply.statusText));
+  if (!reply.ok) throw new Error(detailOf(body, reply));
   return body;
 }
 const post = (url, body) => json(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -85,7 +87,8 @@ function wavFrom(buffer) {
 // ---- clips -----------------------------------------------------------------------------------------------
 
 async function check(clip, blob) {
-  clip.checking = true; clip.error = null; paintClips();
+  // The last report was for the clip as it was (its transcript, say): it no longer speaks for it, pass or fail.
+  clip.checking = true; clip.error = null; clip.report = null; paintClips(); paintMake();
   try {
     if (!blob && !clip.url && !clip.sha) throw new Error('This clip could not be read: remove it and add the file again.');
     const body = blob ?? await (await fetch(clip.url || `/voice/clip/${clip.sha}`)).blob();
@@ -115,13 +118,18 @@ async function addFiles(files) {
 }
 
 function paintClips() {
+  // A repaint (another clip's check ending, say) keeps a transcript being typed, and where the caret was in it.
+  const typing = document.activeElement;
+  const focus = typing?.dataset?.clip ? { key: typing.dataset.clip, start: typing.selectionStart, end: typing.selectionEnd } : null;
   $('clips').replaceChildren(...clips.map((clip, i) => {
-    const transcript = el('textarea', { value: clip.transcript, placeholder: 'Exactly what is said, word for word, with capitals and punctuation. Numbers as words.', readOnly: Boolean(clip.generated) });
-    transcript.addEventListener('change', () => { clip.transcript = transcript.value.trim(); check(clip); });
+    const transcript = el('textarea', { value: clip.draft ?? clip.transcript, placeholder: 'Exactly what is said, word for word, with capitals and punctuation. Numbers as words.', readOnly: Boolean(clip.generated) });
+    transcript.dataset.clip = clip.key;
+    transcript.addEventListener('input', () => { clip.draft = transcript.value; });
+    transcript.addEventListener('change', () => { clip.transcript = transcript.value.trim(); clip.draft = undefined; check(clip); });
     const use = el('input', { type: 'checkbox', checked: clip.use, disabled: !clip.report });
     use.addEventListener('change', () => { clip.use = use.checked; paintClips(); assessSet(); });
     const remove = el('button', { type: 'button', className: 'small', textContent: 'Remove' });
-    remove.onclick = () => { clips.splice(i, 1); paintClips(); assessSet(); };
+    remove.onclick = () => { clips.splice(i, 1); if (clip.url) URL.revokeObjectURL(clip.url); paintClips(); assessSet(); };
     const up = el('button', { type: 'button', className: 'small', textContent: '↑', title: 'Earlier: Miso keeps the first 20 s', disabled: i === 0 });
     up.onclick = () => { [clips[i - 1], clips[i]] = [clips[i], clips[i - 1]]; paintClips(); assessSet(); };
     const canvas = el('canvas');
@@ -146,11 +154,18 @@ function paintClips() {
     return card;
   }));
   if (!clips.length) $('clips').append(el('div', { className: 'hint', textContent: 'No clips yet.' }));
+  const back = focus && [...$('clips').querySelectorAll('textarea')].find((t) => t.dataset.clip === focus.key);
+  if (back) { back.focus(); back.setSelectionRange(focus.start, focus.end); }
 }
 
+// Calls overlap (a check ends, a clip is dropped): only the latest one's verdict may stand and gate Make.
+let assessSeq = 0;
 async function assessSet() {
+  const token = ++assessSeq;
   const used = clips.filter((c) => c.use && c.report);
-  setReport = used.length ? await post('/voice/assess', used.map((c) => c.report)).catch(() => null) : null;
+  const report = used.length ? await post('/voice/assess', used.map((c) => c.report)).catch(() => null) : null;
+  if (token !== assessSeq) return;
+  setReport = report;
   const box = $('set');
   if (!setReport) { box.replaceChildren(el('span', { className: 'hint', textContent: 'Add a clip to see whether the set is enough.' })); paintMake(); return; }
   box.replaceChildren(
@@ -203,14 +218,15 @@ function paintMake() {
   $('v-confirm-wrap').hidden = kind === 'personal';
   const used = clips.filter((c) => c.use && c.report);
   const why = !state.can_make ? state.reason
-    : !used.length ? 'Choose at least one checked clip.'
-      : used.some((c) => !c.transcript) ? 'Every clip needs its transcript.'
-        : used.some((c) => c.report.verdict === 'not suitable') ? 'A chosen clip is not suitable: fix or drop it.'
-          : setReport?.verdict === 'not suitable' ? 'The set is not enough yet.'
-            : !/^[a-z0-9][a-z0-9-]{0,62}$/.test($('v-id').value) ? 'An id: lower case letters, digits and dashes.'
-              : !$('v-name').value.trim() ? 'A name.'
-                : kind === 'personal' ? (!$('v-origin').value.trim() ? 'Say where the clips come from, for your own record.' : '')
-                  : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
+    : clips.some((c) => c.use && (c.checking || c.error)) ? 'A chosen clip is not checked yet: wait for it, or fix or drop it.'
+      : !used.length ? 'Choose at least one checked clip.'
+        : used.some((c) => !c.transcript) ? 'Every clip needs its transcript.'
+          : used.some((c) => c.report.verdict === 'not suitable') ? 'A chosen clip is not suitable: fix or drop it.'
+            : setReport?.verdict === 'not suitable' ? 'The set is not enough yet.'
+              : !/^[a-z0-9][a-z0-9-]{0,62}$/.test($('v-id').value) ? 'An id: lower case letters, digits and dashes.'
+                : !$('v-name').value.trim() ? 'A name.'
+                  : kind === 'personal' ? (!$('v-origin').value.trim() ? 'Say where the clips come from, for your own record.' : '')
+                    : !$('v-confirm').checked ? 'Confirm where the clips come from.' : '';
   $('v-make').disabled = Boolean(why);
   $('v-note').textContent = why;
 }
@@ -271,8 +287,10 @@ async function tryVoice() {
   try {
     const reply = await fetch('/voice/try', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ voice: $('try-voice').value, text: $('try-text').value, temperature: Number($('try-temp').value) }) });
-    if (!reply.ok) throw new Error((await reply.json().catch(() => ({}))).detail || reply.statusText);
-    const audio = $('try-audio'); audio.hidden = false; audio.src = URL.createObjectURL(await reply.blob()); audio.play().catch(() => {});
+    if (!reply.ok) throw new Error(detailOf(await reply.json().catch(() => ({})), reply));
+    const audio = $('try-audio'); audio.hidden = false;
+    if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src);   // the last sample tried
+    audio.src = URL.createObjectURL(await reply.blob()); audio.play().catch(() => {});
     $('try-note').textContent = '';
   } catch (err) { $('try-note').textContent = err.message; }
   $('try-go').disabled = false;

@@ -159,7 +159,7 @@ class Builder:
 
     def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
         """The cached build for *key* and its model, if it is whole: the model still matches its manifest."""
-        if self.cache_size == 0 or not _KEY.match(key):
+        if self.cache_size == 0 or not _KEY.fullmatch(key):
             return None
         directory = self.cache_dir / key
         try:
@@ -181,7 +181,7 @@ class Builder:
         target = self.cache_dir / key
         if target.exists():
             if self.cached(key) is not None:
-                os.utime(target)
+                self._touch(target)
                 return
             shutil.rmtree(target)  # damaged: replace it with this build, or it is rebuilt every time
         tmp = Path(tempfile.mkdtemp(prefix=".keep-", dir=self.cache_dir))
@@ -191,14 +191,25 @@ class Builder:
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
-        entries = sorted((p for p in self.cache_dir.iterdir() if _KEY.match(p.name)), key=lambda p: p.stat().st_mtime)
+        self._touch(target)  # copytree gave it the work directory's time, which may be older than any entry
+        entries = sorted(self._entries(), key=lambda p: p.stat().st_mtime_ns)
         for old in entries[: max(0, len(entries) - self.cache_size)]:
             shutil.rmtree(old, ignore_errors=True)
+
+    def _entries(self) -> list[Path]:
+        return [p for p in self.cache_dir.iterdir() if _KEY.fullmatch(p.name)]
+
+    def _touch(self, entry: Path) -> None:
+        """Mark *entry* the most recently used: later than every other entry, not merely now. The file system's
+        clock is coarse, so two builds a moment apart can read the same time, and a tie evicts either."""
+        newest = max((p.stat().st_mtime_ns for p in self._entries() if p != entry), default=0)
+        stamp = max(time.time_ns(), newest + 1)
+        os.utime(entry, ns=(stamp, stamp))
 
     def _from_cache(self, source: Path, work: Path, preset: Preset) -> tuple[FaceManifest, dict]:
         """Fill *work* from a cached build, with this preset's id and name."""
         shutil.copytree(source, work, dirs_exist_ok=True)
-        os.utime(source)  # recently used: kept longest
+        self._touch(source)  # recently used: kept longest
         manifest = FaceManifest.model_validate_json((work / MANIFEST_NAME).read_text(encoding="utf-8"))
         manifest = manifest.model_copy(update={"id": preset.id, "name": preset.name})
         (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -230,10 +241,10 @@ class Builder:
 
     def owned(self, face_id: str) -> bool:
         """Whether ``<assets>/<id>`` is a face the editor exported (so it may replace it)."""
-        return bool(_FACE_ID.match(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
+        return bool(_FACE_ID.fullmatch(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
 
     def previewed(self, face_id: str) -> bool:
-        return bool(_FACE_ID.match(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
+        return bool(_FACE_ID.fullmatch(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
 
     @staticmethod
     def _read_preset(directory: Path) -> Preset | None:
@@ -251,7 +262,7 @@ class Builder:
         for root, key in ((self.assets_dir, "exported"), (self.preview_dir, "previewed")):
             if not root.is_dir():
                 continue
-            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.match(p.name)):
+            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.fullmatch(p.name)):
                 preset = self._read_preset(directory)
                 if preset is None:
                     continue
@@ -271,7 +282,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.match(face_id):
+            if not _FACE_ID.fullmatch(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             try:
                 manifest, _ = FaceStore(self.preview_dir).load(face_id)
@@ -292,6 +303,10 @@ class Builder:
             return manifest
 
     async def _build(self, preset: Preset) -> BuildResult:
+        # The id names a directory that is replaced: check it here as every other entry point does, not only
+        # in the model (a preset made with model_construct or model_copy skips its validators).
+        if not _FACE_ID.fullmatch(preset.id):
+            raise BuildError(f"{preset.id!r} is not a face id")
         if reason := self.check():
             raise BuildError(reason)
         assets = self.library.resolve(preset)
@@ -427,7 +442,7 @@ class Builder:
         return self.previewed(face_id) if place == "preview" else self.owned(face_id)
 
     def preset_in(self, face_id: str, place: str) -> Preset | None:
-        if not _FACE_ID.match(face_id):
+        if not _FACE_ID.fullmatch(face_id):
             return None
         return self._read_preset(self.root(place) / face_id)
 
@@ -456,7 +471,7 @@ class Builder:
                 }
             if place == "export":
                 for face_id, why in refused.items():
-                    if _FACE_ID.match(face_id):
+                    if _FACE_ID.fullmatch(face_id):
                         out.setdefault(face_id, {"id": face_id, "export": None, "preview": None})["refused"] = why
 
         def newest(e: dict) -> float:
@@ -470,7 +485,7 @@ class Builder:
             raise Busy("another build or export is running")
         async with self._lock:
             new_id = new_id or face_id
-            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.match(i)), None):
+            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.fullmatch(i)), None):
                 raise NoPreview(f"{bad!r} is not a face id")
             places = [p for p in PLACES if (self.root(p) / face_id).exists()]
             if not places:
@@ -480,23 +495,40 @@ class Builder:
                     raise NotOwned(f"{face_id!r} is a face the editor did not make")
             if new_id != face_id and any((self.root(p) / new_id).exists() for p in PLACES):
                 raise Taken(f"there is already a face {new_id!r}")
-            # Every copy is rewritten before any is moved: a failure part way leaves both as they were,
-            # not the export under the new id and the preview under the old one.
+            # Every copy is rewritten, then every one moved into place, before any old copy is removed: a failure
+            # part way puts back what was moved, so the export and the preview never end up under different ids.
             staged: list[tuple[Path, Path]] = []
+            moved: list[tuple[Path, Path | None]] = []  # (now in place, the copy it replaced: kept until the end)
             try:
                 for place in places:
                     root = self.root(place)
                     staged.append((root, await asyncio.to_thread(self._rewrite, root, face_id, new_id, name)))
                 for root, work in staged:
-                    if new_id == face_id:
-                        self._install(work, root / face_id, root)
-                    else:
-                        work.rename(root / new_id)
-                        shutil.rmtree(root / face_id, ignore_errors=True)
+                    target, old = root / new_id, None
+                    if target.exists():  # the same id: the copy being replaced
+                        old = root / f".old-{uuid.uuid4().hex}"
+                        target.rename(old)
+                    try:
+                        work.rename(target)
+                    except OSError:
+                        if old is not None:
+                            old.rename(target)
+                        raise
+                    moved.append((target, old))
+            except BaseException:
+                for target, old in reversed(moved):
+                    undo = target.with_name(f".undo-{uuid.uuid4().hex}")
+                    target.rename(undo)
+                    if old is not None:
+                        old.rename(target)
+                    shutil.rmtree(undo, ignore_errors=True)
+                raise
             finally:
                 for _, work in staged:
                     if work.exists():
                         shutil.rmtree(work, ignore_errors=True)
+            for target, old in moved:
+                shutil.rmtree(old if old is not None else target.with_name(face_id), ignore_errors=True)
             log.info("face_renamed", face=face_id, to=new_id, name=name)
             return new_id
 
@@ -524,7 +556,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.match(face_id):
+            if not _FACE_ID.fullmatch(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             found = [p for p in places if (self.root(p) / face_id).exists()]
             if not found:

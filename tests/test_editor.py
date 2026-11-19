@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -416,10 +417,13 @@ def test_export_again_replaces_the_editors_own_export(client, rig) -> None:
     assert leftovers(rig["assets"]) == []
 
 
-@pytest.mark.parametrize("face_id", ["nothing-here", "..", "Bad Id"])
-def test_export_needs_a_finished_preview(client, rig, face_id) -> None:
-    # ".." never reaches the route: the client resolves /export/.. to /, which only takes GET.
-    assert client.post(f"/export/{face_id}").status_code in (404, 405)
+@pytest.mark.parametrize(
+    ("face_id", "why"), [("nothing-here", "no preview"), ("%2E%2E", "not a face id"), ("Bad%20Id", "not a face id")]
+)
+def test_export_needs_a_finished_preview(client, rig, face_id, why) -> None:
+    # Encoded, so ".." reaches the route as the id rather than being resolved away by the client.
+    reply = client.post(f"/export/{face_id}")
+    assert reply.status_code == 404 and why in reply.json()["detail"], reply.text
     assert nothing_built(rig["assets"])
 
 
@@ -580,6 +584,22 @@ def test_the_cache_keeps_the_most_recently_used(rig) -> None:
     asyncio.run(builder.build(presets[1]))  # used again: now the newest
     asyncio.run(builder.build(Preset.model_validate(preset(targets={"head-square": 0.4}))))
     assert builder.cached(keys[1]) and builder.cached(keys[2]) is None
+
+
+def test_the_cache_keeps_the_most_recently_used_when_the_clock_has_not_moved(rig, monkeypatch) -> None:
+    """A coarse clock gives builds a moment apart the same time: recency must not rest on the clock moving on."""
+    builder = builder_for(rig, cache_size=2)
+    presets = [Preset.model_validate(preset(targets={"head-square": v})) for v in (0.1, 0.2, 0.3, 0.4)]
+    keys = [builder.key(p) for p in presets]
+    for p in presets[:3]:
+        asyncio.run(builder.build(p))
+    tick = time.time_ns() + 3600 * 10**9  # one tick, and it never moves: every entry and every read share it
+    monkeypatch.setattr(time, "time_ns", lambda: tick)
+    for entry in (builder.cached(keys[1]), builder.cached(keys[2])):
+        os.utime(entry, ns=(tick, tick))
+    asyncio.run(builder.build(presets[1]))  # used again: now the newest
+    asyncio.run(builder.build(presets[3]))
+    assert builder.cached(keys[1]) and builder.cached(keys[3]) and builder.cached(keys[2]) is None
 
 
 def test_a_changed_or_damaged_cache_entry_is_rebuilt(client, rig) -> None:
@@ -983,10 +1003,12 @@ def test_the_broadcast_page_sees_the_servers_faces(broadcasting) -> None:
     assert "Broadcast" in c.get("/broadcast.html").text
 
 
-def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
+def test_say_speaks_through_the_tts_into_the_face(broadcasting, capsys) -> None:
+    from structlog.testing import capture_logs  # noqa: PLC0415
+
     from tests.helpers import fake_wyoming  # noqa: PLC0415
 
-    with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _):
+    with fake_wyoming(tone(0.6)) as (tts, seen), broadcasting(tts) as (c, _), capture_logs() as logs:
         body = {
             "face": "stock-01",
             "text": "Hello there, how are you? This is the second sentence.",
@@ -1001,6 +1023,8 @@ def test_say_speaks_through_the_tts_into_the_face(broadcasting) -> None:
     assert "ready" in kinds and "progress" in kinds and kinds[-1] == "done"
     assert [s["text"] for s in seen] == ["Hello there, how are you?", "This is the second sentence."]  # one each
     assert seen[0]["voice"] == {"name": "en_GB-alba", "speaker": "3"}
+    assert any(e.get("event") == "source_connected" for e in logs)  # the logs were captured: the server's are here
+    assert "second sentence" not in capsys.readouterr().out + "".join(map(str, logs))  # the text is never logged
     with fake_wyoming(tone(0.3)) as (tts, seen), broadcasting(tts) as (c, _):
         for tidy, sent in [(True, ["Hi. It is nine thirty."]), (False, ["Hi.", "It is 9:30."])]:
             job = finished(
@@ -1260,10 +1284,15 @@ def test_only_recordings_are_served_from_the_recordings_directory(recording_rig,
     run, clips, _ = recording_rig
     clips.mkdir(parents=True, exist_ok=True)
     (clips / "kept.mp4").write_bytes(b"clip")
+    # Each refused name is there to serve, so only the handler's rules can refuse it.
+    for name in ("kept.exe", ".hidden.mp4"):
+        (clips / name).write_bytes(b"there")
+    (clips / "linked.mp4").symlink_to(tmp_path / "secret.mp4")
     (tmp_path / "secret.mp4").write_bytes(b"not yours")
     with run() as c:
         assert c.get("/recordings/kept.mp4").content == b"clip"
-        for bad in ["../secret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "nothere.mp4"]:
+        # ".." encoded, so the client sends it as it is rather than resolving it away.
+        for bad in ["%2E%2E%2Fsecret.mp4", "..%2Fsecret.mp4", "kept.exe", ".hidden.mp4", "linked.mp4", "nothere.mp4"]:
             assert c.get(f"/recordings/{bad}").status_code == 404, bad
 
 
@@ -1288,6 +1317,13 @@ def test_a_face_keeps_its_backdrop_through_rename_and_loses_it_on_delete(client,
     assert client.post("/saved/my-face/rename", json={"id": "renamed"}).status_code == 200
     assert client.get("/scenes/faces").json() == {"renamed": "garden"}
     assert client.delete("/saved/renamed").status_code == 200
+    assert client.get("/scenes/faces").json() == {}
+
+
+def test_a_face_id_with_a_trailing_newline_is_refused(client, rig) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    assert client.put("/scenes/faces/my-face%0A", json={"scene": "garden"}).status_code == 404
     assert client.get("/scenes/faces").json() == {}
 
 
@@ -1428,10 +1464,10 @@ def test_a_garment_colourway_reaches_blender_and_only_for_clothes_worn(client, r
     sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
     assert sent["garment_colours"] == {top: {"colour": "#1d2b4f", "mode": "solid"}}
     # Another colour is another build: the cache does not hand back the navy one.
-    assert (
-        client.post("/build", json=preset(garment_colours={top: {"colour": "#7a1c1c"}})).json().get("cached")
-        is not True
-    )
+    red = client.post("/build", json=preset(garment_colours={top: {"colour": "#7a1c1c"}}))
+    assert red.status_code == 200 and red.json().get("cached") is not True, red.text
+    sent = json.loads((rig["assets"] / ".preview" / "my-face" / "preset.json").read_text())
+    assert sent["garment_colours"][top]["colour"] == "#7a1c1c"
     stray = client.post("/build", json=preset(garment_colours={"clothes/hat1/hat1.mhclo": {"colour": "#000000"}}))
     assert stray.status_code == 422 and "does not wear" in stray.text
     assert client.post("/build", json=preset(garment_colours={top: {"colour": "navy"}})).status_code == 422
@@ -1476,3 +1512,77 @@ def test_a_preset_may_ask_for_more_than_the_weak_screen_budget() -> None:
         Preset.model_validate(preset(max_triangles=MAX_TRIANGLES + 1))
     # build_head.py runs in Blender and cannot import the package: it carries the same ceiling.
     assert f"MAX_TRIANGLES = {MAX_TRIANGLES:_}" in SCRIPT.read_text()
+
+
+async def test_a_build_refuses_an_id_that_is_not_a_face_id(rig) -> None:
+    # The model checks the id, but a preset built past its validators must not name a path either.
+    builder = builder_for(rig)
+    bad = Preset.model_validate(preset()).model_copy(update={"id": "../elsewhere"})
+    with pytest.raises(BuildError, match="not a face id"):
+        await builder.build(bad)
+    assert not (rig["assets"] / "elsewhere").exists(), "nothing is written beside the previews"
+
+
+@pytest.fixture
+def recipe_module(monkeypatch):
+    """``build_head.py`` loaded outside Blender, its Blender modules stood in for: for its pure-python parts only."""
+    import types  # noqa: PLC0415
+    from unittest import mock  # noqa: PLC0415
+
+    for name in ("bpy", "bmesh", "mathutils", "mathutils.bvhtree"):
+        monkeypatch.setitem(sys.modules, name, mock.MagicMock(name=name))
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert source.endswith("\nmain()\n"), "the recipe runs main() as its last line"
+    module = types.ModuleType("build_head_outside_blender")
+    module.__file__ = str(SCRIPT)
+    exec(compile(source.removesuffix("main()\n"), str(SCRIPT), "exec"), module.__dict__)  # noqa: S102
+    return module
+
+
+def test_an_asset_fragment_never_climbs_out_of_mpfbs_data(recipe_module, tmp_path) -> None:
+    build_head = recipe_module
+    root = tmp_path / "data" / "hair"
+    (root / "short02").mkdir(parents=True)
+    (root / "short02" / "short02.mhclo").write_text("x")
+    (tmp_path / "secret").write_text("x")
+
+    class Services:
+        class AssetService:
+            @staticmethod
+            def get_asset_roots(subdir):
+                return [str(tmp_path / "data" / subdir)]
+
+    assert build_head.resolve_asset(Services, "hair/short02/short02.mhclo") == str(root / "short02" / "short02.mhclo")
+    for fragment in ("hair/../../secret", f"hair/{tmp_path}/secret", "hair//secret", "../secret", "hair/./x"):
+        with pytest.raises(build_head.RecipeError, match="not a path inside"):
+            build_head.resolve_asset(Services, fragment)
+
+
+def test_a_plain_rgb_tuple_is_a_tint_not_a_colourway(recipe_module) -> None:
+    import numpy as np  # noqa: PLC0415
+
+    build_head = recipe_module
+
+    class Image:
+        size, channels = (1, 1), 4
+
+        def __init__(self) -> None:
+            self.pixels = self
+            self.data = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
+
+        def foreach_get(self, out) -> None:
+            out[:] = self.data
+
+        def foreach_set(self, values) -> None:
+            self.data = np.asarray(values, dtype=np.float32)
+
+        def update(self) -> None:
+            pass
+
+    painted = []
+    for target in ((0.2, 0.1, 0.05), [0.2, 0.1, 0.05], np.array([0.2, 0.1, 0.05]), ("solid", (0.2, 0.1, 0.05))):
+        image = Image()
+        build_head.recolour(image, target)
+        painted.append(image.data)
+    assert np.allclose(painted[0], painted[1]) and np.allclose(painted[0], painted[2]), "the container doesn't matter"
+    assert painted[3][3] == 1.0, "a colourway still keeps the alpha"

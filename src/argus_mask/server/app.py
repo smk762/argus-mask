@@ -6,7 +6,8 @@
 ``GET /face/{id}``                    one face's manifest
 ``GET /face/{id}/rest``               the rest set it shows (``?set=`` another); ``GET /expressions`` lists them
 ``GET /face/{id}/model``              its model: a ``.glb``, or a LAM splat head's ``.zip``
-``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``)
+``GET /face/{id}/model/{file}``       the same, by its file name (the splat renderer wants a URL ending ``.zip``);
+                                      also a mesh's bound splats (``.spz``) and their binding (``.bin``)
 ``WS  /session/{face_id}/source``     audio in: one JSON hello, then binary PCM. One source per face.
 ``WS  /session/{face_id}/view``       the stream out: a header, then audio chunks and frames
 ``POST /push?face=…``                 audio in over HTTP (a WAV, or PCM with format headers), played as a source
@@ -15,7 +16,8 @@
 
 A source is a write and a viewer hears the audio, so both sockets apply the
 same origin rule as cortex's write guard: no ``Origin`` (a CLI), the request's
-own host, or a configured origin. CORS does not cover WebSockets, so without
+own host when that is an IP address, ``localhost`` or a name in ``ARGUS_MASK_TRUSTED_HOSTS``,
+or a configured origin. CORS does not cover WebSockets, so without
 this any page the operator visits could open either one. The server binds to
 localhost by default.
 """
@@ -23,6 +25,7 @@ localhost by default.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import struct
 import time
@@ -31,6 +34,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import anyio
 import structlog
@@ -49,7 +53,8 @@ from argus_mask.config import Settings
 from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, voice_refusal
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
-from argus_mask.faces import MEDIA_TYPES, Aliases, FaceError, FaceStore
+from argus_mask.faces import MEDIA_TYPES, SPLAT_MEDIA_TYPE, Aliases, FaceError, FaceStore
+from argus_mask.gpu import A2F_LIVE, hold, live_coordinator
 from argus_mask.models import (
     FACE_ID_PATTERN,
     FRAMINGS,
@@ -102,11 +107,26 @@ class Stage:
     def __init__(self, face_id: str) -> None:
         self.face_id = face_id
         self.header: StreamHeader | None = None
-        self.claimed = False  # a source holds the face, from its connect to its last frame
+        self.owner: object | None = None  # the source holding the face, from its connect to its last frame
         self.viewers: set[asyncio.Queue[str | bytes | None]] = set()
         # The viewers that have said what they are (by their queue): the screens. A socket client
         # that never reports (record, an older page) watches, but is not counted as a screen.
         self.screens: dict[asyncio.Queue[str | bytes | None], Screen] = {}
+
+    @property
+    def claimed(self) -> bool:
+        return self.owner is not None
+
+    def claim(self) -> object:
+        """Hold the face for one source: the token that alone may :meth:`free` it. The caller checks `claimed` first."""
+        self.owner = token = object()
+        return token
+
+    def free(self, token: object) -> None:
+        """Free the face, if *token* still holds it: a late cleanup must not free a source that claimed it since."""
+        if self.owner is token:
+            self.owner = None
+            self.header = None
 
     def send(self, message: str | bytes) -> None:
         for queue in list(self.viewers):
@@ -127,16 +147,21 @@ class _DriverProbe:
         self._driver = driver
         self._at = float("-inf")
         self._reason: str | None = None
+        self._forgotten = 0  # bumped by forget(): an answer asked for before then is not kept
 
     async def reason(self) -> str | None:
         if time.monotonic() - self._at > DRIVER_CHECK_TTL_S:
-            self._reason = await self._driver.check()
-            self._at = time.monotonic()
+            forgotten = self._forgotten
+            reason = await self._driver.check()
+            if forgotten != self._forgotten:
+                return reason  # the driver failed while this was asked: answer, but ask again next time
+            self._reason, self._at = reason, time.monotonic()
         return self._reason
 
     def forget(self) -> None:
-        """The driver just failed: ask it again next time."""
+        """The driver just failed: ask it again next time, even if a check in flight answers after this."""
         self._at = float("-inf")
+        self._forgotten += 1
 
 
 class SourceRefused(RuntimeError):
@@ -223,8 +248,11 @@ def audio_of(request: Request, data: bytes, seed: int) -> tuple[SourceHello, byt
         )
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, f"the PCM headers do not describe a format this plays: {exc}") from exc
-    if len(data) < client._frame_bytes(hello):
+    frame = client._frame_bytes(hello)
+    if len(data) < frame:
         raise HTTPException(422, "no audio: less than one sample")
+    if len(data) % frame:
+        raise HTTPException(422, f"the PCM is not whole samples: {len(data)} bytes, {frame} to a sample")
     return hello, data
 
 
@@ -247,7 +275,7 @@ def install_guards(app: FastAPI, cfg: Settings) -> Callable:
     """The write guards and CORS every mask app uses. Returns the origin predicate, for the sockets to call."""
     wildcard = "*" in cfg.cors_origins
     named = [o for o in cfg.cors_origins if o != "*"]
-    origin_refusal = cross_site_refuse(named)
+    origin_refusal = cross_site_refuse(named, cfg.trusted_hosts)
     # A wildcard grants anonymous reads, never a cross-site write: naming an origin is the way to get those.
     app.add_middleware(WriteGuard, refuse=origin_refusal)
     if cfg.read_only:
@@ -292,10 +320,15 @@ def add_scene_routes(app: FastAPI, plates: PlateStore) -> None:
         return FileResponse(directory / file, media_type="image/png", headers={"ETag": f'"{images[file].sha256}"'})
 
 
-def create_app(settings: Settings | None = None, *, driver: Driver | None = None) -> FastAPI:
-    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment."""
+def create_app(settings: Settings | None = None, *, driver: Driver | None = None, gpu: Any = None) -> FastAPI:  # noqa: ANN401
+    """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment.
+
+    *gpu* is the coordinator a live Audio2Face stream's lease goes to (:mod:`argus_mask.gpu`); by default the
+    broker when ``ARGUS_GPU_COORDINATOR=broker``, else none.
+    """
     cfg = settings or Settings.from_env()
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
+    gpu = gpu if gpu is not None else live_coordinator()
     store = FaceStore(cfg.assets_dir)
     plates = PlateStore(cfg.assets_dir)
     scene_choices = SceneChoices(cfg.assets_dir, plates)
@@ -313,6 +346,25 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     def stage_for(face_id: str) -> Stage:
         return stages.setdefault(face_id, Stage(face_id))
+
+    releases: set[asyncio.Task] = set()  # GPU leases being given back after their streams (perform)
+
+    # One source per face, whatever name it came by: an alias and its face id share a face, not a stage.
+    holders: dict[str, object] = {}  # the face itself -> the claim holding it
+
+    def taken(face_id: str, stage: Stage) -> bool:
+        return stage.claimed or aliases.resolve(face_id) in holders
+
+    def take(face_id: str, stage: Stage) -> object:
+        """Claim the face for one source, by its name's stage and by the face itself. The caller checks `taken`."""
+        claim = holders[aliases.resolve(face_id)] = stage.claim()
+        return claim
+
+    def free(stage: Stage, claim: object) -> None:
+        stage.free(claim)
+        for face, owner in list(holders.items()):
+            if owner is claim:
+                del holders[face]
 
     def face_or_404(face_id: str) -> tuple[FaceManifest, Path]:
         try:
@@ -405,10 +457,15 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face_model_named(face_id: str, file: str) -> FileResponse:
         """A model under its own name: only a file the manifest names, never a path the request makes up."""
         manifest, path = face_or_404(face_id)
-        models = {m.file: m for m in (manifest.model, *(f.model for f in manifest.framings.values()))}
-        if file not in models:
-            raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
-        return model_response(models[file], path.parent / file)
+        all_models = (manifest.model, *(f.model for f in manifest.framings.values()))
+        models = {m.file: m for m in all_models}
+        if file in models:
+            return model_response(models[file], path.parent / file)
+        for m in all_models:  # checked with the face: in its directory, matching their sha256
+            if m.splats and file in (m.splats.file, m.splats.binding):
+                sha = m.splats.sha256 if file == m.splats.file else m.splats.binding_sha256
+                return FileResponse(path.parent / file, media_type=SPLAT_MEDIA_TYPE, headers={"ETag": f'"{sha}"'})
+        raise HTTPException(status_code=404, detail=f"face {face_id!r} has no file {file!r}")
 
     add_scene_routes(app, plates)
 
@@ -430,6 +487,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     async def perform(
         face_id: str,
         stage: Stage,
+        claim: object,
         hello: SourceHello,
         chunks: AsyncIterator[bytes],
         on_ready: Callable[[StreamHeader], Awaitable[None]] | None = None,
@@ -441,6 +499,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         ends the stream. The face is freed before this returns, so a caller can say "done" at once.
         """
         performer: Performer | None = None
+        leases = contextlib.AsyncExitStack()
         try:
             try:
                 performer = Performer(
@@ -449,6 +508,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except DriverError as exc:
                 probe.forget()  # ask the driver again next time
                 raise SourceRefused(str(exc)) from exc
+            if driver.name == "a2f":  # Audio2Face is working for this face until the stream ends: tell the broker
+                await leases.enter_async_context(hold(gpu, A2F_LIVE, f"argus-mask:{face_id}"))
             header = make_header(
                 face_id=aliases.resolve(face_id),  # the face itself: a viewer that loaded another reloads
                 session_id=uuid.uuid4().hex,
@@ -532,14 +593,19 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 )
             # Free the face before telling the source it is over: a source that reconnects the moment
             # it reads "done" must not be told the face is taken.
-            stage.header = None
-            stage.claimed = False
+            free(stage, claim)
             return Played(header.session_id, frames, duration_ms, failure)
         finally:
-            if performer is not None:
-                await performer.close()
-            stage.header = None
-            stage.claimed = False
+            try:
+                if performer is not None:
+                    await performer.close()
+            finally:
+                # Released in the background: a slow broker must not hold back the source's "done" (or /push's
+                # answer) by up to RELEASE_WAIT_S. The task is kept until it ends, so it is not collected mid-way.
+                releasing = asyncio.create_task(leases.aclose())
+                releases.add(releasing)
+                releasing.add_done_callback(releases.discard)
+            free(stage, claim)  # only if still ours: a source may have claimed the face while the performer closed
 
     @app.websocket("/session/{face_id}/source")
     async def source(ws: WebSocket, face_id: str) -> None:
@@ -555,10 +621,10 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             await refuse(ws, f"no face {face_id!r}")
             return
         stage = stage_for(face_id)
-        if stage.claimed:
+        if taken(face_id, stage):
             await refuse(ws, f"face {face_id!r} already has a source", TRY_LATER)
             return
-        stage.claimed = True
+        claim = take(face_id, stage)
         try:
             if (reason := await probe.reason()) is not None:
                 await refuse(ws, f"the {driver.name} driver is down: {reason}", TRY_LATER)
@@ -595,7 +661,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 await ws.send_text(json.dumps({"type": "ready", "session_id": header.session_id, "fps": cfg.fps}))
 
             try:
-                played = await perform(face_id, stage, hello, received(), ready)
+                played = await perform(face_id, stage, claim, hello, received(), ready)
             except SourceRefused as exc:
                 await ws.send_text(json.dumps({"type": "error", "detail": str(exc)}))
                 await ws.close(code=TRY_LATER)
@@ -611,8 +677,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             except (RuntimeError, WebSocketDisconnect):
                 pass  # the source already went away
         finally:
-            stage.header = None
-            stage.claimed = False
+            free(stage, claim)
 
     # -- HTTP sources: for agents that would rather not speak the socket protocol -------------------------
 
@@ -620,7 +685,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
         """The face's stage, if a source may start on it now; otherwise the HTTP refusal, with the reason."""
         face_or_404(face_id)
         stage = stage_for(face_id)
-        if stage.claimed:
+        if taken(face_id, stage):
             raise HTTPException(409, f"face {face_id!r} already has a source")
         if require_screen and not any(screen.audio_ready for screen in stage.screens.values()):
             raise HTTPException(409, f"no screen watching {face_id!r} can be heard (see /health screens)")
@@ -628,19 +693,18 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     async def play_http(face_id: str, stage: Stage, hello: SourceHello, pcm: bytes) -> dict:
         """Claim the face and play *pcm* into it at the pace of speech; the closing numbers, or the HTTP error."""
-        if stage.claimed:  # someone started while this request was being read or synthesised
+        if taken(face_id, stage):  # someone started while this request was being read or synthesised
             raise HTTPException(409, f"face {face_id!r} already has a source")
-        stage.claimed = True
+        claim = take(face_id, stage)
         try:
             if (reason := await probe.reason()) is not None:
                 raise HTTPException(503, f"the {driver.name} driver is down: {reason}")
             try:
-                played = await perform(face_id, stage, hello, paced(pcm, hello))
+                played = await perform(face_id, stage, claim, hello, paced(pcm, hello))
             except SourceRefused as exc:
                 raise HTTPException(503, str(exc)) from exc
         finally:
-            stage.header = None
-            stage.claimed = False
+            free(stage, claim)
         if played.failure is not None:
             raise HTTPException(502, played.failure)
         return {"session_id": played.session_id, "frames": played.frames, "duration_ms": played.duration_ms}

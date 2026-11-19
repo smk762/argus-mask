@@ -50,6 +50,7 @@ MAX_MEMBERS = 20_000
 DOWNLOAD_SLACK = 1.05  # a download may run this much over the catalogued size before it is cut
 TIMEOUT_S = 60
 JOBS_KEEP = 20
+MAX_THUMB_URL = 500
 AGENT = "argus-mask editor (+https://github.com/smk762/argus-mask)"
 _STAGING = ".argus-mask-staging"  # under the data directory, so the final moves stay on one file system
 
@@ -110,11 +111,35 @@ def _asset(raw: object) -> dict | None:
     out = {k: str(raw.get(k) or "")[:200] for k in ("name", "type", "author", "license")}
     thumb = raw.get("thumb")
     # A thumbnail is shown by the browser, straight from the community's site: an https URL there, or none.
-    if isinstance(thumb, str) and urllib.parse.urlsplit(thumb).scheme == "https":
-        host = urllib.parse.urlsplit(thumb).hostname or ""
-        if host.endswith(".makehumancommunity.org"):
-            out["thumb"] = thumb
+    if isinstance(thumb, str) and (safe := _thumb_url(thumb)):
+        out["thumb"] = safe
     return out
+
+
+def _thumb_url(thumb: str) -> str | None:
+    """*thumb* rebuilt from its parts if it is an https URL on the community's site, else None.
+
+    The browser parses what is stored, not Python: a backslash (``https://evil\\@x.makehumancommunity.org``
+    is evil's to a browser), userinfo, a port, spaces or control characters would let the two disagree on the host.
+    """
+    if len(thumb) > MAX_THUMB_URL or "\\" in thumb or any(c.isspace() or not c.isprintable() for c in thumb):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(thumb)
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname or ""
+    if parts.scheme != "https" or parts.username or parts.password or port is not None:
+        return None
+    if not host.endswith(".makehumancommunity.org") or parts.netloc.lower() != host:
+        return None
+    return urllib.parse.urlunsplit(("https", host, parts.path, parts.query, ""))
+
+
+def _list(value: object) -> list:
+    """*value* if it is a list, else empty: a malformed field drops its entries, not the catalogue."""
+    return value if isinstance(value, list) else []
 
 
 def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
@@ -124,16 +149,10 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
     except (OSError, ValueError):
         return {}
     packs: dict[str, Pack] = {}
-    for raw in doc.get("packs", []) if isinstance(doc, dict) else []:
-        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.match(raw["id"]):
+    for raw in _list(doc.get("packs") if isinstance(doc, dict) else None):
+        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.fullmatch(raw["id"]):
             continue
-        urls = tuple(
-            u
-            for u in raw.get("urls") or []
-            if isinstance(u, str)
-            and urllib.parse.urlsplit(u).scheme == "https"
-            and urllib.parse.urlsplit(u).hostname in HOSTS
-        )
+        urls = tuple(u for u in _list(raw.get("urls")) if isinstance(u, str) and _on_hosts(u))
         if not urls:
             continue
         sha = raw.get("sha256")
@@ -146,7 +165,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
             bytes=size if isinstance(size, int) and size > 0 else None,
             sha256=sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None,
             page=str(raw.get("page") or ""),
-            assets=tuple(a for a in map(_asset, raw.get("assets") or []) if a is not None),
+            assets=tuple(a for a in map(_asset, _list(raw.get("assets"))) if a is not None),
         )
     return packs
 
@@ -221,11 +240,14 @@ def plan(zip_path: Path, data_dir: Path, pack_id: str) -> tuple[list[tuple[zipfi
             target = (root / rel).resolve()
             if not target.is_relative_to(root) or target == root:
                 raise PackError(f"the zip has a member outside the pack: {info.filename!r}")
+            # Resolving follows links, so look for them on the path as named: an installed link is never written through.
+            if (root / rel) != target:
+                raise PackError(f"{rel} would be written through a link in the data directory; nothing was installed")
             if str(rel) in names:
                 raise PackError(f"the zip has {info.filename!r} twice")
             names.add(str(rel))
-            if target.exists() or target.is_symlink():
-                if target.is_file() and not target.is_symlink() and _same(target, zf, info):
+            if target.exists():
+                if target.is_file() and _same(target, zf, info):
                     skipped += 1
                     continue
                 conflicts.append(str(rel))
@@ -263,9 +285,10 @@ def unpack(zip_path: Path, data_dir: Path, pack_id: str) -> dict:
         for _, rel in sorted(todo, key=lambda t: t[1] == index):
             target = root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():  # appeared since the plan: never replace
-                raise PackError(f"{rel} appeared while installing; nothing more was installed")
-            os.replace(staging / rel, target)
+            try:  # a link fails if the target exists, so a file that appeared since the plan is never replaced
+                os.link(staging / rel, target)
+            except FileExistsError:
+                raise PackError(f"{rel} appeared while installing; nothing more was installed") from None
             moved.append(target)
     except BaseException:
         for path in moved:  # all or nothing
@@ -285,9 +308,31 @@ def unpack(zip_path: Path, data_dir: Path, pack_id: str) -> dict:
 Opener = Callable[[str], object]  # url -> a response with .read(n); the tests pass their own
 
 
+def _on_hosts(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return parts.scheme == "https" and parts.hostname in HOSTS
+    except ValueError:  # an unbalanced IPv6 bracket, say: not on the hosts
+        return False
+
+
+class _FencedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to https on :data:`HOSTS`: the catalogue's fence holds on every hop, not just the first."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201 - urllib's signature
+        if not _on_hosts(newurl):
+            raise urllib.error.HTTPError(newurl, code, f"redirected off the catalogue's hosts ({msg})", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_FencedRedirects)
+
+
 def _open(url: str) -> object:
+    if not _on_hosts(url):
+        raise PackError(f"{url!r} is not https on the catalogue's hosts")
     req = urllib.request.Request(url, headers={"User-Agent": AGENT})  # noqa: S310 - https, HOSTS only
-    return urllib.request.urlopen(req, timeout=TIMEOUT_S)  # noqa: S310
+    return _OPENER.open(req, timeout=TIMEOUT_S)
 
 
 def download(pack: Pack, dest: Path, progress: Callable[[int], None], opener: Opener = _open) -> str:

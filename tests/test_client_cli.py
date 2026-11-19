@@ -346,9 +346,11 @@ def test_settings_reject_an_unknown_driver_and_read_the_environment(monkeypatch)
     monkeypatch.setenv("ARGUS_MASK_CORS_ORIGINS", "https://mask.example/, http://localhost:3000")
     monkeypatch.setenv("ARGUS_MASK_READ_ONLY", "1")
     monkeypatch.setenv("ARGUS_MASK_FPS", "60")
+    monkeypatch.setenv("ARGUS_MASK_TRUSTED_HOSTS", "Morpheus, mask.lan ,")
     cfg = Settings.from_env()
     assert (cfg.driver, cfg.fps, cfg.read_only) == ("a2f", 60, True)
     assert cfg.cors_origins == ("https://mask.example", "http://localhost:3000")
+    assert cfg.trusted_hosts == ("morpheus", "mask.lan")
 
 
 async def test_cancelling_say_while_the_tts_thinks_returns_at_once(server) -> None:
@@ -397,6 +399,7 @@ def test_say_sends_the_previous_sentence_as_context(server) -> None:
                 app, ["say", text, "--face", "test-head", "--url", server, "--tts-url", tts_url, *extra]
             )
         assert result.exit_code == 0, result.output
+        assert len(seen) == 3  # one request per sentence, so every check below runs
         assert "context" not in seen[0]
         for before, now in zip(seen, seen[1:], strict=False):
             (ctx,) = now["context"]

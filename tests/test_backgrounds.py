@@ -46,12 +46,16 @@ def fake_darkroom(
     depth: bytes | None = None,
     depth_sha: str | None = None,
     expand: bool = False,
+    depth_busy: int = 0,
+    busy_detail: str = "a generation is already running",
+    checkpoint: dict | None = None,
+    negative: str | None = None,
 ) -> Iterator[tuple[str, list[str]]]:
     """argus-darkroom's generation, image and depth routes, as mask uses them. Yields (url, calls)."""
     picture = image if image is not None else png()
     depth_png = depth if depth is not None else png(grey=True, shade=200)
     calls: list[str] = []
-    state = {"busy": busy, "record": None}
+    state = {"busy": busy, "depth_busy": depth_busy, "record": None}
     app = FastAPI()
 
     @app.post("/generate/stream")
@@ -59,7 +63,7 @@ def fake_darkroom(
         calls.append("generate")
         if state["busy"]:
             state["busy"] -= 1
-            return JSONResponse({"detail": "a generation is already running"}, status_code=409)
+            return JSONResponse({"detail": busy_detail}, status_code=409)
         body = await request.json()
         record = {
             "id": "rec1",
@@ -69,9 +73,9 @@ def fake_darkroom(
             "request": {
                 "final_prompt": body["user_prompt"] + (", and more" if expand else ""),
                 "expanded_prompt": "more" if expand else None,
-                "negative_prompt": body["negative_prompt"],
+                "negative_prompt": body["negative_prompt"] if negative is None else negative,
                 "seed": body["seed"],
-                "checkpoint": {"name": body["checkpoint"]},
+                "checkpoint": checkpoint if checkpoint is not None else {"name": body["checkpoint"]},
                 "sampling": body["sampling"],
                 "workflow": "flux",
             },
@@ -94,6 +98,9 @@ def fake_darkroom(
     @app.post("/depth/{rid}")
     def make_depth(rid: str):
         calls.append(f"make_depth {rid}")
+        if state["depth_busy"]:
+            state["depth_busy"] -= 1
+            return JSONResponse({"detail": busy_detail}, status_code=409)
         return {
             "model": "depth-anything-v2-small",
             "model_license": "Apache-2.0",
@@ -162,6 +169,9 @@ def test_only_a_released_image_becomes_a_plate(tmp_path: Path, outcome: str) -> 
         ({"image_sha": "0" * 64}, "image does not match"),
         ({"depth_sha": "0" * 64}, "depth map does not match"),
         ({"expand": True}, "expanded"),
+        ({"checkpoint": {"name": "flux/flux1-dev.safetensors"}}, "checkpoint 'flux/flux1-dev"),
+        ({"checkpoint": {}}, "checkpoint None"),
+        ({"negative": "people"}, "different negative prompt"),
     ],
 )
 def test_a_record_that_does_not_hold_up_writes_nothing(tmp_path: Path, over: dict, match: str) -> None:
@@ -193,6 +203,29 @@ def test_a_busy_darkroom_is_waited_for(tmp_path: Path) -> None:
     assert calls[:3] == ["generate"] * 3
 
 
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "a generation is already running",  # darkroom one at a time
+        "8 generations are already queued or running",  # darkroom behind the argus-iris GPU broker, queue full
+    ],
+)
+def test_a_busy_darkroom_is_waited_for_on_both_routes(tmp_path: Path, detail: str) -> None:
+    with fake_darkroom(busy=1, depth_busy=1, busy_detail=detail) as (url, calls):
+        plate = make(url, tmp_path / "garden")
+    assert plate.depth is not None
+    assert calls == ["generate", "generate", "image rec1", "make_depth rec1", "make_depth rec1", "depth rec1"]
+
+
+def test_a_conflict_that_is_not_busy_is_an_answer_at_once(tmp_path: Path) -> None:
+    with (
+        fake_darkroom(busy=1, busy_detail="no such checkpoint") as (url, calls),
+        pytest.raises(PlateError, match="no such checkpoint"),
+    ):
+        make(url, tmp_path / "garden")
+    assert calls == ["generate"] and not (tmp_path / "garden").exists()
+
+
 def test_depth_can_be_added_later(tmp_path: Path) -> None:
     with fake_darkroom() as (url, calls):
         first = make(url, tmp_path / "garden", depth=False)
@@ -203,6 +236,57 @@ def test_depth_can_be_added_later(tmp_path: Path) -> None:
             add_depth(Darkroom(url), tmp_path / "garden")
     assert added.depth is not None and added.darkroom is not None and added.darkroom.depth is not None
     assert added.plate == first.plate and added.provenance == first.provenance
+
+
+def test_a_failed_depth_write_leaves_the_plate_as_it_was(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with fake_darkroom() as (url, _calls):
+        make(url, tmp_path / "garden", depth=False)
+        before = sorted(p.name for p in (tmp_path / "garden").iterdir())
+        with monkeypatch.context() as m:
+
+            def full(self: Path, *args, **kwargs) -> int:  # noqa: ANN002, ANN003
+                raise OSError(28, "No space left on device")
+
+            m.setattr(Path, "write_text", full)
+            with pytest.raises(OSError, match="No space"):
+                add_depth(Darkroom(url), tmp_path / "garden")
+        assert sorted(p.name for p in (tmp_path / "garden").iterdir()) == before
+        assert add_depth(Darkroom(url), tmp_path / "garden").depth is not None, "a retry is not refused"
+
+
+def test_a_plate_that_fails_part_way_leaves_nothing_to_block_a_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(directory: Path) -> PlateManifest:
+        raise PlateError("the disk went away")
+
+    with fake_darkroom() as (url, _calls):
+        with monkeypatch.context() as m:
+            m.setattr(backgrounds, "check_plate", broken)
+            with pytest.raises(PlateError, match="went away"):
+                make(url, tmp_path / "garden")
+        assert not (tmp_path / "garden").exists()
+        assert make(url, tmp_path / "garden").name == "garden"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["garden"], "no staging directory is left behind"
+
+
+def test_a_plate_made_meanwhile_under_the_same_name_is_not_written_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = backgrounds.check_plate
+
+    def meanwhile(directory: Path) -> PlateManifest:
+        found = real(directory)
+        if directory != tmp_path / "garden" and not (tmp_path / "garden").exists():
+            (tmp_path / "garden").mkdir()
+            (tmp_path / "garden" / "plate.png").write_bytes(b"theirs")
+        return found
+
+    monkeypatch.setattr(backgrounds, "check_plate", meanwhile)
+    with fake_darkroom() as (url, _calls), pytest.raises(PlateError, match="not empty"):
+        make(url, tmp_path / "garden")
+    assert sorted(p.name for p in (tmp_path / "garden").iterdir()) == ["plate.png"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["garden"]
 
 
 def test_an_unreachable_darkroom_says_where_it_looked(tmp_path: Path) -> None:
@@ -244,6 +328,24 @@ def test_an_oversized_image_is_caught(plate: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(backgrounds, "MAX_IMAGE_BYTES", 10)
     with pytest.raises(PlateError, match="over"):
         check_plate(plate)
+
+
+@pytest.mark.parametrize("limit", ["MAX_IMAGE_BYTES", "MAX_PLATE_BYTES"])
+def test_an_oversized_image_is_refused_before_it_is_read(
+    plate: Path, monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    read: list[str] = []
+    real = Path.read_bytes
+
+    def reading(self: Path) -> bytes:
+        read.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(backgrounds, limit, 10)
+    monkeypatch.setattr(Path, "read_bytes", reading)
+    with pytest.raises(PlateError, match="over"):
+        check_plate(plate)
+    assert read == ["background.json"], "only the manifest is read"
 
 
 def _manifest(plate: Path) -> dict:
@@ -348,7 +450,18 @@ def test_the_server_serves_a_checked_plate_and_only_its_files(assets: Path) -> N
         assert c.get("/scene/rain/depth.png").content == (plate / "depth.png").read_bytes()
         (plate / "notes.png").write_bytes(png())
         assert c.get("/scene/rain/notes.png").status_code == 404, "a file the manifest does not name"
-        assert c.get("/scene/rain/..%2Fbackground.json").status_code == 404
+        # Each probe names a file that is really there, so a 404 means the server refused the path.
+        secret = png(shade=3)
+        (assets / "backgrounds" / "secret.png").write_bytes(secret)
+        for probe in (
+            "/scene/rain/..%2Fsecret.png",
+            "/scene/rain/..%2F..%2Fbackgrounds%2Fsecret.png",
+            "/scene/rain/%2E%2E%2Fsecret.png",
+            "/scene/rain/..%2Frain%2Fplate.png",
+        ):
+            reply = c.get(probe)
+            assert reply.status_code == 404, probe
+            assert reply.content not in (secret, (plate / "plate.png").read_bytes()), probe
         assert c.get("/scene/nope/background.json").status_code == 404
 
 
@@ -362,6 +475,18 @@ def test_a_plate_that_does_not_hold_up_is_not_served(assets: Path) -> None:
         assert c.get("/scene/rain/background.json").status_code == 404, "re-checked once a file changes"
         assert c.get("/scene/rain/plate.png").status_code == 404
         assert "rain" not in [s["name"] for s in c.get("/scenes").json()]
+
+
+def test_a_dangling_link_in_a_plate_refuses_only_that_plate(assets: Path, tmp_path: Path) -> None:
+    rain = assets / "backgrounds" / "rain"
+    (rain / "notes.png").symlink_to(tmp_path / "nowhere.png")  # not named by the manifest: no part of the plate
+    store = backgrounds.PlateStore(assets)
+    assert [m.name for m in store.scan()[0]] == ["rain"]
+    (rain / "depth.png").unlink()
+    (rain / "depth.png").symlink_to(tmp_path / "nowhere.png")
+    accepted, refused = store.scan()
+    assert accepted == [] and "depth.png is missing or not a plain file" in refused["rain"]
+    assert [s.name for s in store.scenes()] == list(backgrounds.BUILT_IN_SCENES)
 
 
 def test_a_plate_cannot_take_a_built_in_name(assets: Path) -> None:
@@ -406,6 +531,17 @@ def test_a_face_shows_its_chosen_backdrop_until_a_screen_asks_for_another(assets
         assert c.get("/face/test-head/scene").json() == {"scene": "rain"}
         assert c.get("/face/nobody/scene").status_code == 404
         # The plate goes: the choice stays in the file but is not offered, so the face shows a plain background.
+        (assets / "backgrounds" / "rain" / "plate.png").unlink()
+        assert c.get("/face/test-head/scene").json() == {"scene": None}
+    assert choices.raw() == {"test-head": "rain"}
+
+
+def test_a_face_whose_chosen_plate_was_changed_shows_a_plain_background(assets: Path) -> None:
+    choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
+    with client(assets) as c:
+        choices.choose("test-head", "rain")
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain"}
+        # A replaced picture no longer matches its sha256: the plate is refused, as a missing one is.
         (assets / "backgrounds" / "rain" / "plate.png").write_bytes(png(shade=1))
         assert c.get("/face/test-head/scene").json() == {"scene": None}
     assert choices.raw() == {"test-head": "rain"}

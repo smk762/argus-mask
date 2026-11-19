@@ -30,6 +30,10 @@ class Settings:
     tts_voice: str = ""
     fps: int = DEFAULT_FPS
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
+    # Host names (no port) a page may be served from and still write to its own server: a screen opening
+    # http://morpheus:8109 names morpheus here. An IP address and localhost need no entry. A name is not trusted
+    # on its own, because under DNS rebinding an attacker's page sends its own name as both Origin and Host.
+    trusted_hosts: tuple[str, ...] = field(default_factory=tuple)
     read_only: bool = False
     # The Voices page's voices (EditorSettings has the same), read to refuse a consented voice whose release no
     # longer covers it, and to label what it says. A voice made elsewhere has no record here and is not checked.
@@ -62,6 +66,7 @@ class Settings:
             tts_voice=_env("TTS_VOICE"),
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
+            trusted_hosts=tuple(h.strip().lower() for h in _env("TRUSTED_HOSTS").split(",") if h.strip()),
             read_only=read_only,
             voices_dir=Path(_env("VOICES_DIR") or "voices"),
         )

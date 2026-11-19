@@ -77,7 +77,9 @@ def test_a_hand_edited_file_is_read_again_and_its_bad_entries_ignored(assets) ->
     os.utime(assets / ALIASES_NAME, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
     assert aliases.all() == {"holly": "other-head"}
     assert set(aliases.problems()) == {"test-head", "ghost"}
+    stat = (assets / ALIASES_NAME).stat()
     (assets / ALIASES_NAME).write_text("not json")
+    os.utime(assets / ALIASES_NAME, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000))  # newer, whatever the tick
     assert aliases.all() == {}
 
 
@@ -126,6 +128,25 @@ def test_a_viewer_and_a_source_meet_on_the_alias(client) -> None:
             source.send_text(json.dumps({"type": "end"}))
             assert json.loads(source.receive_text())["type"] == "done"
         assert drain(viewer)[0][0]["face_id"] == "test-head"
+
+
+def test_an_alias_and_its_face_id_are_one_face_for_one_source(client) -> None:
+    with client.websocket_connect("/session/holly/source") as source:
+        source.send_text(HELLO)
+        assert json.loads(source.receive_text())["type"] == "ready"
+        busy = client.post("/push", params={"face": "test-head"}, content=wav(tone(0.2)))
+        assert busy.status_code == 409 and "already has a source" in busy.json()["detail"]
+        with client.websocket_connect("/session/test-head/source") as second:
+            assert json.loads(second.receive_text())["detail"] == "face 'test-head' already has a source"
+        source.send_text(json.dumps({"type": "end"}))
+        assert json.loads(source.receive_text())["type"] == "done"
+    assert client.post("/push", params={"face": "test-head"}, content=wav(tone(0.2))).status_code == 200
+    with client.websocket_connect("/session/test-head/source") as source:
+        source.send_text(HELLO)
+        assert json.loads(source.receive_text())["type"] == "ready"
+        assert client.post("/push", params={"face": "holly"}, content=wav(tone(0.2))).status_code == 409
+        source.send_text(json.dumps({"type": "end"}))
+        assert json.loads(source.receive_text())["type"] == "done"
 
 
 def test_a_repointed_alias_streams_the_new_face(client, assets) -> None:

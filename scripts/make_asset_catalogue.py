@@ -119,7 +119,7 @@ class _Page(HTMLParser):
         elif self._cell is not None:
             if tag == "img" and self._cell["img"] is None and "figure-image" in (a.get("class") or ""):
                 self._cell["img"] = a.get("src")
-            elif tag == "a" and a.get("rel") == "external":
+            elif tag == "a" and "external" in (a.get("rel") or "").split():  # rel is a token list
                 self._cell["href"] = a.get("href")
 
     def handle_endtag(self, tag: str) -> None:
@@ -241,7 +241,11 @@ def main(argv: list[str] | None = None) -> int:
             continue
         entry = read_pack(pack)
         if entry is None:
-            print(f"  {pack}: no zip on its page, skipped", file=sys.stderr)
+            if pack in old:  # a page that fails once does not drop a pack the index still lists
+                print(f"  {pack}: no zip on its page, kept its old entry", file=sys.stderr)
+                packs.append(old[pack])
+            else:
+                print(f"  {pack}: no zip on its page, skipped", file=sys.stderr)
             continue
         size = head_size(entry["urls"][0])
         before = old.get(pack, {})
@@ -252,7 +256,12 @@ def main(argv: list[str] | None = None) -> int:
             entry["sha256"], entry["bytes"] = sha256_of(entry["urls"][0])
             print(f"  {pack}: hashed {entry['bytes'] / 2**20:.0f} MB in {time.monotonic() - t:.0f} s", file=sys.stderr)
         else:
-            entry["bytes"], entry["sha256"] = size, before.get("sha256") if before.get("bytes") == size else None
+            same_url = before.get("urls", [None])[0] == entry["urls"][0]
+            if size is None and same_url:  # HEAD failed: what is known stands
+                entry["bytes"], entry["sha256"] = before.get("bytes"), before.get("sha256")
+            else:
+                same = before.get("bytes") == size and same_url
+                entry["bytes"], entry["sha256"] = size, before.get("sha256") if same else None
         entry.pop("megabytes")
         packs.append(entry)
         print(f"  {pack}: {len(entry['assets'])} assets, {entry['license'] or 'no licence'}", file=sys.stderr)

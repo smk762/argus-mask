@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
+import shutil
 import struct
+import tempfile
 import threading
 import time
 import urllib.error
@@ -117,10 +120,21 @@ def check_plate(directory: Path) -> PlateManifest:
         if file.is_symlink() or not file.is_file():  # a link could point anywhere: a plate holds its own files
             problems.append(f"{role}: {image.file} is missing or not a plain file")
             continue
-        data = file.read_bytes()
-        total += len(data)
-        if len(data) > MAX_IMAGE_BYTES:
+        try:
+            size = file.stat().st_size  # sized before it is read: an oversized file is never held in memory
+            total += size
+            if size > MAX_IMAGE_BYTES:
+                problems.append(f"{role}: {image.file} is {size // 1024} KB, over {MAX_IMAGE_BYTES // 1024} KB")
+                continue
+            if total > MAX_PLATE_BYTES:
+                continue  # reported below
+            data = file.read_bytes()
+        except OSError as exc:  # gone since it was looked at
+            problems.append(f"{role}: {image.file} could not be read: {exc.strerror or exc}")
+            continue
+        if len(data) > MAX_IMAGE_BYTES:  # grown since it was sized
             problems.append(f"{role}: {image.file} is {len(data) // 1024} KB, over {MAX_IMAGE_BYTES // 1024} KB")
+            continue
         try:
             found = image_of(directory, image.file, data)
         except PlateError as exc:
@@ -157,6 +171,15 @@ def _sse(lines: Iterator[bytes]) -> Iterator[tuple[str, Any]]:
         yield event, json.loads("\n".join(data))
 
 
+# How darkroom says it is busy, in a 409's detail: one generation at a time, or (behind the argus-iris GPU broker) its
+# queue full. Any other 409 (no stored image, say) is an answer, not a reason to wait.
+_BUSY = (b"already running", b"already queued")
+
+
+def _busy(detail: bytes) -> bool:
+    return any(marker in detail for marker in _BUSY)
+
+
 @dataclass
 class Darkroom:
     """The few argus-darkroom routes a plate needs. Waits while darkroom is busy with another generation."""
@@ -182,7 +205,7 @@ class Darkroom:
                     return reply.read()
             except urllib.error.HTTPError as exc:
                 detail = exc.read()
-                if exc.code == 409 and b"already running" in detail and time.monotonic() < deadline:
+                if exc.code == 409 and _busy(detail) and time.monotonic() < deadline:
                     self.sleep(self.busy_wait)
                     continue
                 raise PlateError(f"darkroom {method} {path}: {exc.code} {_detail(detail)}") from exc
@@ -205,7 +228,7 @@ class Darkroom:
                 raise PlateError("darkroom's stream ended without a record")
             except urllib.error.HTTPError as exc:
                 detail = exc.read()
-                if exc.code == 409 and time.monotonic() < deadline:
+                if exc.code == 409 and _busy(detail) and time.monotonic() < deadline:
                     self.sleep(self.busy_wait)
                     continue
                 raise PlateError(f"darkroom refused the generation: {exc.code} {_detail(detail)}") from exc
@@ -311,7 +334,11 @@ def _check_record(record: dict, body: dict) -> DarkroomRender:
     policy = (record.get("guard") or {}).get("enforcing_policy")
     if policy != POLICY:
         raise PlateError(f"darkroom record {rid}: enforced {policy!r}, not {POLICY!r}")
-    checkpoint = (asked.get("checkpoint") or {}).get("name") or body["checkpoint"]
+    if asked.get("negative_prompt") != body["negative_prompt"]:
+        raise PlateError(f"darkroom record {rid}: darkroom rendered a different negative prompt")
+    checkpoint = (asked.get("checkpoint") or {}).get("name")
+    if checkpoint != body["checkpoint"]:  # the plate's provenance names the model the record confirms, or none
+        raise PlateError(f"darkroom record {rid}: checkpoint {checkpoint!r}, not {body['checkpoint']!r}")
     sampling = asked.get("sampling") or {}
     return DarkroomRender(
         record_id=rid,
@@ -320,7 +347,7 @@ def _check_record(record: dict, body: dict) -> DarkroomRender:
         checkpoint=checkpoint,
         seed=body["seed"],
         prompt=body["user_prompt"],
-        negative_prompt=asked.get("negative_prompt", body["negative_prompt"]),
+        negative_prompt=body["negative_prompt"],
         workflow=asked.get("workflow"),
         sampler=sampling.get("sampler"),
         scheduler=sampling.get("scheduler"),
@@ -375,10 +402,23 @@ def make_plate(
         ),
         darkroom=render,
     )
-    directory.mkdir(parents=True, exist_ok=True)
-    for name, data in files.items():
-        (directory / name).write_bytes(data)
-    (directory / MANIFEST).write_text(manifest.model_dump_json(indent=2, exclude_none=True) + "\n")
+    # Written and checked under a hidden sibling, then renamed into place: a write that fails leaves nothing under
+    # the plate's name to block a retry, and the rename refuses a directory another call filled meanwhile.
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(dir=directory.parent, prefix=f".{directory.name}.", suffix=".part"))
+    try:
+        built = staging / directory.name
+        built.mkdir()
+        for name, data in files.items():
+            (built / name).write_bytes(data)
+        (built / MANIFEST).write_text(manifest.model_dump_json(indent=2, exclude_none=True) + "\n")
+        check_plate(built)
+        try:
+            built.rename(directory)  # replaces only an empty directory
+        except OSError as exc:
+            raise PlateError(f"{directory} is not empty: a plate is never written over another") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return check_plate(directory)
 
 
@@ -415,8 +455,26 @@ def add_depth(darkroom: Darkroom, directory: Path) -> PlateManifest:
         manifest.model_dump()
         | {"depth": image_of(directory, "depth.png", png).model_dump(), "darkroom": darkroom_block.model_dump()}
     )
-    (directory / "depth.png").write_bytes(png)
-    (directory / MANIFEST).write_text(updated.model_dump_json(indent=2, exclude_none=True) + "\n")
+    # Both written whole beside their names first; the depth map goes in, then the manifest naming it. A failure
+    # takes the depth map back out, so a retry is never refused for a depth.png the manifest does not name.
+    depth_tmp = directory / ".depth.png.part"
+    manifest_tmp = directory / f".{MANIFEST}.part"
+    placed = False
+    try:
+        depth_tmp.write_bytes(png)
+        manifest_tmp.write_text(updated.model_dump_json(indent=2, exclude_none=True) + "\n")
+        os.link(depth_tmp, directory / "depth.png")  # fails if a depth.png appeared meanwhile
+        placed = True
+        os.replace(manifest_tmp, directory / MANIFEST)
+    except FileExistsError as exc:
+        raise PlateError(f"{directory}: depth.png is there but not in the manifest; move it aside first") from exc
+    except BaseException:
+        if placed:
+            (directory / "depth.png").unlink(missing_ok=True)
+        raise
+    finally:
+        depth_tmp.unlink(missing_ok=True)
+        manifest_tmp.unlink(missing_ok=True)
     return check_plate(directory)
 
 
@@ -437,7 +495,18 @@ class PlateStore:
 
     @staticmethod
     def _version(directory: Path) -> tuple:
-        return tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in directory.iterdir()))
+        """Each entry's name, mtime and size; a link is fingerprinted, not followed, so a dangling one is no error."""
+        try:
+            found = []
+            for p in directory.iterdir():
+                try:
+                    stat = p.lstat()
+                except FileNotFoundError:  # gone since iterdir(): it is not part of the plate now
+                    continue
+                found.append((p.name, stat.st_mtime_ns, stat.st_size))
+        except OSError as exc:  # the directory, or an entry, went while it was read
+            raise PlateError(f"{directory}: could not be read: {exc.strerror or exc}") from exc
+        return tuple(sorted(found))
 
     def load(self, name: str) -> tuple[PlateManifest, Path]:
         """The plate *name* and its directory; raises :class:`PlateError` saying why it is not served."""

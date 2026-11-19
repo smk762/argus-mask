@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.expressions import BUILTIN, DEFAULT_SET, EXPRESSIONS_NAME, ExpressionError, Expressions, check_set
+from argus_mask.models import RestSet
 from argus_mask.server.app import create_app
 from tests.helpers import make_face
 
@@ -48,12 +51,46 @@ def test_a_face_rests_warm_until_it_chooses(assets) -> None:
         ("ok", {"mouthSmileLeft": 1.5}, 1.0, "from 0 to 1"),
         ("ok", {"mouthSmileLeft": True}, 1.0, "from 0 to 1"),
         ("ok", {}, 3.0, "life"),
+        pytest.param("ok", {"mouthSmileLeft": 10**400}, 1.0, "from 0 to 1", id="huge-weight"),  # too big for a float
+        pytest.param("ok", {"mouthSmileLeft": -(10**400)}, 1.0, "from 0 to 1", id="huge-negative-weight"),
+        pytest.param("ok", {"mouthSmileLeft": float("nan")}, 1.0, "from 0 to 1", id="nan-weight"),
+        pytest.param("ok", {}, 10**400, "life", id="huge-life"),
         ("ok", [], 1.0, "must be an object"),
     ],
 )
 def test_an_unsound_set_is_refused(name, weights, life, why) -> None:
     with pytest.raises(ExpressionError, match=why):
         check_set(name, weights, life)
+
+
+@pytest.mark.parametrize("weight", [5.0, -3.0, float("inf"), float("nan")])
+def test_a_rest_set_holds_its_weights_from_0_to_1(weight: float) -> None:
+    with pytest.raises(ValidationError, match="jawOpen"):
+        RestSet(name="odd", weights={"jawOpen": weight})
+
+
+def test_a_huge_integer_from_json_is_refused_as_a_bad_set() -> None:
+    entry = json.loads('{"weights": {"jawOpen": 1' + "0" * 400 + '}, "life": 1}')
+    with pytest.raises(ExpressionError):
+        check_set("ok", entry["weights"], entry["life"])
+
+
+def test_a_change_builds_on_the_file_even_when_its_stat_looks_unchanged(assets) -> None:
+    ex = Expressions(assets)
+    ex.choose("face-a", "calm")
+    assert ex.choices() == {"face-a": "calm"}
+    path = assets / EXPRESSIONS_NAME
+    stat = path.stat()
+    # Another writer's change with the same inode, size and mtime: what a reused inode within one clock tick looks like.
+    with path.open("r+", encoding="utf-8") as f:
+        text = f.read().replace("face-a", "face-b")
+        f.seek(0)
+        f.write(text)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert path.stat().st_ino == stat.st_ino and path.stat().st_size == stat.st_size
+    ex.choose("face-c", "bright")
+    assert json.loads(path.read_text())["faces"] == {"face-b": "calm", "face-c": "bright"}
+    assert ex.choices() == {"face-b": "calm", "face-c": "bright"}, "the instance reads what it wrote"
 
 
 def test_a_hand_edited_file_is_read_again_and_its_bad_entries_ignored(assets) -> None:
@@ -69,6 +106,22 @@ def test_a_hand_edited_file_is_read_again_and_its_bad_entries_ignored(assets) ->
     assert ex.for_face("test-head").weights == {"browInnerUp": 0.3}
     assert ex.remove("warm") and ex.for_face("test-head") == BUILTIN["warm"]
     assert not ex.remove("calm")  # built in: nothing of the file's to remove
+
+
+@pytest.mark.parametrize("body", ['{"sets": {"cheery": ', "[]"])
+def test_a_file_that_cannot_be_read_is_never_overwritten(assets, body) -> None:
+    ex = Expressions(assets)
+    (assets / EXPRESSIONS_NAME).write_text(body)  # a hand edit with a typo, or not an object
+    assert ex.for_face("test-head").name == "warm"  # read as no sets and no choices
+    assert set(ex.problems()) == {EXPRESSIONS_NAME}
+    with pytest.raises(ExpressionError, match="not changed"):
+        ex.choose("test-head", "calm")
+    with pytest.raises(ExpressionError, match="not changed"):
+        ex.define(check_set("cheery", {"mouthSmileLeft": 0.4}))
+    assert (assets / EXPRESSIONS_NAME).read_text() == body
+    write(assets, {"sets": {}, "faces": {}})  # mended: writes go through again
+    ex.choose("test-head", "calm")
+    assert ex.choices() == {"test-head": "calm"} and ex.problems() == {}
 
 
 def test_a_choice_follows_a_renamed_face_and_goes_with_a_deleted_one(assets) -> None:
