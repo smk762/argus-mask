@@ -503,24 +503,35 @@ def inspect_spz(data: bytes, label: str = "splats") -> SpzReport:
 
 
 def glb_parts(doc: dict) -> list[tuple[str, int, int]]:
-    """Each mesh node of a glTF, in file order: its name, vertices and triangles (the bake's vertex space)."""
-    accessors = doc.get("accessors") or []
-    meshes = doc.get("meshes") or []
+    """Each mesh node of a glTF, in file order: its name, vertices and triangles (the bake's vertex space).
+
+    An entry of the wrong shape is :class:`FaceError`, as in :func:`glb_report`, never another exception.
+    """
+    accessors = _objects(doc, "accessors")
+    meshes = _objects(doc, "meshes")
 
     def count(index: object) -> int:
-        if isinstance(index, int) and 0 <= index < len(accessors) and isinstance(accessors[index], dict):
-            return int(accessors[index].get("count", 0))
+        if isinstance(index, int) and 0 <= index < len(accessors):
+            return _whole(accessors[index].get("count", 0), "an accessor's count")
         return 0
 
+    def attributes(prim: dict) -> dict:
+        found = prim.get("attributes") or {}
+        if not isinstance(found, dict):
+            raise FaceError(f"{_MALFORMED}: a primitive's attributes are the wrong shape")
+        return found
+
     out = []
-    for node in doc.get("nodes") or []:
-        if not isinstance(node, dict) or not isinstance(node.get("mesh"), int) or not 0 <= node["mesh"] < len(meshes):
+    for node in _objects(doc, "nodes"):
+        if not isinstance(node.get("mesh"), int) or not 0 <= node["mesh"] < len(meshes):
             continue
-        mesh = meshes[node["mesh"]]
-        prims = [p for p in (mesh.get("primitives") or [] if isinstance(mesh, dict) else []) if isinstance(p, dict)]
-        vertices = sum(count((p.get("attributes") or {}).get("POSITION")) for p in prims)
+        prims = meshes[node["mesh"]].get("primitives") or []
+        if not isinstance(prims, list):
+            raise FaceError(f"{_MALFORMED}: a mesh's primitives are not a list")
+        prims = [p for p in prims if isinstance(p, dict)]
+        vertices = sum(count(attributes(p).get("POSITION")) for p in prims)
         triangles = sum(
-            (count(p["indices"]) if "indices" in p else count((p.get("attributes") or {}).get("POSITION"))) // 3
+            (count(p["indices"]) if "indices" in p else count(attributes(p).get("POSITION"))) // 3
             for p in prims
             if p.get("mode", 4) == 4
         )
@@ -638,7 +649,8 @@ class FaceStore:
         self.clock = clock
         self._hashes: dict[str, tuple[tuple[int, ...], str]] = {}  # path -> (its version, sha256)
         self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
-        self._bound: dict[tuple, BoundSplatsReport | str] = {}  # each file's (path, mtime_ns, size) -> the same
+        # The model's path -> (the splats and each file's version, as _sha256 takes it; the report, or why refused)
+        self._bound: dict[str, tuple[tuple, BoundSplatsReport | str]] = {}
 
     def _sha256(self, path: Path) -> str:
         """The file's sha256, hashed again once anything about it changes. The version includes the inode and its
@@ -705,17 +717,22 @@ class FaceStore:
             return
         files = [path] + [directory / n for n in (model.splats.file, model.splats.binding)]
         try:
-            key = (model.splats.model_dump_json(), *((str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in files))
+            # Each file's version as _sha256 takes it: a same-size copy with its mtime kept is still checked again.
+            versions = []
+            for f in files:
+                stat = f.stat()
+                versions.append((stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size))
         except OSError:
             raise FaceError(f"{what}'s splats are missing a file") from None
-        if key not in self._bound:
-            for old in [k for k in self._bound if k[1] == key[1]]:  # an earlier version of this model's splats
-                del self._bound[old]
+        key = (model.splats.model_dump_json(), *versions)
+        cached = self._bound.get(str(path))
+        if cached is None or cached[0] != key:  # one entry per model: an earlier version's goes
             try:
-                self._bound[key] = inspect_bound_splats(directory, model, read_glb(path)[0])
+                found: BoundSplatsReport | str = inspect_bound_splats(directory, model, read_glb(path)[0])
             except FaceError as exc:
-                self._bound[key] = f"{what}'s splats: {exc}"
-        found = self._bound[key]
+                found = f"{what}'s splats: {exc}"
+            cached = self._bound[str(path)] = (key, found)
+        found = cached[1]
         if isinstance(found, str):
             raise FaceError(found)
 

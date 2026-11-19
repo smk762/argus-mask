@@ -292,6 +292,9 @@ export class SplatHead {
     // the sort worker now settles it, so the dispose runs through.
     try { viewer?.disposeSortWorker?.(); } catch { /* no worker */ }
     try { this.r.dispose(); } catch { /* already gone */ }
-    if (canvas && root && !canvas.parentNode && !viewer.usingExternalRenderer) root.appendChild(canvas);
+    if (canvas && root && !canvas.parentNode && !viewer.usingExternalRenderer) {
+      canvas.hidden = true;   // back only for the viewer to remove: never seen, if its dispose is slow or fails
+      root.appendChild(canvas);
+    }
   }
 }

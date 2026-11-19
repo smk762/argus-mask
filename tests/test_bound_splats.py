@@ -185,6 +185,39 @@ def test_a_store_checks_splats_once_per_version(tmp_path, monkeypatch) -> None:
     assert len(calls) == 2
 
 
+def test_a_same_size_copy_with_its_mtime_kept_is_checked_again(tmp_path) -> None:
+    directory = bound_face(tmp_path)
+    store = FaceStore(tmp_path)
+    store.load("test-head")
+    path = directory / "head.binding.bin"
+    st = path.stat()
+    replacement = tmp_path / "other.bin"
+    replacement.write_bytes(binding(tri=1))  # the same size, another triangle: not what the sha256 names
+    os.utime(replacement, ns=(st.st_atime_ns, st.st_mtime_ns))  # cp -p, rsync -t
+    os.replace(replacement, path)
+    assert (path.stat().st_mtime_ns, path.stat().st_size) == (st.st_mtime_ns, st.st_size)
+    with pytest.raises(FaceError, match="sha256"):
+        store.load("test-head")
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {
+            "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "accessors": [{"count": "3"}],
+        },
+        {"nodes": [{"mesh": 0}], "meshes": [{"primitives": [{"attributes": [0]}]}], "accessors": []},
+        {"nodes": [{"mesh": 0}], "meshes": [{"primitives": {"attributes": {}}}], "accessors": []},
+        {"nodes": "x", "meshes": [], "accessors": []},
+    ],
+)
+def test_a_malformed_gltf_is_a_face_error_when_its_parts_are_counted(doc) -> None:
+    with pytest.raises(FaceError, match="well-formed"):
+        faces.glb_parts(doc)
+
+
 def test_a_part_and_a_credit_refuse_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         SplatPart(name="head", vertices=3, triangles=1, colour="red")  # type: ignore[call-arg]

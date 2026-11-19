@@ -347,6 +347,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def stage_for(face_id: str) -> Stage:
         return stages.setdefault(face_id, Stage(face_id))
 
+    releases: set[asyncio.Task] = set()  # GPU leases being given back after their streams (perform)
+
     # One source per face, whatever name it came by: an alias and its face id share a face, not a stage.
     holders: dict[str, object] = {}  # the face itself -> the claim holding it
 
@@ -598,7 +600,11 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
                 if performer is not None:
                     await performer.close()
             finally:
-                await leases.aclose()
+                # Released in the background: a slow broker must not hold back the source's "done" (or /push's
+                # answer) by up to RELEASE_WAIT_S. The task is kept until it ends, so it is not collected mid-way.
+                releasing = asyncio.create_task(leases.aclose())
+                releases.add(releasing)
+                releasing.add_done_callback(releases.discard)
             free(stage, claim)  # only if still ours: a source may have claimed the face while the performer closed
 
     @app.websocket("/session/{face_id}/source")
