@@ -3,6 +3,7 @@
 // Everything the server sends is put on the page as text, never as HTML.
 
 import { openScreen, screensText } from './screen.js';
+import { still } from './thumbs.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -27,7 +28,11 @@ async function json(url, options) {
 const shell = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, "'\\''")}'`);
 
 let state = { faces: [], screens: {}, live: [] };
-let face = store.get('face', '');
+// Saved faces links here with ?face=<id>: that face is chosen, and remembered like a click on it. The
+// parameter is dropped from the address so a reload keeps whatever is picked after.
+const asked = new URLSearchParams(location.search).get('face');
+if (asked) { store.set('face', asked); history.replaceState(null, '', location.pathname); }
+let face = asked || store.get('face', '');
 let job = null;   // the broadcast running from this page
 
 // ---- faces -------------------------------------------------------------------------------------
@@ -50,17 +55,63 @@ function renderFaces() {
     const radio = el('input', { type: 'radio', name: 'face', value: f.id, checked: f.id === face });
     const onScreen = el('button', { type: 'button', className: 'small', textContent: 'On screen…' });
     onScreen.onclick = (e) => { e.stopPropagation(); openScreen(f.id, f.name); };
+    const thumb = el('button', { type: 'button', className: 'thumb', textContent: '…', title: `Enlarge ${f.name}` });
+    showStill(f, thumb);
+    thumb.onclick = (e) => { e.preventDefault(); peek(f); };
     const row = el('label', { className: `face${f.id === face ? ' on' : ''}` },
-      radio, el('span', { className: 'name', textContent: f.name }),
-      el('span', { className: `badge ${r.cls}`, textContent: r.text }),
-      ...(f.cleared === false ? [el('span', { className: 'badge', textContent: 'personal', title: 'Your own screens only: not cleared to show or share' })] : []),
+      radio, thumb,
+      el('span', { className: 'name', textContent: f.name }),
       el('span', { className: 'id', textContent: f.id }),
+      el('span', { className: 'badges' },
+        el('span', { className: `badge ${r.cls}`, textContent: r.text }),
+        ...(f.cleared === false ? [el('span', { className: 'badge', textContent: 'personal', title: 'Your own screens only: not cleared to show or share' })] : [])),
       el('span', { className: 'tools' }, onScreen));
-    radio.onchange = () => { face = f.id; store.set('face', face); renderFaces(); updateTarget(); updateCli(); };
+    radio.onchange = () => choose(f.id);
     return row;
   }));
   updateTarget();
 }
+
+function choose(id) {
+  face = id; store.set('face', face); renderFaces(); updateTarget(); updateCli();
+}
+
+// ---- stills: a face's picture beside its name, enlarged on a click --------------------------------
+// The list is redrawn on every refresh, so each still is asked for once and kept by face id. An alias shows
+// the face it names. Taken big enough to enlarge; the list shows it small.
+
+const stills = new Map();   // face id -> { url, error, ready: Promise }
+function stillOf(f) {
+  const id = f.kind === 'alias' && f.face ? f.face : f.id;
+  if (!stills.has(id)) {
+    const s = {};
+    s.ready = still(id, 'export', 480, 576).then((url) => { s.url = url; }, (err) => { s.error = err.message; });
+    stills.set(id, s);
+  }
+  return stills.get(id);
+}
+
+function showStill(f, thumb) {
+  const s = stillOf(f);
+  const show = () => {
+    if (s.url) thumb.replaceChildren(el('img', { src: s.url, alt: '' }));
+    else if (s.error) { thumb.textContent = 'none'; thumb.title = `No picture: ${s.error}`; thumb.disabled = true; }
+  };
+  show();
+  if (!s.url && !s.error) s.ready.then(show);
+}
+
+function peek(f) {
+  const s = stillOf(f);
+  if (!s.url) return;
+  $('peek-img').src = s.url;
+  $('peek-img').alt = f.name;
+  $('peek-name').textContent = f.name;
+  $('peek-pick').onclick = () => { $('peek').close(); choose(f.id); };
+  $('peek').showModal();
+}
+$('peek-close').onclick = () => $('peek').close();
+$('peek').onclick = (e) => { if (e.target === $('peek')) $('peek').close(); };   // a click outside the picture
 
 function updateTarget() {
   const t = $('target');
