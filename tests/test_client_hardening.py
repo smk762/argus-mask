@@ -66,6 +66,7 @@ def test_a_url_without_synthesise_has_no_http_base(url: str) -> None:
 def test_a_synthesise_url_keeps_its_base() -> None:
     assert client.http_base("http://host/synthesise/") == "http://host"
     assert client.http_base("http://host/api/synthesize/stream") == "http://host/api"
+    assert client.http_base("http://host/api/voice/synthesise/pcm") == "http://host/api/voice"  # rag-chat
 
 
 def _received(raw: bytes) -> object:

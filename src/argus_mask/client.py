@@ -398,7 +398,8 @@ def http_base(tts_url: str) -> str | None:
     if not tts_url.startswith(("http://", "https://")):
         return None
     parts = urllib.parse.urlsplit(tts_url)
-    match = re.search(r"/synthesi[sz]e(/stream)?/?$", parts.path)
+    # agent-composer's rag-chat adds /synthesise/pcm (raw PCM) beside /stream
+    match = re.search(r"/synthesi[sz]e(/stream|/pcm)?/?$", parts.path)
     if match is None:
         return None
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path[: match.start()], "", ""))
@@ -479,7 +480,8 @@ def _http_voices(tts_url: str) -> list[dict] | None:
 
     Beside ``POST …/synthesise[/stream]`` they answer ``GET …/speakers`` (built-in speakers, by id) and
     ``GET …/clones`` (stored clones). Named as the Wyoming bridge names them, and as ``voiced`` maps
-    them back: a speaker by its id, a clone as ``clone:<id>``. None if the service answers neither.
+    them back: a numbered speaker by its id, a named one (XTTS's studio speakers) as ``speaker:<id>``,
+    a clone as ``clone:<id>``. None if the service answers neither.
     """
     base = http_base(tts_url)
     if base is None:
@@ -499,9 +501,10 @@ def _http_voices(tts_url: str) -> list[dict] | None:
     voices = []
     for s in (speakers or {}).get("speakers") or []:
         if isinstance(s, dict) and s.get("id") is not None:
+            sid = str(s["id"])
             voices.append(
                 {
-                    "name": str(s["id"]),
+                    "name": sid if sid.isdigit() else f"speaker:{sid}",
                     "description": str(s.get("name") or ""),
                     "languages": [str(x) for x in s.get("languages") or []],
                     "speakers": [],

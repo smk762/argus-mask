@@ -73,7 +73,9 @@ function renderFaces() {
 }
 
 function choose(id) {
-  face = id; store.set('face', face); renderFaces(); updateTarget(); updateCli();
+  face = id; store.set('face', face); renderFaces(); updateTarget();
+  if (voicesFor !== null) selectVoice(wantedVoice());   // the voice this face last spoke with
+  updateCli();
 }
 
 // ---- stills: a face's picture beside its name, enlarged on a click --------------------------------
@@ -144,35 +146,71 @@ async function refresh() {
 
 // ---- voices --------------------------------------------------------------------------------------
 
+// The service's own voices when it lists them, then voices typed before (kept in this browser, so a
+// service that cannot list its speakers, like rag-chat's XTTS, still gets a pick list). Each face
+// remembers the voice it last spoke with: choosing it chooses that voice again.
+
+const OTHER = '\u0001other';
+const RECENT_MAX = 16;
+const faceVoice = (id) => (id ? store.get(`voice:${id}`, null) : null);
+function wantedVoice() {
+  return faceVoice(face) ?? (store.get('voice', '') || state.tts_voice || '');
+}
+function rememberVoice(value, typed) {
+  store.set('voice', value);
+  if (face) store.set(`voice:${face}`, value);
+  if (typed && value) store.set('voices', [value, ...store.get('voices', []).filter((v) => v !== value)].slice(0, RECENT_MAX));
+}
+function selectVoice(want) {
+  const select = $('voice');
+  const known = [...select.options].some((o) => o.value === want);
+  if (want && !known) { select.value = OTHER; $('voice-other').value = want; } else select.value = want;
+  $('voice-other-wrap').hidden = select.value !== OTHER;
+}
+
 let voicesFor = null;
+let listed = [];   // the service's voices, from the last /voices
 async function loadVoices() {
   const tts = $('tts').value.trim();
   if (tts === voicesFor) return;
   voicesFor = tts;
   const select = $('voice');
-  const want = store.get('voice', '') || state.tts_voice || '';
   let found = { listed: false, voices: [] };
   try { found = await json(`/voices?tts=${encodeURIComponent(tts)}`); } catch { /* keep the free-text fallback */ }
   if (voicesFor !== tts) return;   // the TTS changed while this list was asked for: the latest call fills the select
-  const options = [el('option', { value: '', textContent: state.tts_voice ? `default (${state.tts_voice})` : "the service's default" })];
-  for (const v of found.voices || []) {
-    const langs = v.languages && v.languages.length ? ` · ${v.languages.join(', ')}` : '';
-    options.push(el('option', { value: v.name, textContent: `${v.name}${langs}` }));
-    for (const sp of v.speakers || []) options.push(el('option', { value: `${v.name}\u0000${sp}`, textContent: `${v.name} · speaker ${sp}` }));
-  }
-  options.push(el('option', { value: '\u0001other', textContent: 'other: type a name or speaker…' }));
-  select.replaceChildren(...options);
-  select.title = found.listed ? `${found.voices.length} voices from the service` : (found.reason || '');
-  const known = [...select.options].some((o) => o.value === want);
-  if (want && !known) { select.value = '\u0001other'; $('voice-other').value = want; } else select.value = want;
-  $('voice-other-wrap').hidden = select.value !== '\u0001other';
+  listed = found.voices || [];
+  fillVoices();
+  select.title = found.listed ? `${listed.length} voices from the service` : (found.reason || '');
+  selectVoice(wantedVoice());
   updateCli();
+}
+
+function fillVoices() {
+  const options = [el('option', { value: '', textContent: state.tts_voice ? `default (${state.tts_voice})` : "the service's default" })];
+  const seen = new Set(['']);
+  if (listed.length) {
+    const group = el('optgroup', { label: 'From the service' });
+    for (const v of listed) {
+      const langs = v.languages && v.languages.length ? ` · ${v.languages.join(', ')}` : '';
+      const desc = v.description && v.description !== v.name ? ` (${v.description})` : '';
+      group.append(el('option', { value: v.name, textContent: `${v.name}${desc}${langs}` }));
+      seen.add(v.name);
+      for (const sp of v.speakers || []) group.append(el('option', { value: `${v.name}\u0000${sp}`, textContent: `${v.name} · speaker ${sp}` }));
+    }
+    options.push(group);
+  }
+  // The last voice typed before this list existed counts as used before too.
+  const recent = [...new Set([...store.get('voices', []), store.get('voice', '')])]
+    .filter((v) => v && !v.includes('\u0000') && !seen.has(v));
+  if (recent.length) options.push(el('optgroup', { label: 'Used before' }, ...recent.map((v) => el('option', { value: v, textContent: v }))));
+  options.push(el('option', { value: OTHER, textContent: 'other: type a name or speaker…' }));
+  $('voice').replaceChildren(...options);
 }
 
 // The voice as the CLI's --voice takes it, and any speaker as a -p field (Wyoming's voice.speaker).
 function chosenVoice() {
   const v = $('voice').value;
-  if (v === '\u0001other') return { voice: $('voice-other').value.trim(), speaker: '' };
+  if (v === OTHER) return { voice: $('voice-other').value.trim(), speaker: '' };
   const [voice, speaker = ''] = v.split('\u0000');
   return { voice, speaker };
 }
@@ -303,7 +341,9 @@ async function start(request) {
 $('say').addEventListener('submit', (e) => {
   e.preventDefault();
   const { voice } = chosenVoice();
-  store.set('voice', $('voice').value === '\u0001other' ? voice : $('voice').value);
+  const typed = $('voice').value === OTHER;
+  rememberVoice(typed ? voice : $('voice').value, typed);
+  if (typed) { fillVoices(); selectVoice(voice); }
   start(() => json('/broadcast/say', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ face, text: $('text').value, tts_url: $('tts').value.trim(), voice, params: params(),
@@ -335,7 +375,12 @@ const copy = (input, button) => async () => {
 $('copy-cli').onclick = copy('cli', 'copy-cli');
 $('copy-push-cli').onclick = copy('push-cli', 'copy-push-cli');
 $('add-param').onclick = () => paramRow();
-$('voice').addEventListener('change', () => { $('voice-other-wrap').hidden = $('voice').value !== '\u0001other'; updateCli(); });
+$('voice').addEventListener('change', () => {
+  const v = $('voice').value;
+  $('voice-other-wrap').hidden = v !== OTHER;
+  if (v !== OTHER) rememberVoice(v, false);   // a pick from the list sticks to the face at once
+  updateCli();
+});
 $('tts').addEventListener('change', loadVoices);
 for (const id of ['text', 'voice-other', 'pause', 'seed', 'stream', 'tidy', 'context', 'tts', 'file', 'push-seed']) $(id).addEventListener('input', updateCli);
 for (const id of ['temp', 'temp-default']) $(id).addEventListener('input', () => { paintTemperature(); updateCli(); });
