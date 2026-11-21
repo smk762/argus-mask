@@ -95,6 +95,11 @@ NOT_FOUND = """<div class="missing">
 </div>"""
 
 
+# Cloudflare Web Analytics is on for the zone: Cloudflare adds its beacon tag at the edge, and the tag
+# loads this one script. It reports to this site's own /cdn-cgi/rum, so connect-src is unchanged.
+BEACON = "https://static.cloudflareinsights.com"
+
+
 def csp(page: str) -> str:
     """The page's Content-Security-Policy: everything from this origin, the import map by its hash."""
     maps = re.findall(r'<script type="importmap">(.*?)</script>', page, re.S)
@@ -104,7 +109,7 @@ def csp(page: str) -> str:
             "default-src 'self'",
             # 'wasm-unsafe-eval' lets the splat renderer's depth-sort worker compile its WebAssembly (#126); it allows
             # no eval() and no new Function().
-            f"script-src 'self' 'wasm-unsafe-eval' {hashes}",
+            f"script-src 'self' {BEACON} 'wasm-unsafe-eval' {hashes}",
             "style-src 'self'",
             "img-src 'self' data: blob:",  # the glTF loader decodes textures from blobs
             "media-src 'self' blob:",  # the player plays each clip's audio from a blob, so it can seek
