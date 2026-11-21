@@ -229,3 +229,10 @@ def test_the_site_has_a_real_404_and_the_demo_links_its_docs() -> None:
     assert 'href="/docs/"' in page and re.findall(r"<script[^>]*>", page) == ['<script src="/vendor/dh/dh-theme.js">']
     demo = (DEMO / "index.html").read_text(encoding="utf-8")
     assert 'href="docs/"' in demo and 'id="made-line"' in demo
+
+
+def test_the_clip_spec_names_no_private_host() -> None:
+    """clips.json is public: the TTS service's address comes from --tts-url or ARGUS_MASK_TTS_URL instead."""
+    docs = _build().docs_page
+    assert "tts_url" not in SPEC
+    assert docs.opsec_hits((DEMO / "clips.json").read_text(encoding="utf-8"), []) == []
