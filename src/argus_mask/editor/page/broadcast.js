@@ -170,7 +170,8 @@ function selectVoice(want) {
 
 let voicesFor = null;
 let listed = [];   // the service's voices, from the last /voices
-async function loadVoices() {
+const VOICES_RETRY_MS = 15000;
+async function loadVoices(again = false) {
   const tts = $('tts').value.trim();
   if (tts === voicesFor) return;
   voicesFor = tts;
@@ -178,11 +179,15 @@ async function loadVoices() {
   let found = { listed: false, voices: [] };
   try { found = await json(`/voices?tts=${encodeURIComponent(tts)}`); } catch { /* keep the free-text fallback */ }
   if (voicesFor !== tts) return;   // the TTS changed while this list was asked for: the latest call fills the select
+  const keep = again ? (select.value === OTHER ? $('voice-other').value.trim() : select.value) : null;
   listed = found.voices || [];
   fillVoices();
   select.title = found.listed ? `${listed.length} voices from the service` : (found.reason || '');
-  selectVoice(wantedVoice());
+  selectVoice(keep ?? wantedVoice());   // a retry keeps what was picked meanwhile
   updateCli();
+  // A cold service (rag-chat while XTTS loads) answers its speaker list with an error, or none: ask again
+  // until it has some, rather than leaving the list empty until a reload.
+  if (!listed.length && tts) setTimeout(() => { if (voicesFor === tts) { voicesFor = null; loadVoices(true); } }, VOICES_RETRY_MS);
 }
 
 function fillVoices() {

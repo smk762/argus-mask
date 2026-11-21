@@ -222,6 +222,33 @@ console.log(JSON.stringify($('voice').options.map((o) => o.value)));
     assert out == ["", "from-b", "\u0001other"]
 
 
+def test_an_empty_voice_list_is_asked_again_and_keeps_the_pick() -> None:
+    """A cold service lists no voices: the page asks again later, keeping what was picked meanwhile."""
+    source = (PAGE / "broadcast.js").read_text(encoding="utf-8")
+    out = _node(f"""
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {{}}, ...children) => {{ const n = Object.assign(document.createElement(tag), props); n.append(...children); return n; }};
+const store = {{ get: (k, f) => f, set() {{}} }};
+let state = {{ tts_voice: '' }};
+const updateCli = () => {{}};
+const answers = [{{ listed: false, voices: [], reason: 'Model still loading' }}, {{ listed: true, voices: [{{ name: 'speaker:Damien Black' }}] }}];
+let asked = 0;
+const json = async () => answers[asked++];
+const timers = []; globalThis.setTimeout = (fn) => timers.push(fn);
+let voicesFor = null; let listed = []; let face = '';
+const OTHER = '\\u0001other'; const VOICES_RETRY_MS = 0; const faceVoice = () => null;
+{_function(source, "function wantedVoice(")}
+{_function(source, "function selectVoice(")}
+{_function(source, "function fillVoices(")}
+{_function(source, "async function loadVoices(")}
+$('tts').value = 'http://a'; await loadVoices();
+$('voice').value = OTHER; $('voice-other').value = 'speaker:Damien Black';   // typed while the list was empty
+timers.shift()(); await new Promise((r) => setImmediate(r));
+console.log(JSON.stringify({{ asked, retries: timers.length, picked: $('voice').value }}));
+""")
+    assert out == {"asked": 2, "retries": 0, "picked": "speaker:Damien Black"}
+
+
 def test_overlapping_reviews_show_one_face_throughout() -> None:
     """Face X's model loading after face Y's: the side panel and buttons are Y's, as the stage is."""
     source = (PAGE / "faces.js").read_text(encoding="utf-8")
