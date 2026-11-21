@@ -16,12 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from argus_mask.editor.preset import CLOTHES_DIR, PART_DIRS, Preset
+from argus_mask.models import is_safe_name
 
 FACEUNITS_PACK = "faceunits01"
 CLOTHES = "clothes"  # the library's part name for everything worn
 # Clothes tagged as shoes go on the feet: only a full-body framing shows them, and it needs them.
 _SHOE_TAGS = {"shoes"}
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_NAME_MAX = 255  # the pattern sets no length; no file name is longer, so the limit refuses nothing new
 # Pack licences as SPDX ids. Anything else is kept as the pack states it.
 _SPDX = {"CC0": "CC0-1.0", "CC-0": "CC0-1.0", "CC0-1.0": "CC0-1.0"}
 _COMPOUND = re.compile(r"\b(?:AND|OR)\b", re.IGNORECASE)
@@ -170,7 +172,9 @@ class AssetLibrary:
             found: list[Asset] = []
             root = self.data_dir / directory
             if root.is_dir():
-                for sub in sorted(p for p in root.iterdir() if p.is_dir() and _NAME.fullmatch(p.name)):
+                for sub in sorted(
+                    p for p in root.iterdir() if p.is_dir() and is_safe_name(p.name, _NAME, max_len=_NAME_MAX)
+                ):
                     if not (sub / f"{sub.name}{ext}").is_file():
                         continue  # eyes/materials and the like: not an asset of this part
                     pack, entry = entries.get((directory, sub.name)) or _hair_as_clothes(entries, directory, sub.name)

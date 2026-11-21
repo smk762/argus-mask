@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from argus_mask.arkit import ARKIT_52
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, glb_report, inspect_glb, read_glb
-from argus_mask.models import FACE_DISCLOSURE, FaceManifest, Provenance
+from argus_mask.models import FACE_DISCLOSURE, FaceManifest, Provenance, is_face_id
 from tests.helpers import RELEASE, make_face, make_glb, write_consent
 
 
@@ -186,6 +186,18 @@ def test_a_model_outside_the_face_directory_is_refused(tmp_path) -> None:
 # "stock-01\n": `$` matches before a final newline, so an id check must use fullmatch.
 @pytest.mark.parametrize("face_id", ["../etc", "UPPER", "", "a/b", ".hidden", "stock-01\n"])
 def test_a_face_id_is_a_plain_name(tmp_path, face_id: str) -> None:
+    with pytest.raises(FaceError, match="not a face id"):
+        FaceStore(tmp_path).load(face_id)
+
+
+@pytest.mark.parametrize("face_id", ["Stock-01", "stock.01", "a" * 65])
+def test_a_face_id_stays_stricter_than_cortexs_default_safe_name(tmp_path, face_id: str) -> None:
+    # Face ids go through argus-cortex's safe_name with FACE_ID_PATTERN, so names its default takes (capitals, ".",
+    # up to 128 characters) are still refused.
+    from argus_cortex.fs import safe_name
+
+    assert safe_name(face_id) == face_id
+    assert not is_face_id(face_id)
     with pytest.raises(FaceError, match="not a face id"):
         FaceStore(tmp_path).load(face_id)
 

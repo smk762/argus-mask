@@ -83,14 +83,21 @@ from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceSt
 from argus_mask.gpu import VOICE_MAKE
 from argus_mask.gpu import coordinator as gpu_coordinator
 from argus_mask.gpu import lease as gpu_lease
-from argus_mask.models import CLEARED_KINDS, FACE_ID_PATTERN, FRAMINGS, FaceManifest, ModelFile
+from argus_mask.models import (
+    CLEARED_KINDS,
+    FACE_ID_PATTERN,
+    FRAMINGS,
+    FaceManifest,
+    ModelFile,
+    is_face_id,
+    is_safe_name,
+)
 from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, read_body
 from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
 
 SERVER_TIMEOUT_S = 3.0
-_FACE_ID = re.compile(FACE_ID_PATTERN)
 
 
 def chime(rate: int = 24000) -> np.ndarray:
@@ -136,7 +143,9 @@ def wav_from_bytes(data: bytes, name: str) -> tuple[np.ndarray, int]:
 
 RecordSize = Literal["1920x1080", "1280x720", "854x480", "1080x1920"]  # 1080p, 720p, 480p; 1080x1920: the HLD panel
 RecordQuality = Literal["low", "medium", "high"]
-_RECORDING = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(mp4|webm|wav|ndjson)$")
+_RECORDING = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(mp4|webm|wav|ndjson)")
+# The pattern sets no length; 255 is the longest file name the filesystem holds, so the limit refuses nothing new.
+_RECORDING_MAX = 255
 
 
 class Record(BaseModel):
@@ -533,7 +542,7 @@ def create_editor_app(
     @app.put("/scenes/faces/{face_id}")
     def scene_choose(face_id: str, choice: SceneChoice) -> dict:
         """Which backdrop a face shows when a screen does not ask for one. Screens pick it up on their next load."""
-        if not _FACE_ID.fullmatch(face_id):
+        if not is_face_id(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             scene_choices.choose(face_id, choice.scene)
@@ -559,7 +568,7 @@ def create_editor_app(
     @app.put("/expressions/faces/{face_id}")
     def expression_choose(face_id: str, choice: RestChoice) -> dict:
         """Which rest set a face shows. Screens pick it up when they next load the face."""
-        if not _FACE_ID.fullmatch(face_id):
+        if not is_face_id(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
             expressions.choose(face_id, choice.set)
@@ -609,7 +618,7 @@ def create_editor_app(
 
     @app.delete("/aliases/{name}")
     def alias_remove(name: str) -> dict:
-        if not _FACE_ID.fullmatch(name) or not aliases.remove(name):
+        if not is_face_id(name) or not aliases.remove(name):
             raise HTTPException(404, f"no alias {name!r}")
         log.info("alias_removed", alias=name)
         return {"removed": name}
@@ -637,7 +646,7 @@ def create_editor_app(
 
     @app.get("/screen/{face_id}")
     async def screen(face_id: str) -> dict:
-        if not _FACE_ID.fullmatch(face_id):
+        if not is_face_id(face_id):
             raise HTTPException(404, f"{face_id!r} is not a face id")
         target = aliases.resolve(face_id)
         try:
@@ -1030,7 +1039,7 @@ def create_editor_app(
         clips = []
         # nosemgrep: handler-scans-all - the response is every recording; an index would not shrink it
         for p in root.iterdir():
-            if p.suffix in (".mp4", ".webm") and _RECORDING.fullmatch(p.name):
+            if p.suffix in (".mp4", ".webm") and is_safe_name(p.name, _RECORDING, max_len=_RECORDING_MAX):
                 with contextlib.suppress(OSError):  # gone, or not a file, between the listing and the look
                     if p.is_file():
                         clips.append((p.name, p.stat()))
@@ -1041,7 +1050,11 @@ def create_editor_app(
     def recording(name: str) -> FileResponse:
         """One recorded file: a plain name in the recordings directory, nothing else."""
         path = ed.recordings_dir / name
-        if not _RECORDING.fullmatch(name) or not path.is_file() or path.resolve().parent != ed.recordings_dir.resolve():
+        if (
+            not is_safe_name(name, _RECORDING, max_len=_RECORDING_MAX)
+            or not path.is_file()
+            or path.resolve().parent != ed.recordings_dir.resolve()
+        ):
             raise HTTPException(404, "no such recording")
         return FileResponse(path, filename=name)
 
