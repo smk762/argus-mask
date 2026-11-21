@@ -5,9 +5,11 @@ tidying, ``client.synthesise``), with ``say``'s pause between sentences, which g
 whole utterance becomes a take through the driver (``performance.perform``, as ``argus-mask drive`` does), and the
 audio is encoded to AAC for the page. ``clip.json`` records the text, the times and what made it.
 
-    uv run --no-sync python demo/make_clips.py --a2f-url http://127.0.0.1:8110 [--only hello]
+    ARGUS_MASK_TTS_URL=http://<tts-host>:9150/api/voice/synthesise/pcm \\
+        uv run --no-sync python demo/make_clips.py --a2f-url http://127.0.0.1:8110 [--only hello]
 
-Needs the TTS service, the Audio2Face server (or ``--driver energy`` for a quick local try, which the page labels)
+Needs the TTS service (``--tts-url``, or ``ARGUS_MASK_TTS_URL`` as for ``say``; it stays out of clips.json, which
+is public), the Audio2Face server (or ``--driver energy`` for a quick local try, which the page labels)
 and ffmpeg. Run it again after a driver or engine change, and commit demo/clips/.
 """
 
@@ -27,6 +29,7 @@ import numpy as np
 
 from argus_mask import __version__, client
 from argus_mask.audio import PcmDecoder
+from argus_mask.config import Settings
 from argus_mask.drivers import build_driver
 from argus_mask.expressions import BUILTIN, DEFAULT_SET
 from argus_mask.performance import perform
@@ -111,10 +114,10 @@ def encode(wav: Path, out: Path) -> None:
     )
 
 
-async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str, made: str) -> None:
+async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str, tts_url: str, made: str) -> None:
     out = HERE / "clips" / clip["id"]
     out.mkdir(parents=True, exist_ok=True)
-    mono, rate, captions = await speak(spec["tts_url"], clip["voice"], clip["sentences"])
+    mono, rate, captions = await speak(tts_url, clip["voice"], clip["sentences"])
     driver = build_driver(driver_name, a2f_url=a2f_url)
     header, frames, end = await perform(
         mono, rate, driver, fps=spec["fps"], seed=clip["seed"], face_id=clip["face"], session_id=clip["id"]
@@ -155,8 +158,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--driver", default="a2f", help="a2f (the demo's) or energy (a quick local try)")
     parser.add_argument("--a2f-url", default="http://127.0.0.1:8110")
+    parser.add_argument("--tts-url", default="", help="the TTS stream endpoint; default: ARGUS_MASK_TTS_URL")
     parser.add_argument("--only", action="append", help="make only this clip (repeatable)")
     args = parser.parse_args()
+    tts_url = args.tts_url or Settings.from_env().tts_url
+    if not tts_url:
+        sys.exit("no TTS service: pass --tts-url or set ARGUS_MASK_TTS_URL")
     spec = json.loads((HERE / "clips.json").read_text(encoding="utf-8"))
     # The checkout as it is before any clip is written: a clip's own files would make it read as -dirty.
     made = made_by()
@@ -166,7 +173,7 @@ def main() -> None:
         )
     for clip in spec["clips"]:
         if not args.only or clip["id"] in args.only:
-            asyncio.run(make(spec, clip, args.driver, args.a2f_url, made))
+            asyncio.run(make(spec, clip, args.driver, args.a2f_url, tts_url, made))
     index = [c["id"] for c in spec["clips"] if (HERE / "clips" / c["id"] / "clip.json").is_file()]
     (HERE / "clips" / "index.json").write_text(json.dumps(index) + "\n", encoding="utf-8")
 
