@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Broadcast shows each face's picture** (click to enlarge), and Saved faces has a Broadcast… button that opens
+  the page with that face picked.
+- **Broadcast remembers a voice per face**, and lists the voices typed before under "Used before", so a service
+  that cannot list its speakers still gets a pick list.
+
+### Fixed
+
+- **Voices are listed from agent-composer's rag-chat.** A TTS URL ending `/synthesise/pcm` was not taken for the
+  `/synthesise` contract, so the editor never asked it for speakers. A named speaker (XTTS's studio speakers) is
+  listed as `speaker:<name>`; listed bare, it was sent as a clone id.
+
 ## [0.3.0] - 2026-11-19
 
 ### Fixed

@@ -1175,6 +1175,18 @@ def test_the_voices_come_from_a_miso_style_http_service(broadcasting) -> None:
         assert c.get("/voices").json()["listed"] is False
 
 
+def test_a_named_speaker_is_listed_as_one_and_goes_back_as_one(broadcasting) -> None:
+    """XTTS's studio speakers have names for ids: listed bare, a name would be sent as a clone."""
+    from argus_mask.client import voiced  # noqa: PLC0415
+    from tests.helpers import fake_tts  # noqa: PLC0415
+
+    listed = {"speakers": {"speakers": [{"id": "Rosemary Okafor", "name": "Rosemary Okafor"}]}}
+    with fake_tts(tone(0.1), voices=listed) as (tts, _), broadcasting(tts) as (c, _):
+        [voice] = c.get("/voices").json()["voices"]
+        assert voice["name"] == "speaker:Rosemary Okafor"
+        assert voiced({}, voice["name"], tts) == {"speaker": "Rosemary Okafor"}
+
+
 # ---- recording a broadcast ---------------------------------------------------------------------------
 
 

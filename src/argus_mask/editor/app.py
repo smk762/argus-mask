@@ -717,7 +717,13 @@ def create_editor_app(
                 "screens": health.get("screens") or {},
                 "faces": rows
                 + [
-                    {"id": alias, "name": f"{alias} → {face}", "kind": "alias", "cleared": cleared.get(face, True)}
+                    {
+                        "id": alias,
+                        "name": f"{alias} → {face}",
+                        "kind": "alias",
+                        "face": face,  # the face it names: the page shows that face's still
+                        "cleared": cleared.get(face, True),
+                    }
                     for alias, face in (health.get("aliases") or {}).items()
                 ],
             }

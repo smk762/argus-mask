@@ -4,6 +4,7 @@
 
 import { Stage, modelUrl, restSets } from './stage.js';
 import { openScreen, screensText } from './screen.js';
+import { still } from './thumbs.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -34,28 +35,13 @@ const mb = (b) => `${(b / 1048576).toFixed(1)} MB`;
 // The copy a card stands for: the export (what screens get) if there is one, else the preview.
 const main = (row) => (row.export ? 'export' : 'preview');
 
-// ---- thumbnails: one hidden stage takes a still of each face in turn -----------------------
+// ---- thumbnails (thumbs.js) ---------------------------------------------------------------
 
-const shots = new Stage({ animate: false });
-const shotCache = new Map();  // `${place}/${id}/${sha}` -> data URL
-let queue = Promise.resolve();
 function thumbnail(row, img, wait) {
-  const place = main(row);
-  queue = queue.then(async () => {
-    try {
-      const manifest = await json(`/face/${enc(row.id)}?from=${place}`);
-      const key = `${place}/${row.id}/${manifest.model.sha256}`;
-      if (!shotCache.has(key)) {
-        await shots.load(modelUrl(row.id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
-        shotCache.set(key, await shots.snapshot());
-      }
-      img.src = shotCache.get(key);
-      wait.remove();
-    } catch (err) {
-      wait.textContent = 'no preview';
-      wait.title = err.message;
-    }
-  });
+  still(row.id, main(row)).then(
+    (url) => { img.src = url; wait.remove(); },
+    (err) => { wait.textContent = 'no preview'; wait.title = err.message; },
+  );
 }
 
 // ---- the grid ----------------------------------------------------------------------------------
@@ -123,7 +109,10 @@ function card(row) {
   const onScreen = el('button', { type: 'button', textContent: 'On screen…', disabled: !row.export || Boolean(row.refused),
     title: row.export ? 'Open it on a screen, and check it is ready to speak' : 'Only an exported face is served' });
   onScreen.onclick = () => openScreen(row.id, copy ? copy.name : row.id);
-  return el('div', { className: 'card' }, shot, info, el('div', { className: 'actions' }, review, onScreen, remix, rename, del));
+  const broadcast = el('button', { type: 'button', textContent: 'Broadcast…', disabled: !row.export || Boolean(row.refused),
+    title: row.export ? 'Say something through it, or play a file into it' : 'Only an exported face is served' });
+  broadcast.onclick = () => { location.href = `./broadcast.html?face=${enc(row.id)}`; };
+  return el('div', { className: 'card' }, shot, info, el('div', { className: 'actions' }, review, onScreen, broadcast, remix, rename, del));
 }
 
 // ---- aliases: stable names (a persona's "holly") pointing at a face ----------------------------

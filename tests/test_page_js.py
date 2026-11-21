@@ -31,7 +31,7 @@ class Node {
   dispatch(type) { for (const f of this.listeners[type] || []) f({ target: this }); }
   focus() { document.activeElement = this; }
   setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
-  get options() { return this.children.filter((c) => c.tagName === 'OPTION'); }
+  get options() { return this.all((c) => c.tagName === 'OPTION'); }   // optgroups' too, as a select's are
   all(pred, out = []) { for (const c of this.children) if (c instanceof Node) { if (pred(c)) out.push(c); c.all(pred, out); } return out; }
   querySelectorAll(sel) { return this.all((n) => n.tagName === sel.toUpperCase()); }
 }
@@ -206,7 +206,12 @@ let state = {{ tts_voice: '' }};
 const updateCli = () => {{}};
 const replies = {{}};
 const json = (url) => (replies[url] = later());
-let voicesFor = null;
+let voicesFor = null; let listed = []; let face = '';
+const OTHER = '\\u0001other';
+const faceVoice = () => null;
+{_function(source, "function wantedVoice(")}
+{_function(source, "function selectVoice(")}
+{_function(source, "function fillVoices(")}
 {_function(source, "async function loadVoices(")}
 $('tts').value = 'http://a'; const a = loadVoices();
 $('tts').value = 'http://b'; const b = loadVoices();
