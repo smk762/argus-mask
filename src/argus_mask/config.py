@@ -83,6 +83,59 @@ def _cache_size() -> int:
     return size
 
 
+def _number(name: str, default: str, low: float, high: float) -> float:
+    raw = _env(name, default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"ARGUS_MASK_{name} {raw!r} is not a number") from exc
+    if not low <= value <= high:
+        raise ConfigError(f"ARGUS_MASK_{name} {value:g}: must be between {low:g} and {high:g}")
+    return value
+
+
+# lam/ is beside src/ in a checkout, and is not part of the package: an installed editor names it itself.
+LAM_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "make_heads.sh"
+
+
+@dataclass(frozen=True)
+class LamSettings:
+    """What a guided face's LAM build needs (``editor/lam_build.py``, ``lam/README.md``). Unset, no build runs."""
+
+    # lam/make_heads.sh: the checked pipeline, run as a process and never imported.
+    script: Path | None = None
+    lam_dir: Path | None = None  # the aigc3d/LAM checkout, with its model_zoo
+    flame_open: Path | None = None  # flame2023_Open.pkl
+    image: str = "argus-mask-lam"
+    blender: str = "blender"  # Blender 4.5, for LAM's FBX-to-GLB step
+    docker: str = "docker"  # make_heads.sh calls docker by that name, so no setting changes it
+    # Host memory that must be free before a build, and the floor under which a running one is stopped: a build
+    # on a host short of memory has taken the whole machine down.
+    min_free_gb: float = 12.0
+    stop_free_gb: float = 2.0
+    timeout_s: float = 1800.0  # about 2 minutes a head; the shape fit adds about 10
+    cache: int = 20  # heads kept, by portrait and pipeline: the same portrait gives the same head. 0: none.
+
+    @classmethod
+    def from_env(cls) -> LamSettings:
+        script, lam_dir, flame = _env("LAM_SCRIPT"), _env("LAM_DIR"), _env("FLAME_OPEN")
+        if script:
+            found: Path | None = Path(script).expanduser()
+        else:
+            found = LAM_SCRIPT_IN_CHECKOUT if LAM_SCRIPT_IN_CHECKOUT.is_file() else None
+        return cls(
+            script=found,
+            lam_dir=Path(lam_dir).expanduser() if lam_dir else None,
+            flame_open=Path(flame).expanduser() if flame else None,
+            image=_env("LAM_IMAGE") or "argus-mask-lam",
+            blender=_env("LAM_BLENDER") or _env("BLENDER", "blender") or "blender",
+            min_free_gb=_number("LAM_MIN_FREE_GB", "12", 1, 1024),
+            stop_free_gb=_number("LAM_STOP_FREE_GB", "2", 0, 1024),
+            timeout_s=_number("LAM_TIMEOUT_S", "1800", 60, 86400),
+            cache=int(_number("LAM_CACHE", "20", 0, 1000)),
+        )
+
+
 MPFB_DATA_UNDER_USER = Path("extensions/.user/user_default/mpfb/data")
 
 

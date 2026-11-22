@@ -293,6 +293,15 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
 | `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
 | `ARGUS_MASK_BUILD_CACHE` | `40` | Builds the editor keeps (about 6 MB each), so undo and repeats skip Blender; `0` keeps none |
+| `ARGUS_MASK_LAM_DIR` | unset | The LAM checkout with its `model_zoo`, for a guided face's LAM build ([lam/README.md](lam/README.md)). Unset, no LAM head is built |
+| `ARGUS_MASK_FLAME_OPEN` | unset | `flame2023_Open.pkl`. The pipeline refuses any other FLAME |
+| `ARGUS_MASK_LAM_IMAGE` | `argus-mask-lam` | The image the pipeline runs in |
+| `ARGUS_MASK_LAM_SCRIPT` | the checkout's `lam/make_heads.sh` | The pipeline. `lam/` is not part of the package: an installed editor names a checkout's |
+| `ARGUS_MASK_LAM_BLENDER` | `ARGUS_MASK_BLENDER` | Blender 4.5, for LAM's FBX-to-GLB step |
+| `ARGUS_MASK_LAM_MIN_FREE_GB` | `12` | Host memory that must be free before a LAM build starts |
+| `ARGUS_MASK_LAM_STOP_FREE_GB` | `2` | A running LAM build is stopped when free host memory falls under this |
+| `ARGUS_MASK_LAM_TIMEOUT_S` | `1800` | The editor stops a LAM build that takes longer |
+| `ARGUS_MASK_LAM_CACHE` | `20` | LAM heads kept (about 4 MB each) by portrait and pipeline, so the same portrait is not built twice; `0` keeps none |
 | `ARGUS_MASK_SERVER_URL` | `http://127.0.0.1:8109` | How the editor reaches the server, to check a face and send a test |
 | `ARGUS_MASK_VIEWER_URL` | the server URL | The origin screens open the viewer at (the TLS proxy, on a LAN); the editor's links point here |
 | `ARGUS_MASK_RECORDINGS_DIR` | `recordings` | Where the Broadcast page's recordings go (an MP4, its WAV and take) |

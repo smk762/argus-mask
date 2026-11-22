@@ -197,6 +197,9 @@ class StepResult(BaseModel):
     seeds: dict[str, int] = Field(default_factory=dict)
     scores: dict[str, Finite] = Field(default_factory=dict)
     data: dict[str, JsonValue] = Field(default_factory=dict, description="what else the step decided or made")
+    run: dict[str, JsonValue] = Field(
+        default_factory=dict, description="how the run went: its timings, a log's tail. Not part of what it found"
+    )
     started: AwareDatetime | None = None
     finished: AwareDatetime | None = None
     after: dict[str, str] = Field(default_factory=dict, description="each step this ran on, by its result's digest")
@@ -242,8 +245,8 @@ class StepResult(BaseModel):
 
     @property
     def digest(self) -> str:
-        """What the step found, as one hash: not when it ran, what it ran on, or what a person overruled."""
-        found = self.model_dump(mode="json", exclude={"started", "finished", "overruled", "after"})
+        """What the step found, as one hash: not when or how it ran, what it ran on, or what a person overruled."""
+        found = self.model_dump(mode="json", exclude={"started", "finished", "run", "overruled", "after"})
         return hashlib.sha256(json.dumps(found, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def named(self, *verdicts: str) -> str:

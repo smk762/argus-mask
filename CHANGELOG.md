@@ -33,8 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each step's status and what stands in the way of the next. The record holds the flow's rules itself: a step is
   refused while one it needs is missing, refused, failed, not checked, stale or carries an advisory nobody
   overruled; only an advisory can be overruled, with its reason and time kept; and a result reads `stale` once an
-  earlier step is run again and finds something else. No step writes to it yet.
-
+  earlier step is run again and finds something else.
+- **A guided face's LAM head is built by the editor** (#155, step 3 of #163):
+  `POST /guided/{id}/candidates/{candidate}/build` runs `lam/make_heads.sh` on the portrait the build's record
+  keeps, as a job (`GET /guided/{id}/jobs/{job}`, `POST .../stop`), one head at a time. It starts only once the
+  portrait's checks are settled and 12 GB of host memory is free, kills LAM's container if free memory falls under
+  2 GB, holds the `lam-head` GPU lease only while the pipeline runs, and keeps heads by portrait and pipeline, so
+  the same portrait is not built twice. The result goes in the build record: the head (checked as the server
+  checks a splat face), every part it depends on with its licence, the log's tail and the timings. Settings:
+  `ARGUS_MASK_LAM_DIR`, `ARGUS_MASK_FLAME_OPEN` and the rest of `ARGUS_MASK_LAM_*` (README § Configuration).
+  `make_heads.sh` takes `LAM_CONTAINER`, a name for LAM's container.
 - **A fourth cleared splat head, `splat-04`** (#151), from a character-art portrait like `splat-02` and `splat-03`,
   with its rest set and a look-alike check. **Every demo clip is now on a splat head**: Hello on `splat-02`, How it
   works on `splat-03`, On a screen on `splat-04`, each with its own voice and resting as its lock says

@@ -61,7 +61,9 @@ docker run --rm --gpus all -v $PWD/lam:/argus:ro -v <dir>:/d -v <flame dir>:/fla
 - **Blender 4.5** (`BLENDER`) for the FBX-to-GLB step and the vertex order.
 - About 9 GB of VRAM and 2 minutes per head, and several GB of host RAM while LAM loads: check that the host has
   12 GB or more free, and run a batch under a watchdog that stops the container when it runs low (a build on a host
-  already short of memory has taken the whole machine down).
+  already short of memory has taken the whole machine down). The editor's build job does both
+  (`src/argus_mask/editor/lam_build.py`, #155): it runs this script for one portrait of a guided face, names
+  LAM's container (`LAM_CONTAINER`) so it can kill it, and holds the `lam-head` GPU lease while it runs.
 
 ## Run it
 
