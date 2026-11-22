@@ -182,7 +182,7 @@ def test_a_framing_the_lock_cannot_fetch_is_refused(tmp_path, monkeypatch) -> No
         fetch_stock_head.read_lock("stock-test", locks)
 
 
-def _splat_lock(tmp_path: Path, monkeypatch, *, file: str | None = None) -> tuple[Path, bytes]:
+def _splat_lock(tmp_path: Path, monkeypatch, *, file: str | None = None, rest: object = None) -> tuple[Path, bytes]:
     """A lock for a LAM splat head (#126): a .zip model, its manifest's format lam-splat."""
     built = tmp_path / "built"
     built.mkdir()
@@ -194,7 +194,10 @@ def _splat_lock(tmp_path: Path, monkeypatch, *, file: str | None = None) -> tupl
     locks = tmp_path / "locks"
     locks.mkdir()
     url = "https://example.invalid/splat-test.zip"
-    (locks / "splat-test.lock.json").write_text(json.dumps({"url": url, "size": len(model), "manifest": body}))
+    lock = {"url": url, "size": len(model), "manifest": body}
+    if rest is not None:
+        lock["rest"] = rest
+    (locks / "splat-test.lock.json").write_text(json.dumps(lock))
 
     class Reply:
         def __init__(self) -> None:
@@ -241,3 +244,54 @@ def test_a_fetched_head_gets_the_usual_file_mode_not_mkstemps(tmp_path, publishe
         os.umask(old)
     model = next(directory.glob("*.glb"))
     assert stat.S_IMODE(model.stat().st_mode) == 0o644
+
+
+REST = {"name": "fit-splat-test", "weights": {"mouthSmileLeft": 0.2, "mouthSmileRight": 0.2, "eyeWideLeft": 0.1}}
+
+
+def test_a_fetched_head_rests_with_the_set_its_lock_carries(tmp_path, monkeypatch) -> None:
+    """A splat head's rest set is fitted to its portrait (#151): fetched without it, the head would rest on warm."""
+    from argus_mask.expressions import Expressions
+
+    locks, _ = _splat_lock(tmp_path, monkeypatch, rest=REST)
+    assets = tmp_path / "assets"
+    fetch_stock_head.fetch("splat-test", assets, lock_dir=locks)
+    shown = Expressions(assets).for_face("splat-test")
+    assert shown.name == "fit-splat-test" and shown.weights == REST["weights"] and shown.life == 1.0
+    assert oct((assets / "expressions.json").stat().st_mode & 0o777) != oct(0o600)
+    fetch_stock_head.fetch("splat-test", assets, lock_dir=locks)  # again: nothing changes
+    assert Expressions(assets).for_face("splat-test").name == "fit-splat-test"
+
+
+def test_a_fetch_never_replaces_a_rest_set_or_a_choice_already_made(tmp_path, monkeypatch) -> None:
+    from argus_mask.expressions import Expressions
+
+    locks, _ = _splat_lock(tmp_path, monkeypatch, rest=REST)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    mine = {"weights": {"mouthSmileLeft": 0.5}, "life": 1.0}
+    (assets / "expressions.json").write_text(json.dumps({"sets": {"fit-splat-test": mine}, "faces": {}}))
+    fetch_stock_head.fetch("splat-test", assets, lock_dir=locks)
+    assert json.loads((assets / "expressions.json").read_text())["sets"]["fit-splat-test"] == mine
+    assert Expressions(assets).for_face("splat-test").name == "warm"  # not chosen: the set there is not the lock's
+
+    (assets / "expressions.json").write_text(json.dumps({"sets": {}, "faces": {"splat-test": "calm"}}))
+    fetch_stock_head.fetch("splat-test", assets, lock_dir=locks)
+    raw = json.loads((assets / "expressions.json").read_text())
+    assert raw["faces"]["splat-test"] == "calm" and "fit-splat-test" in raw["sets"]
+
+
+@pytest.mark.parametrize(
+    "rest",
+    [
+        {"name": "Not An Id", "weights": {}},
+        {"name": "fit-x", "weights": {"mouthSmileLeft": 1.5}},
+        {"name": "fit-x", "weights": {"../x": 0.1}},
+        {"name": "fit-x", "weights": {}, "life": 3},
+        ["not", "an", "object"],
+    ],
+)
+def test_a_lock_with_a_bad_rest_set_is_refused(tmp_path, monkeypatch, rest) -> None:
+    locks, _ = _splat_lock(tmp_path, monkeypatch, rest=rest)
+    with pytest.raises(fetch_stock_head.FetchError, match="rest set"):
+        fetch_stock_head.read_lock("splat-test", locks)
