@@ -16,16 +16,14 @@ says why.
 from __future__ import annotations
 
 import json
-import re
 import threading
 from pathlib import Path
 
 from argus_mask.arkit import ARKIT_52
-from argus_mask.models import FACE_ID_PATTERN, RestSet
+from argus_mask.models import RestSet, is_face_id
 
 EXPRESSIONS_NAME = "expressions.json"
 DEFAULT_SET = "warm"
-_NAME = re.compile(FACE_ID_PATTERN)
 _SHAPES = frozenset(ARKIT_52)
 
 # Tuned by eye on ginger-3 (a smile under about 0.3 hardly reads on an MPFB head). A little lid closure
@@ -98,7 +96,7 @@ class ExpressionError(ValueError):
 
 def check_set(name: str, weights: object, life: object = 1.0) -> RestSet:
     """A rest set from untrusted input, or `ExpressionError` saying what is wrong with it."""
-    if not _NAME.fullmatch(name):
+    if not is_face_id(name):
         raise ExpressionError(f"{name!r} is not a usable name (lowercase letters, digits, - and _)")
     if not isinstance(weights, dict):
         raise ExpressionError("weights must be an object: shape name -> weight")

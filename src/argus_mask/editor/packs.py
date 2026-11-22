@@ -37,6 +37,8 @@ from pathlib import Path, PurePosixPath
 
 import structlog
 
+from argus_mask.models import is_safe_name
+
 log = structlog.get_logger(__name__)
 
 CATALOGUE = Path(__file__).with_name("asset_catalogue.json")
@@ -150,7 +152,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
         return {}
     packs: dict[str, Pack] = {}
     for raw in _list(doc.get("packs") if isinstance(doc, dict) else None):
-        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not _PACK_ID.fullmatch(raw["id"]):
+        if not isinstance(raw, dict) or not is_safe_name(raw.get("id"), _PACK_ID):
             continue
         urls = tuple(u for u in _list(raw.get("urls")) if isinstance(u, str) and _on_hosts(u))
         if not urls:
