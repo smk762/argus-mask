@@ -306,7 +306,7 @@ def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, path: str) -> 
                 out += block
                 if len(out) > min(info.file_size, SPLAT_MAX_MEMBER):
                     raise FaceError(f"{path}: {info.filename} unpacks to more than it says")
-    except (zipfile.BadZipFile, OSError, EOFError, RuntimeError, ValueError) as exc:  # a bad CRC, a bad stream
+    except (zipfile.BadZipFile, zlib.error, OSError, EOFError, RuntimeError, ValueError) as exc:  # bad CRC or stream
         raise FaceError(f"{path}: {info.filename} does not unpack: {exc}") from exc
     return out  # not copied to bytes: the archive may unpack to SPLAT_MAX_TOTAL, held once
 
@@ -397,7 +397,8 @@ def inspect_splat(path: str | Path) -> SplatReport:
     ply = data["offset.ply"]
     if not re.match(rb"^ply\r?\n", ply) or b"end_header" not in ply[: 64 << 10]:
         raise FaceError(f"{label}: offset.ply is not a PLY file")
-    count = re.search(rb"\nelement vertex (\d+)", ply[: 64 << 10])
+    # Bounded: int() refuses a run of thousands of digits with a ValueError, never a FaceError.
+    count = re.search(rb"\nelement vertex (\d{1,12})\r?\n", ply[: 64 << 10])
     for member in ("vertex_order.json", *SPLAT_OPTIONAL):
         if member in data:
             try:
@@ -648,7 +649,7 @@ class FaceStore:
         self.consents = ConsentStore(self.root)
         self.clock = clock
         self._hashes: dict[str, tuple[tuple[int, ...], str]] = {}  # path -> (its version, sha256)
-        self._splats: dict[tuple[str, int, int], SplatReport | str] = {}  # the same key -> report, or why refused
+        self._splats: dict[tuple[str, tuple[int, ...]], SplatReport | str] = {}  # (path, version) -> report, or why
         # The model's path -> (the splats and each file's version, as _sha256 takes it; the report, or why refused)
         self._bound: dict[str, tuple[tuple, BoundSplatsReport | str]] = {}
 
@@ -667,7 +668,14 @@ class FaceStore:
         """A face's manifest and model path, or :class:`FaceError` saying why it is refused.
 
         A consented face must have a consent record that covers *use* now: served on a screen is ``avatar``.
+        A file that cannot be read (its permissions, or removed mid-check) refuses the face, never the listing.
         """
+        try:
+            return self._load(face_id, use)
+        except OSError as exc:
+            raise FaceError(f"a file cannot be read: {exc.strerror or exc}") from exc
+
+    def _load(self, face_id: str, use: ConsentUse) -> tuple[FaceManifest, Path]:
         if not is_face_id(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
         if face_id in RESERVED_FACE_IDS:
@@ -738,8 +746,8 @@ class FaceStore:
 
     def _splat(self, path: Path) -> SplatReport:
         """The archive's report, checked once per version of the file; :class:`FaceError` if it is refused."""
-        stat = path.stat()
-        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        stat = path.stat()  # the version as _sha256 takes it: a same-size copy with its mtime kept is still new
+        key = (str(path), (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size))
         if key not in self._splats:
             for old in [k for k in self._splats if k[0] == key[0]]:  # an earlier version of this file
                 del self._splats[old]
@@ -791,8 +799,8 @@ class Aliases:
     def __init__(self, store: FaceStore) -> None:
         self.store = store
         self.path = store.root / ALIASES_NAME
-        self._seen: tuple[int, int, int] | None = None
-        self._raw: dict[str, str] = {}
+        # (the file's version, its entries), replaced in one assignment: request threads read it unlocked.
+        self._cache: tuple[tuple[int, int, int] | None, dict[str, str]] = (None, {})
         self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
 
     def raw(self) -> dict[str, str]:
@@ -800,26 +808,28 @@ class Aliases:
         try:
             stat = self.path.stat()
         except OSError:
-            self._seen, self._raw = None, {}
+            self._cache = (None, {})
             return {}
         # The inode too: every write replaces the file, so a same-size rewrite within one mtime tick is still seen.
         key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
-        if key != self._seen:
+        seen, entries = self._cache
+        if key != seen:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                entries = data.get("aliases") if isinstance(data, dict) else None
-                self._raw = {str(k): str(v) for k, v in entries.items()} if isinstance(entries, dict) else {}
+                found = data.get("aliases") if isinstance(data, dict) else None
+                entries = {str(k): str(v) for k, v in found.items()} if isinstance(found, dict) else {}
             except (OSError, ValueError):
-                self._raw = {}
-            self._seen = key
-        return dict(self._raw)
+                entries = {}
+            self._cache = (key, entries)  # read after the stat: a newer write only makes the next call read again
+        return dict(entries)
 
     def _problem(self, name: str, target: str, raw: dict[str, str]) -> str | None:
         if not is_face_id(name):
             return f"{name!r} is not a face id"
         if (self.store.root / name).is_dir():
             return f"{name!r} is a face: an alias may not hide it"
-        if target in raw:
+        # An entry named after a face directory is ignored, so it does not make its name an alias.
+        if target in raw and not (self.store.root / target).is_dir():
             return f"{target!r} is itself an alias: point at a face"
         try:
             self.store.load(target)
@@ -878,4 +888,7 @@ class Aliases:
             raw = self.raw()
             if not any(t == old for t in raw.values()):
                 return
-            self._write({n: (new if t == old else t) for n, t in raw.items() if t != old or new is not None})
+            # An entry named *new* goes: that name is a face now, and an alias never shadows one.
+            self._write(
+                {n: (new if t == old else t) for n, t in raw.items() if (t != old or new is not None) and n != new}
+            )

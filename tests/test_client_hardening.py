@@ -158,6 +158,40 @@ def test_an_error_status_whose_body_breaks_is_still_a_refusal() -> None:
     assert refused.value.status == 500
 
 
+def test_a_reply_in_a_format_it_does_not_take_is_refused_and_the_socket_closed() -> None:
+    closed = threading.Event()
+
+    def serve(conn: socket.socket) -> None:
+        request = b""
+        while not request.endswith(b"}"):  # the headers and the JSON body, which may come apart
+            request += conn.recv(65536)
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nX-Sample-Rate: 24000\r\nX-Audio-Format: mp3\r\n"
+            b"Content-Length: 100\r\n\r\nab"
+        )
+        try:
+            if conn.recv(1) == b"":
+                closed.set()
+        except ConnectionResetError:  # closed with the body unread
+            closed.set()
+
+    with one_shot_server(serve) as (port, done):
+        with pytest.raises(ClientError) as refused:  # the traceback, held here, must not hold the socket open
+            client.open_tts(f"http://127.0.0.1:{port}/synthesise", {"text": "hello"})
+        assert done.wait(5) and closed.is_set(), "the client left the socket open"
+    assert "X-Audio-Format='mp3'" in str(refused.value)
+
+
+def test_a_deadline_does_not_outlive_its_read() -> None:
+    a, b = socket.socketpair()
+    with a, b:
+        b.settimeout(None)
+        a.sendall(wyoming_event("info", {}))
+        event, _ = client.WyomingReply.receive(b, b"", time.monotonic() + 5)
+        assert event is not None and event[0] == "info"
+        assert b.gettimeout() is None, "a later read without a deadline would time out"
+
+
 def test_a_reply_opened_after_its_utterance_was_cancelled_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     release, closed = threading.Event(), threading.Event()
 

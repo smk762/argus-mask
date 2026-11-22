@@ -38,6 +38,51 @@ def test_rewriting_a_voice_with_fewer_clips_keeps_none_of_the_old(tmp_path: Path
     assert store.record("holly") == {"id": "holly"}
 
 
+def test_a_copy_that_fails_leaves_the_voice_as_it_was(tmp_path: Path) -> None:
+    store = VoiceStore(tmp_path / "voices")
+    store.write({"id": "holly", "v": 1}, clips(tmp_path, 2))
+    with pytest.raises(OSError):  # the second clip was evicted from .staged after it was checked
+        store.write({"id": "holly", "v": 2}, [clips(tmp_path, 1)[0], tmp_path / "evicted.wav"])
+    folder = tmp_path / "voices" / "holly"
+    assert sorted(p.name for p in folder.iterdir()) == ["clip-1.wav", "clip-2.wav", "voice.json"]
+    assert [(folder / f"clip-{i}.wav").read_bytes() for i in (1, 2)] == [b"RIFF\x00", b"RIFF\x01"]
+    assert store.record("holly") == {"id": "holly", "v": 1}
+
+
+def test_a_voice_resaved_from_its_own_clips_keeps_them(tmp_path: Path) -> None:
+    store = VoiceStore(tmp_path / "voices")
+    store.write({"id": "holly"}, clips(tmp_path, 2))
+    folder = tmp_path / "voices" / "holly"
+    store.write({"id": "holly"}, [folder / "clip-2.wav", folder / "clip-1.wav"])  # reordered
+    assert [(folder / f"clip-{i}.wav").read_bytes() for i in (1, 2)] == [b"RIFF\x01", b"RIFF\x00"]
+
+
+def test_saves_of_one_voice_at_once_each_land_whole(tmp_path: Path) -> None:
+    store = VoiceStore(tmp_path / "voices")
+    sets: dict[int, list[Path]] = {}
+    for n in (1, 2, 3, 4):
+        (tmp_path / str(n)).mkdir()
+        sets[n] = clips(tmp_path / str(n), n)
+    errors: list[BaseException] = []
+
+    def save(n: int) -> None:
+        try:
+            for _ in range(20):
+                store.write({"id": "holly", "clips": n}, sets[n])
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=save, args=(n,)) for n in sets]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    folder = tmp_path / "voices" / "holly"
+    n = store.record("holly")["clips"]
+    assert sorted(p.name for p in folder.iterdir()) == [*(f"clip-{i + 1}.wav" for i in range(n)), "voice.json"]
+
+
 def test_staging_skips_a_clip_another_request_evicted_meanwhile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -83,9 +83,9 @@ def test_a_build_asked_for_during_an_export_runs_when_it_ends() -> None:
 let shown = {{ id: 'f1', name: 'F' }};
 const made = new Map();
 const window = {{ confirm: () => true }};
-let busy = false; let again = false;
+let busy = false; let again = false; let submitted = false;
 const scheduled = [];
-const schedule = (d) => scheduled.push(d);
+const schedule = (d) => scheduled.push(d); const runBuild = () => {{}};
 const meta = () => {{}}; const status = () => {{}}; const openScreen = () => {{}}; const loadStarts = async () => {{}};
 const reply = later();
 const json = () => reply;
@@ -260,6 +260,8 @@ const el = (tag, props = {{}}, ...children) => {{ const n = Object.assign(docume
   n.append(...children.filter((c) => c !== null && c !== undefined && c !== false)); return n; }};
 const SHOWN = 12; const USED = new Set(['hair']); const open = new Set();
 const licenceClass = () => 'good'; const assetCard = () => el('div'); const action = () => el('span'); const render = () => {{}};
+const location = {{ href: 'http://203.0.113.10:8110/packs.html' }};
+{_function(source, "function webPage(")}
 {_function(source, "function packCard(")}
 const pack = {{ id: 'p', page: '#', license: 'CC0', assets: [1, 2, 3].map((i) => ({{ type: 'hair', name: `a${{i}}` }})) }};
 const button = (card) => card.all((n) => n.tagName === 'BUTTON').map((b) => b.textContent);
@@ -291,3 +293,234 @@ console.log(JSON.stringify({{ wrong, asymmetric: asymmetric > 0 }}));
 """
     run = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=30)
     assert json.loads(run.stdout) == {"wrong": 0, "asymmetric": True}
+
+
+EL = (
+    "const el = (tag, props = {}, ...children) => { const n = Object.assign(document.createElement(tag), props);\n"
+    "  n.append(...children.filter((c) => c !== null && c !== undefined && c !== false)); return n; };\n"
+    "const $ = (id) => document.getElementById(id);\n"
+)
+THUMBS = f"""
+const cache = new Map(); let queue = Promise.resolve(); let stage = null;
+const snaps = [];
+class Stage {{ async load(url, framing) {{ this.framing = framing; }} async snapshot() {{ snaps.push(this.framing); return `still:${{snaps.length}}`; }} }}
+const modelUrl = (id) => id;
+{_function((PAGE / "thumbs.js").read_text(encoding="utf-8"), "function still(")}
+"""
+
+
+def test_a_still_follows_a_framing_edit_that_keeps_the_model() -> None:
+    """The same model at a new framing is a new still, not the cached one."""
+    out = _node(f"""
+{THUMBS}
+const manifests = [{{ distance: 0.6 }}, {{ distance: 1.2 }}].map((framing) => ({{ model: {{ sha256: 'aa', format: 'gltf' }}, framing }}));
+globalThis.fetch = async () => ({{ ok: true, json: async () => manifests.shift() }});
+const first = await still('f1'); const second = await still('f1');
+console.log(JSON.stringify({{ first, second, snaps }}));
+""")
+    assert out == {"first": "still:1", "second": "still:2", "snaps": [{"distance": 0.6}, {"distance": 1.2}]}
+
+
+def test_a_still_of_a_face_with_no_model_says_so() -> None:
+    """An ok reply that is not a manifest (no ``model``) rejects with the reason, not a TypeError."""
+    out = _node(f"""
+{THUMBS}
+globalThis.fetch = async () => ({{ ok: true, json: async () => {{ throw new SyntaxError('not JSON'); }} }});
+const why = await still('f1').then(() => 'loaded', (err) => `${{err.constructor.name}}: ${{err.message}}`);
+console.log(JSON.stringify(why));
+""")
+    assert out == "Error: f1 has no model"
+
+
+def test_a_pack_page_that_is_not_a_web_page_is_not_a_link() -> None:
+    """A catalogue's ``javascript:`` or ``data:`` page is shown as text: only http and https become a link."""
+    source = (PAGE / "packs.js").read_text(encoding="utf-8")
+    out = _node(f"""
+{EL}
+const location = {{ href: 'http://203.0.113.10:8110/packs.html' }};
+const SHOWN = 12; const USED = new Set(['hair']); const open = new Set();
+const licenceClass = () => 'good'; const assetCard = () => el('div'); const action = () => el('span'); const render = () => {{}};
+{_function(source, "function webPage(")}
+{_function(source, "function packCard(")}
+const links = (page) => packCard({{ id: 'p', page, license: 'CC0', assets: [] }}, [], false).all((n) => n.tagName === 'A').map((a) => a.href);
+console.log(JSON.stringify(['javascript:alert(1)', 'data:text/html,x', 'https://example.org/p'].map(links)));
+""")
+    assert out == [[], [], ["https://example.org/p"]]
+
+
+def test_only_the_latest_check_of_a_clip_stands() -> None:
+    """Two quick transcript edits: the older check's reply never overwrites the newer, nor ungates Make early."""
+    out = _node(f"""
+let paints = 0;
+const paintClips = () => {{}}; const paintMake = () => {{}}; const assessSet = () => {{}};
+const replies = [];
+const json = () => {{ const p = later(); replies.push(p); return p; }};
+{_function(VOICES, "async function check(")}
+const clip = {{ name: 'a.wav', transcript: 'old', url: 'blob:a' }};
+const first = check(clip, 'wav'); await tick();
+clip.transcript = 'new';
+const second = check(clip, 'wav'); await tick();
+replies[0].resolve({{ sha: 's', report: {{ transcript: 'old' }} }}); await first;
+const checkingAfterOld = clip.checking;
+replies[1].resolve({{ sha: 's', report: {{ transcript: 'new' }} }}); await second;
+// and the other way round: the newer reply first, the older last
+const third = check(clip, 'wav'); await tick();
+const fourth = check(clip, 'wav'); await tick();
+replies[3].resolve({{ sha: 's', report: {{ transcript: 'fourth' }} }}); await fourth;
+replies[2].resolve({{ sha: 's', report: {{ transcript: 'third' }} }}); await third;
+console.log(JSON.stringify({{ checkingAfterOld, report: clip.report.transcript, checking: clip.checking }}));
+""")
+    assert out == {"checkingAfterOld": True, "report": "fourth", "checking": False}
+
+
+def test_an_alias_to_a_face_not_served_shows_that_face() -> None:
+    """An alias whose face is refused or gone: its select shows that face, not the first served one."""
+    source = (PAGE / "faces.js").read_text(encoding="utf-8")
+    out = _node(f"""
+{EL}
+const rows = [{{ id: 'a', export: {{}} }}, {{ id: 'b', export: {{}} }}];
+let aliases = {{ holly: 'gone' }};
+const setAlias = () => {{}}; const openScreen = () => {{}}; const json = async () => {{}}; const load = async () => {{}};
+const status = () => {{}}; const enc = encodeURIComponent; const window = {{ confirm: () => true }};
+{_function(source, "function renderAliases(")}
+renderAliases();
+const pick = $('alias-list').all((n) => n.tagName === 'SELECT')[0];
+console.log(JSON.stringify(pick.options.filter((o) => o.selected).map((o) => [o.value, Boolean(o.disabled)])));
+""")
+    assert out == [["gone", True]]
+
+
+def test_closing_a_review_still_loading_keeps_it_closed() -> None:
+    """The manifest arriving after the modal was closed does not open it again, nor load the stage."""
+    source = (PAGE / "faces.js").read_text(encoding="utf-8")
+    out = _node(f"""
+{EL}
+const window = {{ addEventListener() {{}} }};
+const enc = encodeURIComponent; const main = () => 'export'; const status = () => {{}}; const modelUrl = (id) => id;
+const reply = later();
+const json = () => reply;
+const loads = [];
+const stage = {{ attach() {{}}, load: async (url) => loads.push(url), poseButtons() {{}}, setScene: async () => {{}} }};
+let reviewSeq = 0;
+{_function(source, "async function openReview(")}
+{_function(source, "function closeReview(")}
+$('modal').hidden = true;
+const review = openReview({{ id: 'x' }}); await tick();
+closeReview();
+reply.resolve({{ id: 'x', name: 'X', model: {{ sha256: 'x', format: 'gltf' }}, framing: {{}}, blendshapes: [], provenance: {{}} }});
+await review;
+console.log(JSON.stringify({{ hidden: $('modal').hidden, loads: loads.length }}));
+""")
+    assert out == {"hidden": True, "loads": 0}
+
+
+def test_a_build_asked_for_during_an_export_runs_even_for_a_new_name() -> None:
+    """Build pressed while an export runs, after only the name changed: it is built, not skipped as unchanged."""
+    source = (PAGE / "editor.js").read_text(encoding="utf-8")
+    at = source.index("$('export').addEventListener('click', async () =>")
+    handler = "async () =>" + _block(source[at:].split("async () =>", 1)[1], 0)
+    out = _node(f"""
+let shown = {{ id: 'f1', name: 'F' }};
+const made = new Map();
+const window = {{ confirm: () => true }};
+let busy = false; let again = false; let submitted = false;
+const scheduled = []; const builds = [];
+const schedule = (d) => scheduled.push(d); const runBuild = () => builds.push('build');
+const meta = () => {{}}; const status = () => {{}}; const openScreen = () => {{}}; const loadStarts = async () => {{}};
+const reply = later();
+const json = () => reply;
+const exportClick = {handler};
+const done = exportClick();
+await tick();
+submitted = true;   // Build pressed during the export: only the name changed, so schedule() would skip it
+reply.resolve({{ path: 'assets/f1' }});
+await done;
+console.log(JSON.stringify({{ busy, builds, scheduled }}));
+""")
+    assert out == {"busy": False, "builds": ["build"], "scheduled": []}
+
+
+EDITOR = (PAGE / "editor.js").read_text(encoding="utf-8")
+_SUBMIT = EDITOR.index("$('form').addEventListener('submit', (event) =>")
+EDITOR_BUILD = f"""
+{EL}
+let busy = false; let again = false; let submitted = false; let formGen = 0; let built = null; let shownContent = null;
+let failedContent = null; let timer = null; let canBuild = true; let detached = false; let made = new Map();
+const DEFAULT = {{ id: 'new', name: 'New', hair: 0 }}; let preset = {{ ...DEFAULT }};
+const contentOf = (body) => JSON.stringify({{ ...body, id: undefined, name: undefined }});
+let form = {{ id: 'a', name: 'A', hair: 1 }};
+const current = () => ({{ ...form }});
+const adopt = (p) => {{ form = {{ ...p }}; }}; const syncForm = () => {{}};
+const saved = {{ id: 'saved', name: 'Saved', hair: 2 }};
+const builds = [];
+const json = async (url, opts) => {{
+  if (url === '/presets') return [{{ preset: saved, exported: true, previewed: true }}];
+  const reply = later(); builds.push({{ body: JSON.parse(opts.body), reply }}); return reply;
+}};
+const building = () => {{}}; const meta = () => {{}}; const status = () => {{}}; const remember = () => {{}};
+const showBefore = async () => {{}}; const renderHistory = () => {{}};
+const store = {{ get: (k, f) => f, set() {{}} }}; const live = () => false; const schedule = () => {{}};
+const onShow = []; const showFace = async (id) => {{ onShow.push(id); }};
+const built_ = (id) => ({{ manifest: {{ id }}, key: id, seconds: 1, cached: true }});
+const settle = async () => {{ for (let i = 0; i < 20; i++) await tick(); }};
+{_function(EDITOR, "async function loadStarts(")}
+{_function(EDITOR, "async function runBuild(")}
+const submit = {_block(EDITOR, EDITOR.index("(event) =>", _SUBMIT))};
+const press = () => submit({{ preventDefault() {{}} }});
+"""
+
+
+def test_a_build_asked_for_during_a_build_runs_even_for_a_new_name() -> None:
+    """Build pressed while Blender works, after only the name changed: the promised build runs when it ends."""
+    out = _node(f"""
+{EDITOR_BUILD}
+press(); await tick();
+form.name = 'B';   // meta() says: Name or id changed: Build to apply it
+press(); await tick();
+builds[0].reply.resolve(built_('a')); await settle();
+console.log(JSON.stringify(builds.map((b) => b.body.name)));
+""")
+    assert out == ["A", "B"]
+
+
+def test_a_face_chosen_during_a_build_keeps_the_stage() -> None:
+    """A saved face picked while a build runs stays on show, in the form and the selector, when the build ends."""
+    out = _node(f"""
+{EDITOR_BUILD}
+await loadStarts();
+press(); await tick();
+$('start').value = 'saved'; await $('start').onchange();
+builds[0].reply.resolve(built_('a')); await settle();
+console.log(JSON.stringify({{ onShow, start: $('start').value, form: form.id, shown: shownContent === contentOf(saved) }}));
+""")
+    assert out == {"onShow": ["saved"], "start": "saved", "form": "saved", "shown": True}
+
+
+def test_a_demo_clip_that_fails_to_load_frees_its_audio_and_model() -> None:
+    """A clip whose backdrop or files fail: its audio blob is revoked and its loaded model disposed."""
+    source = (Path(__file__).resolve().parent.parent / "demo" / "player.js").read_text(encoding="utf-8")
+    loader = source[source.index("async function load(") : source.index("function ready(")]
+    out = _node(f"""
+const statusEl = {{}}; const faces = new Map(); const audio = {{ src: '' }};
+let files = 'ok';
+const json = async (u) => {{
+  if (files === 'broken') throw new Error('no clip.json');
+  return u.endsWith('clip.json') ? {{ face: 'f', framing: 'head', scene: 'garden' }} : {{ id: 'f', model: {{ file: 'f.glb', format: 'gltf' }}, framing: {{}} }};
+}};
+const readTake = async () => ({{ frames: [], header: {{ blendshapes: [] }} }});
+const audioUrl = async () => URL.createObjectURL();
+const stale = () => false; const loadSplat = async () => {{}};
+const disposed = []; const dispose = (root) => disposed.push(root.name);
+const scene = {{ remove() {{}} }};
+class GLTFLoader {{ async loadAsync() {{ return {{ scene: {{ name: 'model' }} }}; }} }}
+const Backdrop = {{ create: async () => {{ throw new Error('no plate'); }} }};
+const THREE = {{}}; const renderer = {{}}; const look = {{ summary: {{ quality: 'high' }} }};
+{loader}
+const errors = [];
+await load('c1', 1).catch((e) => errors.push(e.message));
+files = 'broken';
+await load('c2', 2).catch((e) => errors.push(e.message));
+await tick();
+console.log(JSON.stringify({{ errors, revoked, disposed }}));
+""")
+    assert out == {"errors": ["no plate", "no clip.json"], "revoked": ["blob:1", "blob:2"], "disposed": ["model"]}

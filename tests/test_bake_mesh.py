@@ -117,3 +117,27 @@ def test_parts_with_the_same_name_are_refused(tmp_path: Path) -> None:
     doc, blob = head(["skin", "skin"])
     with pytest.raises(ValueError, match="repeat"):
         mesh.load(write(tmp_path, glb(doc, blob)), ["jawOpen"])
+
+
+def test_a_part_without_a_name_is_refused(tmp_path: Path) -> None:
+    doc, blob = head(["a"])
+    del doc["nodes"][0]["name"]
+    with pytest.raises(ValueError, match="no name"):
+        mesh.load(write(tmp_path, glb(doc, blob)), ["jawOpen"])
+
+
+def test_an_unnamed_mesh_of_two_primitives_is_refused_with_the_reason(tmp_path: Path) -> None:
+    doc, blob = head(["a"])
+    mesh_ = doc["meshes"][0]
+    del mesh_["name"]
+    mesh_["primitives"].append(dict(mesh_["primitives"][0]))
+    with pytest.raises(ValueError, match="2 primitives"):
+        mesh.load(write(tmp_path, glb(doc, blob)), ["jawOpen"])
+
+
+def test_a_target_without_positions_moves_nothing(tmp_path: Path) -> None:
+    doc, blob = head(["a"])
+    doc["meshes"][0]["extras"] = {"targetNames": ["jawOpen"]}
+    doc["meshes"][0]["primitives"][0]["targets"] = [{"NORMAL": 0}]
+    h = mesh.load(write(tmp_path, glb(doc, blob)), ["jawOpen"])
+    assert not h.deltas.any()

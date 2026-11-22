@@ -10,6 +10,7 @@ import ast
 import json
 import re
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ from starlette.websockets import WebSocketDisconnect
 from argus_mask.config import EditorSettings, Settings
 from argus_mask.editor.app import create_editor_app
 from argus_mask.models import CLEARED_KINDS, FaceManifest, Provenance
-from argus_mask.server.app import create_app
+from argus_mask.server.app import POLICY, create_app
 from tests.helpers import RELEASE, make_face, write_consent
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,9 +44,25 @@ def apps(tmp_path):
     return create_app(Settings(assets_dir=assets)), create_editor_app(Settings(assets_dir=assets), ed)
 
 
+# Every path parameter the apps use, by name. A face is only ever ``face_id`` (and its model ``file``); the rest
+# address other things. A new parameter must be added here, so a face route under another name cannot be filled
+# with a placeholder and pass without the face ever being asked about.
+NOT_A_FACE = {"name", "part", "pack_id", "job_id", "key", "sha", "voice_id"}
+
+
 def _path(route: Route, face: str = "agreed") -> str:
-    """The route's path with its parameters filled: a face id where it takes one, a placeholder elsewhere."""
-    return re.sub(r"{(\w+)(:\w+)?}", lambda m: face if "face" in m.group(1) else "x", route.path)
+    """The route's path with its parameters filled: the face, its model file, and a placeholder elsewhere."""
+
+    def fill(m: re.Match) -> str:
+        param = m.group(1)
+        if param == "face_id":
+            return face
+        if param == "file":
+            return "head.glb"  # make_face's model: a model route is asked for the face's own file
+        assert param in NOT_A_FACE, f"{route.path}: add {{{param}}} to _path, as a face id or NOT_A_FACE"
+        return "x"
+
+    return re.sub(r"{(\w+)(:\w+)?}", fill, route.path)
 
 
 # ── The consent record is never served, only verdicts ─────────────────────────────────────────────────────────
@@ -58,7 +75,10 @@ def test_no_route_serves_a_consent_record(apps) -> None:
     (who collected it, the reference media's hashes, its terms) must never leave the machine.
     """
     record_only = ("B. Collector", "cd" * 32, "ef" * 32, "collected_by", "reference_images", "notice_days")
-    asked = 0
+    # The face routes that may refuse the consented face, and why; every other one must serve it, so an error
+    # reply (which cannot leak) never stands in for a route that was really asked.
+    may_refuse = {"/saved/{face_id}/preset": "the editor did not make it, so it has no preset"}
+    served = 0
     for app in apps:
         with TestClient(app) as client:
             for route in app.routes:
@@ -66,10 +86,12 @@ def test_no_route_serves_a_consent_record(apps) -> None:
                     continue
                 params = {"use": "video"} if route.path.endswith("/consent") else {}
                 reply = client.get(_path(route), params=params)
-                asked += 1
                 leaked = [f for f in record_only if f in reply.text]
                 assert not leaked, f"GET {route.path} served {leaked}"
-    assert asked > 40  # the route tables were walked, not an empty list
+                if "{face_id}" in route.path and route.path not in may_refuse:
+                    assert reply.status_code < 300, f"GET {route.path} answered {reply.status_code}: never asked"
+                served += reply.status_code < 300
+    assert served > 30  # the route tables were walked and answered, not an empty list or a wall of errors
 
 
 # ── A socket checks the origin; a state-changing route is guarded ─────────────────────────────────────────────
@@ -96,12 +118,23 @@ def test_every_socket_refuses_another_site(apps) -> None:
     assert sockets
     for app, route in sockets:
         with TestClient(app) as client:
+            # A face that is not there: a socket that skips the origin check answers "no face" at once, and fails
+            # here, where a real face would leave a viewer waiting for a stream that never comes.
+            connecting = client.websocket_connect(_path(route, "nobody"), headers=EVIL)
             try:
-                with client.websocket_connect(_path(route, "test-head"), headers=EVIL) as ws:
-                    reply = ws.receive_json()
-                    assert "cross-site" in reply.get("detail", ""), f"{route.path} let another site in: {reply}"
-            except WebSocketDisconnect:
-                pass  # refused before accepting: also fine
+                ws = connecting.__enter__()
+            except WebSocketDisconnect as exc:  # refused in the handshake: only the policy code says it was this
+                assert exc.code == POLICY, f"{route.path} closed the handshake with {exc.code}, not {POLICY}"
+                continue
+            try:
+                # Accepted: the one acceptable answer is the cross-site refusal. A close for any other reason
+                # (an unknown face, bad parameters) means the origin was never checked.
+                reply = ws.receive_json()
+            except WebSocketDisconnect as exc:
+                pytest.fail(f"{route.path} accepted another site, then closed with {exc.code}")
+            finally:
+                connecting.__exit__(None, None, None)
+            assert "cross-site" in reply.get("detail", ""), f"{route.path} let another site in: {reply}"
 
 
 # ── The disclosure label shows whatever ?hud says ─────────────────────────────────────────────────────────────
@@ -117,6 +150,72 @@ def _function(source: str, name: str) -> str:
     raise AssertionError(f"{name} has no end")
 
 
+class _Ancestry(HTMLParser):
+    """The ids of the elements open around the one with id *target*, as an HTML parser nests them."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self, target: str) -> None:
+        super().__init__()
+        self.target, self.open, self.found = target, [], None
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        ident = dict(attrs).get("id")
+        if ident == self.target and self.found is None:
+            self.found = [i for _, i in self.open if i]
+        if tag not in self.VOID:
+            self.open.append((tag, ident))
+
+    def handle_endtag(self, tag: str) -> None:
+        for i in range(len(self.open) - 1, -1, -1):  # close back to the matching tag, as a browser does
+            if self.open[i][0] == tag:
+                del self.open[i:]
+                return
+
+
+def _hides(declarations: str) -> bool:
+    flat = re.sub(r"\s+", "", declarations.lower())
+    return bool(re.search(r"(?:^|;)(?:display:none|visibility:hidden|opacity:0(?:\.0*)?)(?:;|!|$)", flat))
+
+
+def _label_rules(css: str) -> list[tuple[str, str]]:
+    """Every CSS rule whose selector names the disclosure label: (selector, declarations)."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+){([^}]*)}", css) if "disclosure" in sel]
+
+
+@pytest.mark.parametrize(
+    ("page", "ok"),
+    [
+        ('<div id="hud"></div><div id="disclosure"></div>', True),
+        ('<div id="hud"><div>status</div><div id="disclosure"></div></div>', False),  # past a nested </div>
+        ('<div id="hud"><span><br><div id="disclosure"></div></span></div>', False),
+    ],
+)
+def test_the_label_check_sees_it_anywhere_inside_the_hud(page: str, ok: bool) -> None:
+    found = _Ancestry("disclosure")
+    found.feed(page)
+    assert found.found is not None and ("hud" not in found.found) == ok
+
+
+@pytest.mark.parametrize(
+    ("css", "ok"),
+    [
+        ("#disclosure { position: fixed; opacity: 0.9 }", True),
+        ("#disclosure { color: red } body.kiosk #disclosure { color: blue }", False),  # a later rule, on a switch
+        (".hud-off #disclosure { top: 0 }", False),
+        ("#disclosure { display:none }", False),
+        ("#disclosure { display : none }", False),
+        ("#disclosure { color: red } #disclosure { visibility:hidden }", False),
+        ("#disclosure{opacity:0}", False),
+    ],
+)
+def test_the_label_check_reads_every_rule_and_spelling(css: str, ok: bool) -> None:
+    rules = _label_rules(css)
+    bad = [s for s, body in rules if _hides(body) or re.search(r"hud|kiosk", s, re.I)]
+    assert rules and (not bad) == ok
+
+
 def test_the_disclosure_label_never_depends_on_the_hud_or_kiosk_switches() -> None:
     """The viewer: the label is outside the status line, shown only by showDisclosure(), which reads neither switch.
 
@@ -125,15 +224,20 @@ def test_the_disclosure_label_never_depends_on_the_hud_or_kiosk_switches() -> No
     """
     page = (VIEWER / "index.html").read_text(encoding="utf-8")
     script = (VIEWER / "viewer.js").read_text(encoding="utf-8")
-    hud = re.search(r'<div id="hud"[^>]*>(.*?)</div>', page, re.S)
-    assert '<div id="disclosure"' in page and (hud is None or "disclosure" not in hud.group(1))
+    ancestry = _Ancestry("disclosure")
+    ancestry.feed(page)
+    assert ancestry.found is not None and "hud" not in ancestry.found, "the label is inside the status line"
     show = _function(script, "showDisclosure")
     for switch in ("hud", "KIOSK", "params", "RECORD", "hidden = true"):
         assert switch not in show.replace("disclosureEl.hidden = !text", ""), f"showDisclosure reads {switch}"
     writes = re.findall(r"disclosureEl\.(?:hidden|textContent|style)\b[^=]*=", script)
     assert len(writes) == 2 and all(w in show for w in writes), "the label is set outside showDisclosure"
-    css = re.search(r"#disclosure\s*{[^}]*}", page)
-    assert css and "display: none" not in css.group(0) and "hud" not in css.group(0)
+    styles = "".join(re.findall(r"<style[^>]*>(.*?)</style>", page, re.S))
+    rules = _label_rules(styles)
+    assert rules, "no rule places the label"
+    for selector, body in rules:
+        assert not _hides(body), f"{selector} hides the label"
+        assert not re.search(r"hud|kiosk", selector, re.I), f"{selector} styles the label by a switch"
 
 
 def _browser() -> bool:
@@ -183,31 +287,114 @@ def _engine_modules() -> list[Path]:
     return out
 
 
+CLOCKS = ("time", "datetime", "secrets", "uuid")
+SEEDED = {"random.Random": ("x",), "numpy.random.default_rng": ("seed",)}  # each one's seed keyword
+
+
+def _engine_problems(source: str, label: str = "<engine>") -> list[str]:
+    """What in *source* could make a take differ: a clock, OS entropy, or an unseeded random number.
+
+    Names are resolved through every import and alias first (``import random as rnd``, ``from numpy import random
+    as npr``, ``from random import choice``), so a banned call cannot hide under another name.
+    """
+    tree = ast.parse(source, label)
+    found: list[str] = []
+    names: dict[str, str] = {}  # a local name -> what it is: "random", "numpy.random", "random.choice", ...
+    for node in ast.walk(tree):
+        where = f"{label}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.split(".")[0] in CLOCKS:
+                    found.append(f"{where} imports {a.name}")
+                names[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in CLOCKS:
+                found.append(f"{where} imports {node.module}")
+            for a in node.names:
+                names[a.asname or a.name] = f"{node.module}.{a.name}"
+
+    def resolve(expr: ast.expr) -> str | None:
+        if isinstance(expr, ast.Name):
+            return names.get(expr.id)
+        if isinstance(expr, ast.Attribute):
+            owner = resolve(expr.value)
+            return f"{owner}.{expr.attr}" if owner else None
+        return None
+
+    def banned(full: str) -> bool:
+        return full in ("random", "numpy.random", "os.urandom") or full.startswith(("random.", "numpy.random."))
+
+    called = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        full = resolve(node.func)
+        if full is None:
+            continue
+        called.add(id(node.func))
+        if full in SEEDED:
+            seed = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg in SEEDED[full]), None)
+            if seed is None or (isinstance(seed, ast.Constant) and seed.value is None):
+                found.append(f"{label}:{node.lineno} calls {full} with no seed")
+        elif banned(full):
+            found.append(f"{label}:{node.lineno} calls {full}")
+    # The module or a function of it taken without calling it (``rng = np.random``) is a call waiting elsewhere.
+    parents = {id(c): p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name | ast.Attribute) or isinstance(parents.get(id(node)), ast.Attribute):
+            continue
+        full = resolve(node)
+        if full and id(node) not in called and full not in SEEDED and banned(full):
+            found.append(f"{label}:{node.lineno} takes {full} without calling it")
+    return found
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from random import choice\nchoice([1])",
+        "from numpy.random import rand\nrand()",
+        "import random as rnd\nrnd.random()",
+        "from numpy import random as npr\nnpr.normal()",
+        "import numpy as np\nrng = np.random\nrng.rand()",
+        "import numpy\nnumpy.random.rand()",
+        "import random\nrandom.Random(None)",
+        "import numpy as np\nnp.random.default_rng(None)",
+        "import numpy as np\nnp.random.default_rng()",
+        "from random import Random\nRandom()",
+        "import os\nos.urandom(4)",
+        "from time import monotonic",
+        "import datetime as dt",
+    ],
+)
+def test_the_engine_check_sees_through_names_and_aliases(source: str) -> None:
+    assert _engine_problems(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import random\nrng = random.Random(seed)\nrng.random()",
+        "import random\nrandom.Random(x=seed)",
+        "import numpy as np\nnp.random.default_rng(seed=s).normal()",
+        "from random import Random\nRandom(7)",
+        "import numpy as np\nnp.zeros(3)",
+    ],
+)
+def test_the_engine_check_lets_a_seeded_generator_through(source: str) -> None:
+    assert _engine_problems(source) == []
+
+
 def test_the_engine_reads_no_clock_and_no_unseeded_random() -> None:
     """Takes are byte-identical for the same audio, driver and seed only if nothing the take depends on can differ.
 
-    Banned in ``ENGINE``'s modules: importing time, datetime, secrets or uuid; ``random``'s module functions
-    (a seeded ``random.Random(seed)`` is fine); ``numpy.random`` apart from ``default_rng(seed)``; ``os.urandom``.
-    The a2f driver's socket timeouts are asyncio's and touch no frame.
+    Banned in ``ENGINE``'s modules: importing time, datetime, secrets or uuid; anything of ``random`` but a seeded
+    ``random.Random(seed)``; anything of ``numpy.random`` but ``default_rng(seed)``; ``os.urandom``. A seed of
+    ``None`` is OS entropy, so it is no seed. The a2f driver's socket timeouts are asyncio's and touch no frame.
     """
     found = []
     for path in _engine_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-        for node in ast.walk(tree):
-            where = f"{path.relative_to(ROOT)}:{getattr(node, 'lineno', 0)}"
-            if isinstance(node, ast.Import | ast.ImportFrom):
-                names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
-                found += [f"{where} imports {n}" for n in names if n.split(".")[0] in ("time", "datetime", "secrets")]
-                found += [f"{where} imports {n}" for n in names if n == "uuid"]
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                owner = ast.unparse(node.func.value)
-                name = node.func.attr
-                if owner == "random" and not (name == "Random" and node.args):
-                    found.append(f"{where} calls random.{name}")
-                if owner in ("np.random", "numpy.random") and not (name == "default_rng" and node.args):
-                    found.append(f"{where} calls {owner}.{name}")
-                if owner == "os" and name == "urandom":
-                    found.append(f"{where} calls os.urandom")
+        found += _engine_problems(path.read_text(encoding="utf-8"), str(path.relative_to(ROOT)))
     assert not found, "\n".join(found)
 
 

@@ -118,6 +118,8 @@ def load(path: Path, blendshapes: list[str]) -> Head:
         if any(k in node for k in ("translation", "rotation", "scale", "matrix")):
             raise ValueError(f"{path}: node {node.get('name')!r} has a transform; the bake expects identity nodes")
     part_names = [node.get("name") for node in gltf["nodes"] if "mesh" in node]
+    if not all(part_names):
+        raise ValueError(f"{path}: a mesh node has no name; each part needs its own name")
     if len(set(part_names)) != len(part_names):
         raise ValueError(f"{path}: mesh node names repeat; each part needs its own name")
     names, offsets, counts, rests, uvs, tris, parts, deltas, textures = [], [], [], [], [], [], [], [], {}
@@ -127,7 +129,7 @@ def load(path: Path, blendshapes: list[str]) -> Head:
             continue
         mesh = gltf["meshes"][node["mesh"]]
         if len(mesh["primitives"]) != 1:
-            raise ValueError(f"{path}: {mesh['name']} has {len(mesh['primitives'])} primitives; expected one")
+            raise ValueError(f"{path}: {mesh.get('name')} has {len(mesh['primitives'])} primitives; expected one")
         prim = mesh["primitives"][0]
         if prim.get("mode", 4) != 4:
             raise ValueError(f"{path}: {mesh.get('name')} has primitive mode {prim['mode']}; expected triangles (4)")
@@ -137,7 +139,7 @@ def load(path: Path, blendshapes: list[str]) -> Head:
         target_names = mesh.get("extras", {}).get("targetNames", [])
         d = np.zeros((len(blendshapes), len(pos), 3), np.float32)
         for name, target in zip(target_names, prim.get("targets", []), strict=True):
-            if name in blendshapes:
+            if name in blendshapes and "POSITION" in target:  # a target may move only normals: no delta
                 d[blendshapes.index(name)] = _accessor(gltf, blob, target["POSITION"])
         names.append(node["name"])
         offsets.append(base)

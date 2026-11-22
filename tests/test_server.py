@@ -161,11 +161,23 @@ def test_a_late_cleanup_never_frees_a_source_that_claimed_the_face_since(assets)
         assert client.get("/health").json()["live"] == []
 
 
+def until_frame(viewer, seq: int) -> None:
+    """Read a viewer socket until it has had frame *seq*: the server has made every frame up to it."""
+    while True:
+        message = viewer.receive()
+        if message.get("text") is not None and json.loads(message["text"]).get("seq", -1) >= seq:
+            return
+
+
 def test_a_viewer_that_joins_mid_stream_gets_the_header_then_live_frames(client) -> None:
-    with client.websocket_connect("/session/test-head/source") as source:
+    with (
+        client.websocket_connect("/session/test-head/view") as early,
+        client.websocket_connect("/session/test-head/source") as source,
+    ):
         source.send_text(HELLO)
         session = source.receive_json()["session_id"]
         source.send_bytes(pcm(0.5))
+        until_frame(early, 13)  # the first half-second is made before the late viewer joins, not merely sent
         with client.websocket_connect("/session/test-head/view") as late:
             # The header comes only once the join is handled: anything sent after it reaches this viewer.
             header = late.receive_json()

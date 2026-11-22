@@ -88,14 +88,19 @@ function wavFrom(buffer) {
 
 async function check(clip, blob) {
   // The last report was for the clip as it was (its transcript, say): it no longer speaks for it, pass or fail.
+  // Checks overlap (two quick transcript edits): only the latest one's report may stand and gate Make.
+  const token = clip.checkSeq = (clip.checkSeq || 0) + 1;
   clip.checking = true; clip.error = null; clip.report = null; paintClips(); paintMake();
+  let sha, report, error = null;
   try {
     if (!blob && !clip.url && !clip.sha) throw new Error('This clip could not be read: remove it and add the file again.');
     const body = blob ?? await (await fetch(clip.url || `/voice/clip/${clip.sha}`)).blob();
     const q = new URLSearchParams({ name: clip.name, transcript: clip.transcript });
     const done = await json(`/voice/check?${q}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body });
-    clip.sha = done.sha; clip.report = done.report;
-  } catch (err) { clip.error = err.message; }
+    sha = done.sha; report = done.report;
+  } catch (err) { error = err.message; }
+  if (token !== clip.checkSeq) return;
+  if (error) clip.error = error; else { clip.sha = sha; clip.report = report; }
   clip.checking = false;
   paintClips();
   assessSet();

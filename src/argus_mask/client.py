@@ -250,9 +250,21 @@ class WyomingReply:
     ) -> tuple[tuple[str, dict, bytes] | None, bytes]:
         """The next ``(type, data, payload)`` event, or ``None`` at end of stream; and the bytes left over.
 
-        Past *deadline* (``time.monotonic()``), a read raises ``TimeoutError``.
+        Past *deadline* (``time.monotonic()``), a read raises ``TimeoutError``. The socket's own timeout is
+        put back after, so a deadline never outlives the call into later reads.
         """
+        if deadline is None:
+            return WyomingReply._receive(sock, buffer, None)
+        before = sock.gettimeout()
+        try:
+            return WyomingReply._receive(sock, buffer, deadline)
+        finally:
+            sock.settimeout(before)
 
+    @staticmethod
+    def _receive(
+        sock: socket.socket, buffer: bytes, deadline: float | None
+    ) -> tuple[tuple[str, dict, bytes] | None, bytes]:
         def recv() -> bytes:
             if deadline is not None:
                 left = deadline - time.monotonic()
@@ -663,6 +675,7 @@ def open_tts(tts_url: str, body: dict) -> TtsReply | WyomingReply:
             format=_FORMATS[declared],  # type: ignore[arg-type]
         )
     except (KeyError, ValueError) as exc:
+        response.close()  # the socket is the response's now: closing only the connection leaves it open
         connection.close()
         raise ClientError(
             "the TTS service did not state a PCM format this understands "

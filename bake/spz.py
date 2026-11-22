@@ -28,6 +28,9 @@ def read_ply(path: Path) -> dict[str, np.ndarray]:
     header = data[:end].decode("ascii").splitlines()
     if "format binary_little_endian 1.0" not in header:
         raise ValueError(f"{path}: not a binary little-endian PLY")
+    elements = [line.split()[1] for line in header if line.startswith("element")]
+    if elements != ["vertex"]:
+        raise ValueError(f"{path}: elements {elements}; expected vertex alone")
     count = next(int(line.split()[2]) for line in header if line.startswith("element vertex"))
     names = []
     for line in header:
@@ -69,10 +72,13 @@ def encode(
 ) -> bytes:
     """SPZ bytes (gzip'd) for a 3DGS PLY's properties, at *sh_degree* (at most the PLY's)."""
     n = len(ply["x"])
+    if n == 0:
+        raise ValueError("the PLY has no splats")
     xyz = np.stack([ply["x"], ply["y"], ply["z"]], 1).astype(np.float64)
-    fixed = np.round(xyz * (1 << fractional_bits)).astype(np.int32)
-    if np.abs(fixed).max() >= 1 << 23:
+    scaled = np.round(xyz * (1 << fractional_bits))
+    if not np.isfinite(scaled).all() or np.abs(scaled).max() >= 1 << 23:  # before the cast, which would wrap
         raise ValueError("a splat lies beyond SPZ's 24-bit range at these fractional bits")
+    fixed = scaled.astype(np.int32)
     positions = fixed.astype("<i4").view(np.uint8).reshape(n, 3, 4)[:, :, :3].reshape(n, 9)
     alphas = _u8(255.0 / (1.0 + np.exp(-ply["opacity"].astype(np.float64))))
     colours = _u8(np.stack([ply[f"f_dc_{c}"] for c in range(3)], 1) * (COLOR_SCALE * 255) + 0.5 * 255)
@@ -83,8 +89,11 @@ def encode(
     if dim > have:
         raise ValueError(f"the PLY has {have} SH coefficients a channel; degree {sh_degree} needs {dim}")
     # The PLY is channel-major (every red coefficient, then green, then blue); SPZ is coefficient-major.
-    rest = np.stack([ply[f"f_rest_{c * have + j}"] for j in range(dim) for c in range(3)], 1).reshape(n, dim, 3)
-    sh = np.concatenate([_sh(rest[:, :3], SH1_BUCKET), _sh(rest[:, 3:], SH_REST_BUCKET)], 1).reshape(n, dim * 3)
+    if dim == 0:  # colour only: no SH bytes
+        sh = np.zeros((n, 0), np.uint8)
+    else:
+        rest = np.stack([ply[f"f_rest_{c * have + j}"] for j in range(dim) for c in range(3)], 1).reshape(n, dim, 3)
+        sh = np.concatenate([_sh(rest[:, :3], SH1_BUCKET), _sh(rest[:, 3:], SH_REST_BUCKET)], 1).reshape(n, dim * 3)
     header = struct.pack("<IIIBBBB", MAGIC, VERSION, n, sh_degree, fractional_bits, int(antialiased), 0)
     body = b"".join(a.tobytes() for a in (positions, alphas, colours, scales, rotations, sh))
     return gzip.compress(header + body, mtime=0)

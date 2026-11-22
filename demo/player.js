@@ -125,7 +125,25 @@ const faces = new Map();   // id -> manifest
 async function load(clipId, token) {
   statusEl.textContent = 'Loading…';
   const base = `clips/${clipId}/`;
-  const [clip, take, sound] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`), audioUrl(`${base}audio.m4a`)]);
+  const soundUrl = audioUrl(`${base}audio.m4a`);
+  const [clip, take, sound] = await Promise.all([json(`${base}clip.json`), readTake(`${base}take.ndjson`), soundUrl])
+    .catch((error) => { soundUrl.then((url) => URL.revokeObjectURL(url), () => {}); throw error; });
+  // A load that fails gives back what it took: the clip's audio (the whole file, as a blob) unless ready() has it,
+  // and a model or backdrop not yet handed to `shown`.
+  const held = { gltf: null, backdrop: null, shown: false };
+  try {
+    return await loadFace(clip, take, sound, token, held);
+  } catch (error) {
+    if (audio.src !== sound) URL.revokeObjectURL(sound);
+    if (!held.shown) {
+      if (held.gltf) { scene.remove(held.gltf.scene); dispose(held.gltf.scene); }
+      held.backdrop?.dispose();
+    }
+    throw error;
+  }
+}
+
+async function loadFace(clip, take, sound, token, held) {
   if (stale(token)) { URL.revokeObjectURL(sound); return; }
   if (!faces.has(clip.face)) faces.set(clip.face, await json(`faces/${clip.face}/manifest.json`));
   if (stale(token)) { URL.revokeObjectURL(sound); return; }
@@ -135,7 +153,9 @@ async function load(clipId, token) {
   const model = framed ? framed.model : manifest.model;
   const framing = (framed ? framed.framing : manifest.framing) || {};
   const gltf = await new GLTFLoader().loadAsync(`faces/${clip.face}/${model.file}`);
+  held.gltf = gltf;
   const backdrop = clip.scene && !stale(token) ? await Backdrop.create(THREE, renderer, clip.scene, { quality: look.summary.quality }) : null;
+  held.backdrop = backdrop;
   if (stale(token)) { dispose(gltf.scene); backdrop?.dispose(); URL.revokeObjectURL(sound); return; }
 
   clear();
@@ -171,6 +191,7 @@ async function load(clipId, token) {
   else scene.background = new THREE.Color('#101216');
   shown = { clip, take, root, motion, head: new HeadTurn(THREE, root), body, gestures, backdrop, extras, targets,
     names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
+  held.shown = true;   // `shown` owns the model and backdrop now: clear() disposes them
   size();
   look.focus(root);
   ready(clip, manifest, sound);

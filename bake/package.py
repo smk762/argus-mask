@@ -15,6 +15,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -75,8 +78,11 @@ def main() -> None:
         raise SystemExit("the run's triangle count is not this mesh's: bake again")
 
     raw = np.fromfile(a.run / "binding.bin", np.float32).reshape(-1, 3)  # train.py: float32 triangle, u, v
-    if len(raw) != info["splats"] or not np.array_equal(raw[:, 0], np.round(raw[:, 0])):
+    tri = raw[:, 0]
+    if len(raw) != info["splats"] or not np.array_equal(tri, np.round(tri)):
         raise SystemExit("binding.bin does not hold one whole triangle index per splat")
+    if not ((tri >= 0) & (tri < info["triangles"])).all():  # before the uint32 cast, where a negative would wrap
+        raise SystemExit(f"binding.bin names a triangle outside 0..{info['triangles'] - 1}")
     binding = np.empty(len(raw), np.dtype([("tri", "<u4"), ("u", "<f4"), ("v", "<f4")]))
     binding["tri"], binding["u"], binding["v"] = raw[:, 0].astype(np.uint32), raw[:, 1], raw[:, 2]
     splat_bytes = spz.encode(spz.read_ply(a.run / "splats.ply"), a.sh)
@@ -101,11 +107,24 @@ def main() -> None:
             *BAKE_INPUTS,
         ],
     )
-    (face / names[0]).write_bytes(splat_bytes)
-    (face / names[1]).write_bytes(binding_bytes)
     manifest = FaceManifest.model_validate(manifest.model_dump())  # the validators, on the whole manifest
-    (face / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    FaceStore(face.parent).load(manifest.id)  # as the server will: raises with the reason if refused
+    outputs = {
+        names[0]: splat_bytes,
+        names[1]: binding_bytes,
+        MANIFEST_NAME: (manifest.model_dump_json(indent=2) + "\n").encode(),
+    }
+    # Load the result as the server will, from a copy, before the face itself changes: a re-bake that is refused
+    # (raising with the reason) leaves the face as it was, still matching the manifest it has.
+    with tempfile.TemporaryDirectory() as staging:
+        staged = Path(staging) / manifest.id
+        shutil.copytree(face, staged)
+        for name, data in outputs.items():
+            (staged / name).write_bytes(data)
+        FaceStore(staged.parent).load(manifest.id)
+    for name, data in outputs.items():  # each written aside and moved in whole; the manifest last
+        part = face / f".{name}.part"
+        part.write_bytes(data)
+        os.replace(part, face / name)
     print(f"{manifest.id}: {len(binding)} splats, {len(splat_bytes) / 2**20:.2f} MiB SPZ at SH {a.sh}; served")
 
 

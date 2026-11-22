@@ -277,3 +277,15 @@ def test_the_server_serves_the_framing_asked_for(tmp_path: Path) -> None:
         assert c.get("/face/framed/model/waist.glb").status_code == 200
         assert c.get("/face/plain/model?framing=waist").status_code == 404
         assert c.get("/face/framed/model?framing=feet").status_code == 422
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_a_manifest_that_cannot_be_read_refuses_its_face_not_the_listing(tmp_path) -> None:
+    make_face(tmp_path, "readable")
+    locked = make_face(tmp_path, "locked") / MANIFEST_NAME
+    locked.chmod(0)
+    try:
+        accepted, refused = FaceStore(tmp_path).scan()
+    finally:
+        locked.chmod(0o644)
+    assert [m.id for m in accepted] == ["readable"] and "cannot be read" in refused["locked"]

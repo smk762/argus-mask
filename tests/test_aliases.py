@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
 import pytest
 from starlette.testclient import TestClient
@@ -91,6 +92,22 @@ def test_aliases_follow_a_renamed_face_and_hold_a_deleted_one(assets) -> None:
     assert aliases.raw() == {"holly": "new-head"}
     aliases.repoint("new-head", None)
     assert aliases.raw() == {}
+
+
+def test_aliases_still_resolve_after_a_face_takes_an_alias_name(assets) -> None:
+    """Renaming test-head to holly: the holly alias is now a face's name and goes; kiosk follows to holly."""
+    aliases = Aliases(FaceStore(assets))
+    aliases.set("holly", "test-head")
+    aliases.set("kiosk", "test-head")
+    shutil.rmtree(assets / "test-head")  # the editor's rename: the face, its manifest rewritten, under the new name
+    make_face(assets, "holly")
+    aliases.repoint("test-head", "holly")
+    assert aliases.raw() == {"kiosk": "holly"} and aliases.all() == {"kiosk": "holly"}
+    # A stale entry named after a face is ignored, and does not make that face's name an alias
+    write(assets, {"holly": "other-head", "kiosk": "holly"})
+    assert aliases.resolve("kiosk") == "holly" and set(aliases.problems()) == {"holly"}
+    aliases.set("screen", "holly")
+    assert aliases.resolve("screen") == "holly"
 
 
 # ---- the server -----------------------------------------------------------------------------------

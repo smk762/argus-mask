@@ -114,7 +114,9 @@ function packCard(pack, assets, narrowed) {
   const usable = pack.assets.filter((a) => USED.has(a.type)).length;
   const card = el('section', { className: 'pack', id: `pack-${pack.id}` },
     el('div', { className: 'top' },
-      el('a', { className: 'name', href: pack.page, target: '_blank', rel: 'noopener', textContent: pack.id }),
+      webPage(pack.page)
+        ? el('a', { className: 'name', href: pack.page, target: '_blank', rel: 'noopener', textContent: pack.id })
+        : el('span', { className: 'name', textContent: pack.id }),
       el('span', { className: `badge ${licenceClass(pack.license)}`, textContent: pack.license || 'no licence' }),
       el('span', { className: 'badge', textContent: `${pack.assets.length} asset${pack.assets.length === 1 ? '' : 's'}${types.length ? ': ' + types.join(', ') : ''}` }),
       pack.assets.length && !usable ? el('span', { className: 'badge', textContent: 'nothing the editor offers' }) : null,
@@ -129,6 +131,11 @@ function packCard(pack, assets, narrowed) {
     card.append(el('div', {}, more));
   }
   return card;
+}
+
+// A catalogue's page is a link only when it is a web page: a javascript: or data: URL would run in the editor.
+function webPage(url) {
+  try { return ['http:', 'https:'].includes(new URL(url, location.href).protocol); } catch { return false; }
 }
 
 function render() {

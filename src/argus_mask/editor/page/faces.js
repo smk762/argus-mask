@@ -123,7 +123,9 @@ function renderAliases() {
   const options = (chosen) => served.map((id) => el('option', { value: id, textContent: id, selected: id === chosen }));
   $('alias-face').replaceChildren(...options(served[0]));
   $('alias-list').replaceChildren(...Object.entries(aliases).map(([name, face]) => {
-    const pick = el('select', {}, ...options(face));
+    // A face that is not served (refused, preview only, deleted) has no option: show it anyway, so the row
+    // tells the truth and choosing any served face is a change.
+    const pick = el('select', {}, ...(served.includes(face) ? [] : [el('option', { value: face, textContent: `${face} (not served)`, selected: true, disabled: true })]), ...options(face));
     pick.onchange = () => setAlias(name, pick.value);
     const screen = el('button', { type: 'button', textContent: 'On screen…', title: `A link that asks for ${name}, whatever it points at` });
     screen.onclick = () => openScreen(name, `${name} (now ${face})`);
@@ -257,7 +259,7 @@ async function backdropPicker(row, place, token) {
   return [el('h2', { textContent: 'Backdrop' }), select];
 }
 
-function closeReview() { $('modal').hidden = true; }
+function closeReview() { reviewSeq++; $('modal').hidden = true; }   // a review still loading must not reopen it
 $('m-close').onclick = closeReview;
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeReview(); });
 
