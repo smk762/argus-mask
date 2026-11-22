@@ -15,6 +15,8 @@
 ``POST /saved/{id}/rename``             ``{"id": new id, "name": new name}``: the export and the preview together
 ``DELETE /saved/{id}``                  move a face the editor made to ``.trash/`` (``?from=preview|export``, default both)
 ``GET  /faces.html``                    the saved-faces page
+``GET  /guided``, ``/guided/{id}``      the guided builds, and one's record: every step's result, each with its status
+                                        and what stands in the way of the next (``editor/guided.py``)
 ``GET  /broadcast/state``               the server's faces, who watches them, the TTS defaults, running broadcasts
 ``GET  /voices``                        the voices a (Wyoming) TTS service lists: ``?tts=`` its URL
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
@@ -63,6 +65,8 @@ from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of,
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
+from argus_mask.editor.guided import GuidedError, GuidedStore, NoSuchBuild
+from argus_mask.editor.guided import steps as guided_steps
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
 from argus_mask.editor.packs import Busy as Installing
 from argus_mask.editor.packs import Installs, PackError, load_catalogue
@@ -275,6 +279,7 @@ def create_editor_app(
     plates = PlateStore(cfg.assets_dir)
     scene_choices = SceneChoices(cfg.assets_dir, plates)
     previews = FaceStore(builder.preview_dir)
+    guided = GuidedStore(cfg.assets_dir)
     broadcasts = Broadcasts(ed.server_url, ed.recordings_dir)
     voice_store = VoiceStore(ed.voices_dir)
     gpu = gpu if gpu is not None else gpu_coordinator()
@@ -531,6 +536,22 @@ def create_editor_app(
             with contextlib.suppress(OSError):
                 scene_choices.repoint(face_id, None)
         return {"trash": str(trash)}
+
+    # ---- guided faces: the build record of each (#163). Read here; each step's own routes write it. -----
+
+    @app.get("/guided")
+    def guided_builds() -> dict:
+        builds, unreadable = guided.scan()
+        return {"builds": [b.summary() for b in builds], "refused": unreadable, "steps": guided_steps()}
+
+    @app.get("/guided/{build_id}")
+    def guided_build(build_id: str) -> dict:
+        try:
+            return guided.load(build_id).view()
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     # ---- backdrops: the scene each face shows by default, kept in the assets' scenes.json ----------------
 

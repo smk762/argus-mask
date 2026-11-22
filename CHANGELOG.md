@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A build record for a guided face** (#166, the first part of the guided head builder, #163):
+  `<assets>/.guided/<id>/build.json` keeps each step's result (inputs and outputs by sha256, the models used, its
+  checks with their reasons, its scores), and the editor serves it at `GET /guided` and `GET /guided/{id}` with
+  each step's status and what stands in the way of the next. The record holds the flow's rules itself: a step is
+  refused while one it needs is missing, refused, failed, not checked, stale or carries an advisory nobody
+  overruled; only an advisory can be overruled, with its reason and time kept; and a result reads `stale` once an
+  earlier step is run again and finds something else. No step writes to it yet.
+
 - **A fourth cleared splat head, `splat-04`** (#151), from a character-art portrait like `splat-02` and `splat-03`,
   with its rest set and a look-alike check. **Every demo clip is now on a splat head**: Hello on `splat-02`, How it
   works on `splat-03`, On a screen on `splat-04`, each with its own voice and resting as its lock says
