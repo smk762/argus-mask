@@ -59,7 +59,9 @@ docker run --rm --gpus all -v $PWD/lam:/argus:ro -v <dir>:/d -v <flame dir>:/fla
   docker build -t argus-mask-lam lam/
   ```
 - **Blender 4.5** (`BLENDER`) for the FBX-to-GLB step and the vertex order.
-- About 9 GB of VRAM and 2 minutes per head.
+- About 9 GB of VRAM and 2 minutes per head, and several GB of host RAM while LAM loads: check that the host has
+  12 GB or more free, and run a batch under a watchdog that stops the container when it runs low (a build on a host
+  already short of memory has taken the whole machine down).
 
 ## Run it
 
@@ -70,3 +72,8 @@ lam/make_heads.sh my-head=portrait.png
 The portrait should be frontal, neutral, evenly lit, head and shoulders ([docs/synthetic-faces.md](../docs/synthetic-faces.md)). The head is packed as `$HEADS/my-head/my-head.zip`. Add it to the assets with a manifest whose `model.format` is `lam-splat`, and give its provenance: every part above that the head depends on, with the portrait's own record.
 
 The same portrait gives the same head, byte for byte.
+
+`FIT_SHAPE=1` (with `FIT_DIMS`, default 20, and `FIT_GENERATIONS`, default 20) searches the head's FLAME shape for the
+one whose render, at the portrait's own camera and pose, puts MediaPipe's landmarks where the portrait has them
+(`fit_shape.py`); it writes `fit/` beside the head. Then fit the head's rest set (`fit_rest.py`): both in
+[docs/synthetic-faces.md § For a LAM head](../docs/synthetic-faces.md#for-a-lam-head).

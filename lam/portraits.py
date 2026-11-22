@@ -25,6 +25,27 @@ TEMPLATE = (
     "very soft flat lighting from a large softbox directly in front, face evenly lit, no shadows on the face, "
     "plain dark grey background, sharp focus, natural skin texture, 85mm lens, f/8"
 )
+# An idealised, painted look: LAM softens what it is given, and a smooth stylised face survives that where a
+# photograph's skin and shading come out heavier and older (#151). Still a text prompt only, so still synthetic.
+STYLISED = (
+    "digital painting portrait of {subject}, idealized smooth flawless skin, clear bright eyes, refined features, "
+    "head and shoulders, facing the camera squarely, head level, calm neutral expression, lips closed, "
+    "eyes looking into the lens, soft even front lighting, plain dark grey background, highly detailed, sharp focus"
+)
+# Between the two: realistic proportions and light, rendered-smooth skin; the look LAM keeps (#151).
+SEMIREAL = (
+    "semi-realistic 3D render portrait of {subject}, realistic proportions, smooth even skin, natural colouring, "
+    "clear eyes, head and shoulders, facing the camera squarely, head level, calm neutral expression, lips closed, "
+    "eyes looking into the lens, soft even front lighting, plain grey background, clean image, sharp focus"
+)
+# Realistic character art: a photograph's proportions and light, an idealised painted finish (#151).
+CHARACTER = (
+    "highly realistic digital art portrait of {subject}, realistic adult proportions, flawless smooth skin, "
+    "subtle natural makeup, clear detailed eyes, head and shoulders, facing the camera squarely, head level, "
+    "calm neutral expression, lips closed, eyes looking into the lens, soft even front lighting, plain grey background, "
+    "cinematic character art, sharp focus"
+)
+TEMPLATES = {"photo": TEMPLATE, "stylised": STYLISED, "semireal": SEMIREAL, "character": CHARACTER}
 
 
 def seeds(text: str) -> list[int]:
@@ -79,9 +100,10 @@ def main() -> None:
     ap.add_argument("--policy", default="default")
     ap.add_argument("--width", type=int, default=1024)
     ap.add_argument("--height", type=int, default=1280)
+    ap.add_argument("--style", choices=sorted(TEMPLATES), default="photo")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    prompt = TEMPLATE.format(subject=a.subject)
+    prompt = TEMPLATES[a.style].format(subject=a.subject)
     for seed in a.seeds:
         record = generate(a.darkroom, prompt, seed, a.width, a.height, a.policy)
         if why := refusal(record):

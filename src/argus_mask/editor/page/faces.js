@@ -219,7 +219,7 @@ async function openReview(row, place = main(row), framing = 'head') {
     which.append(b);
   }
   const prov = manifest.provenance;
-  const backdrop = await backdropPicker(row, place, token);
+  const backdrop = await backdropPicker(row, place, token, manifest.model.format === 'lam-splat');
   if (!backdrop) return;
   $('m-side').replaceChildren(
     el('h2', { textContent: 'Where' }), el('p', { textContent: place === 'export' ? `assets/${row.id}: on the server's /faces` : `assets/.preview/${row.id}: the editor's preview` }),
@@ -235,10 +235,20 @@ async function openReview(row, place = main(row), framing = 'head') {
 }
 // The backdrop a face shows on screens that do not ask for one (scenes.json), previewed on the stage. An exported
 // face keeps the choice; a preview only previews, as for rest sets.
-async function backdropPicker(row, place, token) {
-  const [scenes, chosen] = await Promise.all([json('/scenes').catch(() => []), json('/scenes/faces').catch(() => ({}))]);
+async function backdropPicker(row, place, token, splatHead) {
+  const [scenes, chosen, shots] = await Promise.all([
+    json('/scenes').catch(() => []), json('/scenes/faces').catch(() => ({})), json('/scenes/shots').catch(() => ({})),
+  ]);
   if (token !== reviewSeq) return null;   // a later review has the stage
   const current = place === 'export' ? chosen[row.id] || '' : '';
+  // A splat head's shot, chosen with the backdrop: some want the head close, some a floating head with room around.
+  const shot = el('select', { id: 'm-shot', ariaLabel: 'Shot' },
+    el('option', { value: '', textContent: 'Shot: as the background suits (close over a scene, wide on plain)' }),
+    el('option', { value: 'close', textContent: 'Shot: close, head and shoulders' }),
+    el('option', { value: 'wide', textContent: 'Shot: wide, a floating head with room around it' }));
+  shot.value = place === 'export' ? shots[row.id] || '' : '';
+  shot.hidden = !splatHead;
+  stage.setShot(shot.value);
   const select = el('select', { id: 'm-scene', ariaLabel: 'Backdrop' },
     el('option', { value: '', textContent: 'None: a plain background' }),
     ...scenes.map((s) => el('option', {
@@ -248,15 +258,18 @@ async function backdropPicker(row, place, token) {
   select.value = current;
   const show = (name) => stage.setScene(name).catch((err) => status(`The backdrop could not be shown: ${err.message}`, true));
   show(current);
-  select.onchange = async () => {
-    show(select.value);
+  const save = async () => {
     if (place !== 'export') { status('Previewing only: export the face to keep a backdrop.'); return; }
     try {
-      await json(`/scenes/faces/${enc(row.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: select.value || null }) });
-      status(`${row.id} shows ${select.value || 'a plain background'} on screens from their next load (a screen's own ?scene= wins).`);
+      const body = { scene: select.value || null, shot: splatHead ? shot.value || null : null };
+      await json(`/scenes/faces/${enc(row.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const framed = splatHead && shot.value ? `, ${shot.value}` : '';
+      status(`${row.id} shows ${select.value || 'a plain background'}${framed} on screens from their next load (a screen's own ?scene= and ?shot= win).`);
     } catch (err) { status(err.message, true); }
   };
-  return [el('h2', { textContent: 'Backdrop' }), select];
+  select.onchange = () => { show(select.value); save(); };
+  shot.onchange = () => { stage.setShot(shot.value); save(); };
+  return [el('h2', { textContent: 'Backdrop' }), select, shot];
 }
 
 function closeReview() { reviewSeq++; $('modal').hidden = true; }   // a review still loading must not reopen it

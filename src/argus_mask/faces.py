@@ -595,8 +595,10 @@ MEDIA_TYPES: dict[str, str] = {"gltf": "model/gltf-binary", "lam-splat": "applic
 SPLAT_MEDIA_TYPE = "application/octet-stream"  # an SPZ and a binding; neither has a registered type
 
 # Where the camera sits for a LAM head when the manifest does not say: LAM's heads stand at about 1.65 m
-# (FLAME's origin is at the feet). The viewer aims at ``height`` from a tenth of the distance above it.
-SPLAT_FRAMING = Framing(distance=0.7, height=1.65, fov=50.0)
+# (FLAME's origin is at the feet). The viewer aims at ``height`` from a tenth of the distance above it. A long lens, as
+# the portrait was taken with: closer and wider, a head reads narrower, longer and older (#151). The viewer still takes
+# the old default (0.7 m, 50 degrees) in an older manifest as "not set".
+SPLAT_FRAMING = Framing(distance=1.6, height=1.65, fov=23.0)
 
 
 def sha256_file(path: str | Path) -> str:

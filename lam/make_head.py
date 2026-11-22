@@ -58,6 +58,84 @@ motion = os.environ.get("MOTION", "Look_In_My_Eyes")
 out_dir = os.environ.get("OUT", "/work/out")
 os.makedirs(out_dir, exist_ok=True)
 
+
+def fit_portrait_shape(image, shape_param, tracked):
+    """FIT_SHAPE=1: search the shape for the head that looks most like its portrait (fit_shape.py). Writes
+    ``fit/`` beside the head: the start's and the best's renders at the portrait's camera, and fit.json."""
+    import copy
+    import json
+    import subprocess
+    import tempfile
+
+    import fit_shape
+
+    fit_dir = Path(out_dir) / "fit"
+    fit_dir.mkdir(exist_ok=True)
+    source = prepare_motion_seqs(
+        os.path.join(tracked, "flame_param"), None, save_root=str(fit_dir), fps=30, bg_color=1.0,
+        aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0], render_image_res=cfg.render_size, multiply=16,
+        need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False, cross_id=False,
+        src_driven=["", ""],
+    )  # fmt: skip
+    detector = Path(frontend.__file__).parent / "landmarks" / "detect.py"
+
+    def detect(paths):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "points.npz"
+            subprocess.run(
+                [frontend.MEDIAPIPE_PYTHON, str(detector), str(frontend.MODELS / "face_landmarker.task"), str(out), *paths],
+                check=True, capture_output=True,
+            )  # fmt: skip
+            return np.load(out)["points"]
+
+    def render(shape, path):
+        params = copy.deepcopy(dict(source["flame_params"]))
+        params["betas"] = torch.as_tensor(shape, dtype=torch.float32)[None]
+        with torch.no_grad():
+            res = lam.infer_single_view(
+                image.unsqueeze(0).to("cuda"), None, None,
+                render_c2ws=source["render_c2ws"].to("cuda"), render_intrs=source["render_intrs"].to("cuda"),
+                render_bg_colors=source["render_bg_colors"].to("cuda"),
+                flame_params={k: v.to("cuda") for k, v in params.items()},
+            )  # fmt: skip
+        rgb, mask = res["comp_rgb"][0].cpu().numpy(), res["comp_mask"][0].cpu().numpy()
+        Image.fromarray((np.clip(rgb * mask + (1 - mask), 0, 1) * 255).astype(np.uint8)).save(path)
+
+    reference = detect([os.path.join(tracked, "images/00000_00.png")])[0]
+    if np.isnan(reference[0, 0]):
+        sys.exit("fit: MediaPipe found no face in the portrait")
+    count = [0]
+
+    def score(shapes):
+        paths = []
+        for shape in shapes:
+            paths.append(str(fit_dir / f"try-{count[0]:03d}.png"))
+            render(shape, paths[-1])
+            count[0] += 1
+        return [fit_shape.misfit(reference, points)["total"] for points in detect(paths)]
+
+    start = shape_param.cpu().numpy().astype(np.float64)
+    best, best_score, history = fit_shape.search(
+        start, score, dims=int(os.environ.get("FIT_DIMS", 20)), generations=int(os.environ.get("FIT_GENERATIONS", 20))
+    )
+    render(start, fit_dir / "start.png")
+    render(best, fit_dir / "best.png")
+    points = detect([str(fit_dir / "start.png"), str(fit_dir / "best.png")])
+    report = {
+        "start": fit_shape.misfit(reference, points[0]),
+        "best": fit_shape.misfit(reference, points[1]),
+        "best_score": best_score,
+        "history": history,
+        "start_shape": start.tolist(),
+        "best_shape": best.tolist(),
+    }
+    (fit_dir / "fit.json").write_text(json.dumps(report, indent=1))
+    for path in fit_dir.glob("try-*.png"):
+        path.unlink()
+    print("FIT", json.dumps({k: report[k] for k in ("start", "best")}))
+    return torch.as_tensor(best, dtype=shape_param.dtype)
+
+
 # The checkpoint carries the whole DINOv2 encoder, so skip the ImageNet download (its server's certificate expired).
 _build_dinov2 = Dinov2FusionWrapper._build_dinov2
 Dinov2FusionWrapper._build_dinov2 = staticmethod(
@@ -92,6 +170,8 @@ image, _, _, shape_param = preprocess_image(
     need_mask=True,
     get_shape_param=True,
 )
+if os.environ.get("FIT_SHAPE"):
+    shape_param = fit_portrait_shape(image, shape_param, tracked)
 seq = prepare_motion_seqs(
     os.path.join("./assets/sample_motion/export", motion, "flame_param"),
     None,

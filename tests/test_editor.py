@@ -1352,12 +1352,17 @@ def test_a_face_keeps_its_backdrop_through_rename_and_loses_it_on_delete(client,
     assert client.put("/scenes/faces/my-face", json={"scene": "garden"}).json() == {
         "face": "my-face",
         "scene": "garden",
+        "shot": None,
     }
     assert client.get("/scenes/faces").json() == {"my-face": "garden"}
+    assert client.put("/scenes/faces/my-face", json={"scene": "garden", "shot": "fisheye"}).status_code == 422
+    assert client.put("/scenes/faces/my-face", json={"scene": "garden", "shot": "wide"}).json()["shot"] == "wide"
+    assert client.get("/scenes/shots").json() == {"my-face": "wide"}
     assert client.post("/saved/my-face/rename", json={"id": "renamed"}).status_code == 200
     assert client.get("/scenes/faces").json() == {"renamed": "garden"}
+    assert client.get("/scenes/shots").json() == {"renamed": "wide"}
     assert client.delete("/saved/renamed").status_code == 200
-    assert client.get("/scenes/faces").json() == {}
+    assert client.get("/scenes/faces").json() == {} and client.get("/scenes/shots").json() == {}
 
 
 def test_a_face_id_with_a_trailing_newline_is_refused(client, rig) -> None:

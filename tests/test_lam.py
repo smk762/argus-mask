@@ -19,7 +19,7 @@ import pytest
 LAM = Path(__file__).resolve().parent.parent / "lam"
 # lam/'s modules, imported at top level as make_head.py does from /argus, and the LAM and VHAP modules the tests
 # register: taken out again after each test. Nothing else is: torch, for one, can be imported only once.
-LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "lam", "vhap"}
+LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "fit_shape", "fit_rest", "portraits", "lam", "vhap"}
 
 
 @pytest.fixture
@@ -371,3 +371,107 @@ def test_a_portrait_darkroom_did_not_pass_or_made_with_a_lora_is_not_a_cleared_s
         assert "{subject}" in portraits.TEMPLATE and "not smiling" in portraits.TEMPLATE
     finally:
         sys.modules.pop("portraits", None)
+
+
+def test_every_portrait_style_frames_the_subject_square_on_and_neutral(lam) -> None:
+    """Each --style (#151) is a text prompt around the subject, asking for what LAM needs: square on, neutral, lit flat."""
+    import portraits  # noqa: PLC0415 - lam/ is on the path only inside the fixture
+
+    assert set(portraits.TEMPLATES) == {"photo", "stylised", "semireal", "character"}
+    for template in portraits.TEMPLATES.values():
+        assert template.count("{subject}") == 1
+        assert "facing the camera squarely" in template and "neutral expression" in template
+        assert "lighting" in template and "background" in template
+
+
+# -- fitting a head to its portrait (#151): pure numpy, the renders handed in --------------------------------------
+
+
+def _face(rng: np.random.Generator) -> np.ndarray:
+    """478 MediaPipe-like points in pixels, the iris points placed so the ratios are defined."""
+    points = rng.uniform(100, 400, (478, 2))
+    points[469], points[471], points[474], points[476] = (200, 250), (220, 250), (300, 250), (320, 250)
+    points[159], points[145], points[386], points[374] = (210, 242), (210, 258), (310, 242), (310, 258)
+    return points
+
+
+def test_a_render_that_lands_on_the_portrait_scores_zero_and_a_moved_outline_scores_most(lam) -> None:
+    import fit_shape  # noqa: PLC0415
+
+    rng = np.random.default_rng(0)
+    ref = np.c_[rng.random((478, 2)), np.zeros(478)]
+    assert fit_shape.misfit(ref, ref.copy())["total"] == 0.0
+    assert fit_shape.misfit(ref, None)["total"] == float("inf")
+    assert fit_shape.misfit(ref, np.full_like(ref, np.nan))["total"] == float("inf")
+    oval, lips = ref.copy(), ref.copy()
+    oval[fit_shape.OVAL, 0] += 0.01
+    lips[fit_shape.LIPS, 0] += 0.01
+    assert fit_shape.misfit(ref, oval)["total"] > fit_shape.misfit(ref, lips)["total"] > 0
+
+
+def test_the_search_is_seeded_finds_a_better_shape_and_never_returns_a_worse_one(lam) -> None:
+    import fit_shape  # noqa: PLC0415
+
+    target = np.r_[np.linspace(1, -1, 20), np.zeros(80)]
+
+    def score(shapes):
+        return [float(((s[:20] - target[:20]) ** 2).sum()) for s in shapes]
+
+    start = np.zeros(100)
+    first = fit_shape.search(start, score, log=lambda _: None)
+    again = fit_shape.search(start, score, log=lambda _: None)
+    assert np.array_equal(first[0], again[0]) and first[1] == again[1]
+    assert first[1] < 0.5 * score([start])[0]
+    assert np.array_equal(first[0][20:], start[20:])  # only the first `dims` components move
+    assert first[1] <= min(h["best"] for h in first[2])
+
+    def worse_everywhere(shapes):
+        return [0.0 if np.array_equal(s, start) else 1.0 for s in shapes]
+
+    assert np.array_equal(fit_shape.search(start, worse_everywhere, log=lambda _: None)[0], start)
+
+
+def test_a_rest_fit_is_scored_after_aligning_the_face_and_reads_the_lids_and_lips(lam) -> None:
+    import fit_rest  # noqa: PLC0415
+
+    rng = np.random.default_rng(1)
+    points = _face(rng)
+    scores = {k: 0.2 for k in fit_rest.SCORES}
+    ref = {"points": points, "scores": scores}
+    # The same face moved, turned and scaled on the screen: the alignment takes all of it out.
+    angle = np.radians(7)
+    rot = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    moved = {"points": 1.3 * points @ rot.T + (40, -25), "scores": dict(scores)}
+    assert fit_rest.misfit(ref, moved)["total"] < 1e-9
+    assert fit_rest.misfit(ref, None)["total"] == float("inf")
+    # Lids lower over the iris: the aperture reads it, and the score rises.
+    hooded = {"points": points.copy(), "scores": dict(scores)}
+    hooded["points"][[159, 386], 1] += 4
+    result = fit_rest.misfit(ref, hooded)
+    assert result["aperture"] == pytest.approx(0.25)
+    assert result["total"] > 0.25 * fit_rest.RATIO_WEIGHT
+
+
+def test_a_rest_fit_gives_a_symmetric_rest_set_inside_the_wire_limits(lam) -> None:
+    import fit_rest  # noqa: PLC0415
+
+    from argus_mask.arkit import ARKIT_52
+    from argus_mask.expressions import BUILTIN
+    from argus_mask.models import RestSet
+
+    weights = fit_rest.weights(np.array([-0.5, 2.0, *[0.25] * (len(fit_rest.PARAMS) - 2)]), min_smile=0.0)
+    assert weights["eyeWideLeft"] == weights["eyeWideRight"] == 0.0
+    assert weights["eyeBlinkLeft"] == weights["eyeBlinkRight"] == 1.0
+    assert weights["browInnerUp"] == 0.25  # one shape, no sides
+    assert weights["mouthUpperUpLeft"] == 0.25 <= fit_rest.OPENERS["mouthUpperUp"]
+    assert fit_rest.weights(np.ones(len(fit_rest.PARAMS)))["mouthUpperUpLeft"] == fit_rest.OPENERS["mouthUpperUp"]
+    # A face rests with at least a slight smile, whatever the search found.
+    none = fit_rest.weights(np.zeros(len(fit_rest.PARAMS)))
+    assert none["mouthSmileLeft"] == none["mouthSmileRight"] == fit_rest.MIN_SMILE
+    assert fit_rest.weights(np.zeros(len(fit_rest.PARAMS)), min_smile=0.0)["mouthSmileLeft"] == 0.0
+    assert all(name in ARKIT_52 for name in weights)
+    RestSet(name="fit-a-face", weights=weights)  # valid on the wire
+    # It starts from the built-in warm set.
+    warm = BUILTIN["warm"].weights
+    start = fit_rest.weights(np.array(list(fit_rest.PARAMS.values())))
+    assert {k: v for k, v in start.items() if v} == warm

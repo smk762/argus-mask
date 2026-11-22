@@ -467,7 +467,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Mask Version",
           "type": "string"
         },
@@ -492,7 +492,7 @@
       "type": "object"
     },
     "FaceScene": {
-      "description": "The backdrop a face shows by default (``GET /face/{id}/scene``): a scene name, or null for a plain one.",
+      "description": "The backdrop a face shows by default (``GET /face/{id}/scene``): a scene name, or null for a plain one.\n\n``shot`` frames a splat head: ``close`` (head and shoulders), ``wide`` (the floating head, room around it), or\nnull for the one that suits the background (close over a scene, wide on a plain one). A mesh head ignores it.",
       "properties": {
         "scene": {
           "anyOf": [
@@ -506,6 +506,22 @@
           ],
           "default": null,
           "title": "Scene"
+        },
+        "shot": {
+          "anyOf": [
+            {
+              "enum": [
+                "close",
+                "wide"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shot"
         }
       },
       "title": "FaceScene",
@@ -987,7 +1003,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Mask Version",
           "type": "string"
         },
@@ -1401,7 +1417,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Mask Version",
           "type": "string"
         },

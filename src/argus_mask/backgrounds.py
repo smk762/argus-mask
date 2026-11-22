@@ -572,8 +572,15 @@ class PlateStore:
 SCENES_NAME = "scenes.json"
 
 
+# How a splat head is framed: head and shoulders, ending above its fade (close), or the floating head with room
+# around it (wide). Chosen with the backdrop; a framing the face's manifest sets for itself wins over both.
+SHOTS = ("close", "wide")
+
+
 class SceneChoices:
-    """Which backdrop each face shows by default, in ``<assets>/scenes.json``: ``{"faces": {"ginger-3": "garden"}}``.
+    """Which backdrop each face shows by default, in ``<assets>/scenes.json``: ``{"faces": {"ginger-3": "garden"}}``,
+    and, for a splat head, the shot it is framed in (``"shots": {"splat-02": "wide"}``: ``close`` or ``wide``; none
+    chosen: close over a backdrop, wide on a plain background).
 
     Written by the editor (Saved faces) and read by the server, like ``expressions.json``. A screen's own
     ``?scene=`` wins; a choice whose scene is gone (a plate removed or refused) is ignored, so the face shows a
@@ -585,25 +592,37 @@ class SceneChoices:
         self.plates = plates
         self._seen: tuple[int, int, int] | None = None
         self._faces: dict[str, str] = {}
+        self._shots: dict[str, str] = {}
         self._lock = threading.Lock()  # the editor's routes run in threads: one read-modify-write at a time
 
     def raw(self) -> dict[str, str]:
         """Face id -> scene name, as written: valid or not."""
+        self._read()
+        return dict(self._faces)
+
+    def raw_shots(self) -> dict[str, str]:
+        """Face id -> shot, as written: valid or not."""
+        self._read()
+        return dict(self._shots)
+
+    def _read(self) -> None:
         try:
             stat = self.path.stat()
         except OSError:
-            self._seen, self._faces = None, {}
-            return {}
+            self._seen, self._faces, self._shots = None, {}, {}
+            return
         key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)  # every write replaces the file: a new inode
         if key != self._seen:
+            self._faces, self._shots = {}, {}
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                faces = data.get("faces") if isinstance(data, dict) else None
-                self._faces = {str(k): str(v) for k, v in faces.items()} if isinstance(faces, dict) else {}
             except (OSError, ValueError):
-                self._faces = {}
+                data = None
+            if isinstance(data, dict):
+                for attr, field in (("_faces", "faces"), ("_shots", "shots")):
+                    got = data.get(field)
+                    setattr(self, attr, {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {})
             self._seen = key
-        return dict(self._faces)
 
     def available(self) -> set[str]:
         return {s.name for s in self.plates.scenes()}
@@ -616,28 +635,46 @@ class SceneChoices:
     def for_face(self, face_id: str) -> str | None:
         return self.choices().get(face_id)
 
-    def _write(self, faces: dict[str, str]) -> None:
+    def shots(self) -> dict[str, str]:
+        """Face id -> its shot, for the faces whose shot is one there is."""
+        return {f: s for f, s in sorted(self.raw_shots().items()) if s in SHOTS}
+
+    def shot_for(self, face_id: str) -> str | None:
+        return self.shots().get(face_id)
+
+    def _write(self, faces: dict[str, str], shots: dict[str, str]) -> None:
+        data: dict = {"faces": dict(sorted(faces.items()))}
+        if shots:
+            data["shots"] = dict(sorted(shots.items()))
         tmp = self.path.with_name(SCENES_NAME + ".part")
-        tmp.write_text(json.dumps({"faces": dict(sorted(faces.items()))}, indent=2) + "\n", encoding="utf-8")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         tmp.replace(self.path)
 
-    def choose(self, face_id: str, scene: str | None) -> None:
-        """*face_id* shows *scene* by default; None clears its choice (a plain background)."""
+    def choose(self, face_id: str, scene: str | None, shot: str | None = None) -> None:
+        """*face_id* shows *scene* by default, framed in *shot*. None clears each: a plain background, and the shot
+        that suits the background."""
         with self._lock:
             if scene is not None and scene not in self.available():
                 raise PlateError(f"no scene {scene!r}: there are {', '.join(sorted(self.available()))}")
+            if shot is not None and shot not in SHOTS:
+                raise PlateError(f"no shot {shot!r}: there are {', '.join(SHOTS)}")
             faces = {k: v for k, v in self.raw().items() if k != face_id}
+            shots = {k: v for k, v in self.raw_shots().items() if k != face_id}
             if scene is not None:
                 faces[face_id] = scene
-            self._write(faces)
+            if shot is not None:
+                shots[face_id] = shot
+            self._write(faces, shots)
 
     def repoint(self, old: str, new: str | None) -> None:
-        """A face was renamed (*new*) or deleted (None): its choice follows it, or goes."""
+        """A face was renamed (*new*) or deleted (None): its choices follow it, or go."""
         with self._lock:
-            faces = self.raw()
-            if old not in faces:
+            faces, shots = self.raw(), self.raw_shots()
+            if old not in faces and old not in shots:
                 return
-            scene = faces.pop(old)
-            if new is not None:
-                faces[new] = scene
-            self._write(faces)
+            for chosen in (faces, shots):
+                if old in chosen:
+                    value = chosen.pop(old)
+                    if new is not None:
+                        chosen[new] = value
+            self._write(faces, shots)

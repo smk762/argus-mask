@@ -221,6 +221,7 @@ class VoiceTry(BaseModel):
 class SceneChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scene: str | None = Field(None, max_length=64, description="a scene's name (GET /scenes); null: a plain background")
+    shot: Literal["close", "wide"] | None = Field(None, description="a splat head's shot; null: the background's")
 
 
 class RestChoice(BaseModel):
@@ -539,19 +540,24 @@ def create_editor_app(
     def scene_choice_list() -> dict[str, str]:
         return scene_choices.choices()
 
+    @app.get("/scenes/shots")
+    def shot_choice_list() -> dict[str, str]:
+        """Each splat face's chosen shot (close or wide); a face not listed takes the one its background suits."""
+        return scene_choices.shots()
+
     @app.put("/scenes/faces/{face_id}")
     def scene_choose(face_id: str, choice: SceneChoice) -> dict:
         """Which backdrop a face shows when a screen does not ask for one. Screens pick it up on their next load."""
         if not is_face_id(face_id):
             raise HTTPException(404, f"no face {face_id!r}")
         try:
-            scene_choices.choose(face_id, choice.scene)
+            scene_choices.choose(face_id, choice.scene, choice.shot)
         except PlateError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
             raise HTTPException(500, f"could not write {scene_choices.path.name}: {exc}") from exc
-        log.info("scene_chosen", face=face_id, scene=choice.scene)
-        return {"face": face_id, "scene": choice.scene}
+        log.info("scene_chosen", face=face_id, scene=choice.scene, shot=choice.shot)
+        return {"face": face_id, "scene": choice.scene, "shot": choice.shot}
 
     # ---- rest sets: the baseline expression each face holds at rest, kept in the assets' expressions.json --
 

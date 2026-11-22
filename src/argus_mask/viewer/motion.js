@@ -301,8 +301,10 @@ export class Idle {
 // ---- putting it together ---------------------------------------------------------------------------------
 
 // How much of the rest set holds while speaking: the brows, eyes and cheeks fully, the mouth half,
-// so a face speaks from its mood but the mouth stays the driver's.
-const UNDER_SPEECH = (name) => (/^mouth|^jaw/.test(name) ? 0.5 : 1.0);
+// so a face speaks from its mood but the mouth stays the driver's. Shapes that part the lips not at all: held open
+// under speech they fight every closure (a stutter on m, b, p) and add to every opening (#151).
+const PARTS_LIPS = /^(mouthUpperUp|mouthLowerDown|jawOpen)/;
+const UNDER_SPEECH = (name) => (PARTS_LIPS.test(name) ? 0 : /^mouth|^jaw/.test(name) ? 0.5 : 1.0);
 
 // Composes what a face shows: frame (or relaxing) weights, the rest set, idle life when not live, then the
 // lip budget. Call `present` once per drawn frame with a Float32Array in *names* order. `cap(weights, index)`,

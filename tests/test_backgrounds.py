@@ -527,13 +527,13 @@ def test_record_accepts_a_plate_the_server_serves(assets: Path) -> None:
 def test_a_face_shows_its_chosen_backdrop_until_a_screen_asks_for_another(assets: Path) -> None:
     choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
     with client(assets) as c:
-        assert c.get("/face/test-head/scene").json() == {"scene": None}
+        assert c.get("/face/test-head/scene").json() == {"scene": None, "shot": None}
         choices.choose("test-head", "rain")
-        assert c.get("/face/test-head/scene").json() == {"scene": "rain"}
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain", "shot": None}
         assert c.get("/face/nobody/scene").status_code == 404
         # The plate goes: the choice stays in the file but is not offered, so the face shows a plain background.
         (assets / "backgrounds" / "rain" / "plate.png").unlink()
-        assert c.get("/face/test-head/scene").json() == {"scene": None}
+        assert c.get("/face/test-head/scene").json() == {"scene": None, "shot": None}
     assert choices.raw() == {"test-head": "rain"}
 
 
@@ -541,10 +541,10 @@ def test_a_face_whose_chosen_plate_was_changed_shows_a_plain_background(assets: 
     choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
     with client(assets) as c:
         choices.choose("test-head", "rain")
-        assert c.get("/face/test-head/scene").json() == {"scene": "rain"}
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain", "shot": None}
         # A replaced picture no longer matches its sha256: the plate is refused, as a missing one is.
         (assets / "backgrounds" / "rain" / "plate.png").write_bytes(png(shade=1))
-        assert c.get("/face/test-head/scene").json() == {"scene": None}
+        assert c.get("/face/test-head/scene").json() == {"scene": None, "shot": None}
     assert choices.raw() == {"test-head": "rain"}
 
 
@@ -557,6 +557,28 @@ def test_a_choice_must_be_a_scene_and_follows_its_face(assets: Path) -> None:
     assert choices.choices() == {"renamed": "ftl"}
     choices.choose("renamed", None)
     assert choices.choices() == {} and json.loads((assets / "scenes.json").read_text()) == {"faces": {}}
+
+
+def test_a_splat_head_is_framed_in_the_shot_chosen_with_its_backdrop(assets: Path) -> None:
+    """Close or wide, chosen with the backdrop (#151): a floating head on a plain background, or close over a scene."""
+    choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
+    with client(assets) as c:
+        choices.choose("test-head", None, "close")  # a plain background, framed close
+        assert c.get("/face/test-head/scene").json() == {"scene": None, "shot": "close"}
+        choices.choose("test-head", "rain", "wide")  # a floating head over a scene
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain", "shot": "wide"}
+        choices.choose("test-head", "rain")  # no shot: the one the background suits
+        assert c.get("/face/test-head/scene").json() == {"scene": "rain", "shot": None}
+    with pytest.raises(PlateError, match="no shot 'medium'"):
+        choices.choose("test-head", "rain", "medium")
+    choices.choose("test-head", None, "wide")
+    choices.repoint("test-head", "renamed")
+    assert choices.shots() == {"renamed": "wide"} and choices.choices() == {}
+    choices.repoint("renamed", None)
+    assert choices.shots() == {} and json.loads((assets / "scenes.json").read_text()) == {"faces": {}}
+    # A shot written by hand that is not one there is: not offered.
+    (assets / "scenes.json").write_text(json.dumps({"faces": {}, "shots": {"test-head": "fisheye"}}))
+    assert choices.shot_for("test-head") is None
 
 
 def test_none_is_never_a_plate(assets: Path) -> None:
