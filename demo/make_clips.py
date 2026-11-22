@@ -36,6 +36,17 @@ from argus_mask.performance import perform
 from argus_mask.take import render_take
 
 HERE = Path(__file__).resolve().parent
+LOCKS = HERE.parent / "scripts" / "stock_heads"
+
+
+def rest_for(face: str) -> dict:
+    """What a screen holds this face at rest: the set its stock-head lock carries (a splat head's is fitted to its
+    portrait, #151), else the default. "warm" would hood a LAM head's lids."""
+    lock = LOCKS / f"{face}.lock.json"
+    rest = json.loads(lock.read_text(encoding="utf-8")).get("rest") if lock.is_file() else None
+    if rest:
+        return {"name": rest["name"], "weights": rest["weights"], "life": rest.get("life", 1.0)}
+    return {"name": DEFAULT_SET, **BUILTIN[DEFAULT_SET].model_dump(exclude={"name"})}
 
 
 async def speak(tts_url: str, voice: str, sentences: list[str]) -> tuple[np.ndarray, int, list[dict]]:
@@ -136,10 +147,7 @@ async def make(spec: dict, clip: dict, driver_name: str, a2f_url: str, tts_url: 
         "duration_ms": end.duration_ms,
         "frames": end.frames,
         "captions": captions,
-        "rest": {
-            "name": DEFAULT_SET,
-            **BUILTIN[DEFAULT_SET].model_dump(exclude={"name"}),
-        },  # what a screen holds at rest
+        "rest": rest_for(clip["face"]),  # what a screen holds at rest
         "made_with": {
             "argus_mask": made,
             "driver": header.driver.model_dump(),

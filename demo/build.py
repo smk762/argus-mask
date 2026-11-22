@@ -157,6 +157,7 @@ def faces_for(clips: list[dict], out: Path, local: Path | None) -> None:
                     face,
                     "--assets-dir",
                     str(out / "faces"),
+                    "--no-rest",  # a clip carries its rest set (clip.json); no server reads this folder
                 ],
                 check=True,
             )

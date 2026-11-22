@@ -295,3 +295,10 @@ def test_a_lock_with_a_bad_rest_set_is_refused(tmp_path, monkeypatch, rest) -> N
     locks, _ = _splat_lock(tmp_path, monkeypatch, rest=rest)
     with pytest.raises(fetch_stock_head.FetchError, match="rest set"):
         fetch_stock_head.read_lock("splat-test", locks)
+
+
+def test_a_fetch_can_leave_the_rest_set_out(tmp_path, monkeypatch) -> None:
+    """The demo's build fetches into its site, which no server reads: each clip carries its own rest set."""
+    locks, _ = _splat_lock(tmp_path, monkeypatch, rest=REST)
+    fetch_stock_head.fetch("splat-test", tmp_path / "site", lock_dir=locks, rest=False)
+    assert not (tmp_path / "site" / "expressions.json").exists()

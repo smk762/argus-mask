@@ -185,7 +185,9 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def fetch(face_id: str, assets_dir: Path, *, force: bool = False, lock_dir: Path = LOCK_DIR) -> tuple[Path, bool]:
+def fetch(
+    face_id: str, assets_dir: Path, *, force: bool = False, lock_dir: Path = LOCK_DIR, rest: bool = True
+) -> tuple[Path, bool]:
     """Put a stock head under *assets_dir*. Returns its directory and whether anything was downloaded."""
     lock = read_lock(face_id, lock_dir)
     manifest = lock["manifest"]
@@ -211,7 +213,7 @@ def fetch(face_id: str, assets_dir: Path, *, force: bool = False, lock_dir: Path
     if manifest_path.is_file() and manifest_path.read_text(encoding="utf-8") != text and not force and not downloaded:
         raise FetchError(f"{manifest_path} exists and differs from the lock; pass --force to replace it")
     manifest_path.write_text(text, encoding="utf-8")
-    if "rest" in lock:
+    if rest and "rest" in lock:
         print(install_rest(assets_dir, face_id, lock["rest"]))
     return directory, downloaded
 
@@ -223,9 +225,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force", action="store_true", help="replace a model or manifest that is already there and differs"
     )
+    parser.add_argument(
+        "--no-rest", action="store_true", help="leave expressions.json alone (a folder no server reads, as the demo's)"
+    )
     args = parser.parse_args(argv)
     try:
-        directory, downloaded = fetch(args.id, args.assets_dir, force=args.force)
+        directory, downloaded = fetch(args.id, args.assets_dir, force=args.force, rest=not args.no_rest)
     except FetchError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
