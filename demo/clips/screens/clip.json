@@ -1,11 +1,11 @@
 {
   "id": "screens",
   "title": "On a screen",
-  "face": "splat-01",
+  "face": "splat-03",
   "framing": "head",
   "scene": "ftl",
-  "duration_ms": 14200,
-  "frames": 426,
+  "duration_ms": 12568,
+  "frames": 378,
   "captions": [
     {
       "start_ms": 0,
@@ -14,39 +14,42 @@
     },
     {
       "start_ms": 2017,
-      "end_ms": 7585,
+      "end_ms": 7116,
       "text": "A speech service talks, and every screen on the network that shows me moves in step."
     },
     {
-      "start_ms": 7885,
-      "end_ms": 14200,
+      "start_ms": 7416,
+      "end_ms": 12568,
       "text": "Pick a face, a backdrop and a framing, from head and shoulders to full body."
     }
   ],
   "rest": {
-    "name": "warm",
+    "name": "fit-splat-03",
     "weights": {
-      "mouthSmileLeft": 0.32,
-      "mouthSmileRight": 0.32,
-      "cheekSquintLeft": 0.12,
-      "cheekSquintRight": 0.12,
-      "eyeSquintLeft": 0.05,
-      "eyeSquintRight": 0.05,
-      "eyeBlinkLeft": 0.1,
-      "eyeBlinkRight": 0.1,
-      "browInnerUp": 0.06
+      "eyeWideLeft": 0.086,
+      "eyeWideRight": 0.086,
+      "eyeSquintLeft": 0.261,
+      "eyeSquintRight": 0.261,
+      "mouthSmileLeft": 0.23,
+      "mouthSmileRight": 0.23,
+      "cheekSquintLeft": 0.07,
+      "cheekSquintRight": 0.07,
+      "mouthUpperUpLeft": 0.118,
+      "mouthUpperUpRight": 0.118,
+      "mouthLowerDownLeft": 0.201,
+      "mouthLowerDownRight": 0.201
     },
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.3.0-21-g62ef43a",
+    "argus_mask": "v0.3.0-27-g6be7ebf",
     "driver": {
       "name": "a2f",
       "model": null
     },
     "fps": 30,
     "seed": 9,
-    "voice": "Rosemary Okafor",
+    "voice": "Damien Black",
     "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial)"
   }
 }
