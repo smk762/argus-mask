@@ -20,29 +20,29 @@
     {
       "id": "how",
       "title": "How it works",
-      "face": "stock-01",
-      "framing": "full",
+      "face": "splat-03",
+      "framing": "head",
       "scene": "garden",
       "voice": "speaker:Damien Black",
       "seed": 5,
       "sentences": [
         "Here's how it works.",
         "Audio goes in, and a driver turns it into facial animation, thirty frames a second.",
-        "On top of that, I nod on stressed words, and my hands keep time with what I say."
+        "On top of that, I nod on stressed words, and glance around and blink between them."
       ]
     },
     {
       "id": "screens",
       "title": "On a screen",
-      "face": "splat-03",
+      "face": "splat-01",
       "framing": "head",
       "scene": "ftl",
-      "voice": "speaker:Damien Black",
+      "voice": "speaker:Rosemary Okafor",
       "seed": 9,
       "sentences": [
         "At home, I run live.",
         "A speech service talks, and every screen on the network that shows me moves in step.",
-        "Pick a face, a backdrop and a framing, from head and shoulders to full body."
+        "Pick a face and a backdrop, and frame me close or as a floating head."
       ]
     }
   ]
