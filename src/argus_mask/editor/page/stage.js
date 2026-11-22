@@ -228,6 +228,9 @@ export class Stage {
     if (made) made.setSize(this.renderer.domElement.width, this.renderer.domElement.height);
   }
 
+  // A splat head's shot (splat.js setShot): close, wide, or '' for the one its background suits. A mesh head has none.
+  setShot(shot) { this.splat?.setShot(shot); }
+
   weigh(name, value) {
     for (const { influences, index } of this.targets.get(name) || []) influences[index] = value;
   }

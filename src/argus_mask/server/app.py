@@ -473,7 +473,7 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     def face_scene(face_id: str) -> FaceScene:
         """The backdrop a face shows when a screen does not ask for one (the editor's Saved faces sets it)."""
         manifest, _ = face_or_404(face_id)
-        return FaceScene(scene=scene_choices.for_face(manifest.id))
+        return FaceScene(scene=scene_choices.for_face(manifest.id), shot=scene_choices.shot_for(manifest.id))
 
     def cross_site(ws: WebSocket) -> str | None:
         return origin_refusal({"type": "websocket", "method": "WebSocket"}, ws.headers)  # type: ignore[arg-type]

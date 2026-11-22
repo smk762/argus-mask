@@ -28,6 +28,8 @@
 //   ?life=1          how much the face moves at rest: 0 still, up to 2 (default: the rest set's own)
 //   ?jaw=0.35        splat heads: where the jaw cap's knee sits (1 turns the cap off)
 //   ?turn=0          splat heads: no limit on the head turn (to see where a head gives out)
+//   ?shot=close      splat heads: close (head and shoulders) or wide (the floating head); default: the face's own,
+//                    else close over a scene and wide on a plain background
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -41,6 +43,8 @@ import { ARMS_DOWN, BodyLife, Gestures, HeadTurn, STANDING, contactShadow, setPo
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
 const ASKED_SCENE = params.has('scene') ? params.get('scene') : null;   // null: the face's own, if it has one
+const ASKED_SHOT = ['close', 'wide'].includes(params.get('shot')) ? params.get('shot') : null;
+let SHOT = '';   // a splat head's shot, once the face is known: close, wide, or '' (the one its background suits)
 let SCENE = '';   // the scene this page shows, once the face is known
 const RECORD = params.get('record') === '1';
 const KIOSK = params.get('kiosk') === '1';
@@ -274,12 +278,16 @@ function faceSeed(id) {
 }
 
 // The scene to show: the page's ?scene= (none: a plain background), else the face's own default, if any.
+// The shot too (SHOT): the page's ?shot=, else the face's own.
 async function sceneFor(faceId) {
-  if (ASKED_SCENE !== null) return ASKED_SCENE === 'none' ? '' : ASKED_SCENE;
+  let own = {};
   try {
     const reply = await fetch(`/face/${encodeURIComponent(faceId)}/scene`);
-    return reply.ok ? ((await reply.json()).scene || '') : '';
-  } catch { return ''; }   // an older server: no defaults
+    if (reply.ok) own = await reply.json();
+  } catch { /* an older server: no defaults */ }
+  SHOT = ASKED_SHOT ?? (own.shot || '');
+  if (ASKED_SCENE !== null) return ASKED_SCENE === 'none' ? '' : ASKED_SCENE;
+  return own.scene || '';
 }
 
 // A LAM Gaussian-splat head (splat.js): the same frames, rest set, idle life and lip budget, drawn by the
@@ -299,6 +307,8 @@ async function loadSplat(faceId, manifest) {
   splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD, limits: manifest.limits, unlimited: params.get('turn') === '0' });
   // A backdrop is drawn by the splat renderer itself (splat.js setScene), behind the head, on the same canvas.
   SCENE = await sceneFor(faceId);
+  splat.setShot(SHOT);
+  state.shot = SHOT || null;
   if (SCENE) {
     const quality = ['low', 'medium', 'high'].includes(params.get('quality')) ? params.get('quality') : (RECORD ? 'high' : 'medium');
     backdrop = await showScene(() => splat.setScene(SCENE, { quality, options: sceneOptions() }));

@@ -29,7 +29,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 # 1.6: ``ModelFile.splats``: Gaussian splats bound to a mesh model's triangles (#126 route A), with the licence of
 #      every input that went into them.
 # 1.7: ``FaceManifest.limits``: how far a screen lets a head turn and open its jaw (#152, #154).
-MASK_VERSION = "1.7"
+# 1.8: ``FaceScene.shot``: a splat head's shot, close or wide, chosen with its backdrop (#151).
+MASK_VERSION = "1.8"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -602,9 +603,14 @@ class SceneInfo(BaseModel):
 
 
 class FaceScene(BaseModel):
-    """The backdrop a face shows by default (``GET /face/{id}/scene``): a scene name, or null for a plain one."""
+    """The backdrop a face shows by default (``GET /face/{id}/scene``): a scene name, or null for a plain one.
+
+    ``shot`` frames a splat head: ``close`` (head and shoulders), ``wide`` (the floating head, room around it), or
+    null for the one that suits the background (close over a scene, wide on a plain one). A mesh head ignores it.
+    """
 
     scene: str | None = Field(None, pattern=SCENE_NAME_PATTERN)
+    shot: Literal["close", "wide"] | None = None
 
 
 def render_wire_schema() -> str:

@@ -239,6 +239,7 @@ const stage = {{
   load: (url) => {{ const p = later(); loads.push(p); return p; }},
   poseButtons: (box, _, o) => posed.push(o.faceId),
   setScene: async (n) => scenes.push(n),
+  setShot: () => {{}},
 }};
 let reviewSeq = 0;
 {_function(source, "async function openReview(")}

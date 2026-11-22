@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A splat head's shot is chosen with its backdrop** (#151, wire 1.8: `FaceScene.shot`): close (head and
+  shoulders) or wide (a floating head with room around it), in the editor's Saved faces beside the backdrop, kept in
+  `scenes.json`, and `?shot=` on a screen. Unchosen, it is as before: close over a scene, wide on a plain background.
+- **A rest set's lip-parting shapes rest only** (`motion.js`): `mouthUpperUp`, `mouthLowerDown` and `jawOpen` drop
+  out while the face speaks, as the rest of its mouth halves. Held open under speech they fought every closure (a
+  stutter on m, b, p) and widened every opening.
+- **A splat head is drawn with a long lens** (#151): 23° from 1.6 m, as its portrait was taken, in place of 50° from
+  0.7 m, which made a head read narrower, longer and older. The head fills the frame as before; a manifest with the
+  old default takes the new one, and one that chose its own framing keeps it.
+
 - **Face ids, pack ids, cache keys, asset folder, recording and splat folder names are checked by argus-cortex's
   `fs.safe_name`** (ai-code-auditor#60), each with its own pattern in place of safe_name's default, so every check
   is exactly as strict as before. `models.is_face_id` replaces the three module copies of the face id regex, and
@@ -16,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check: it is standard library only.
 
 ### Added
+
+- **A LAM head's rest set fitted to its portrait** (#151): `lam/fit_rest.py` scores the viewer's drawing of a head
+  against its portrait with MediaPipe (features placed against the outline, how much iris the lids show, how full
+  the lips are) and searches the rest set that matches best; `warm`'s closed lids were what hooded them. Portraits
+  take a `--style` (`character`, `stylised`, `photo`, `semireal`): realistic character art survives LAM where a
+  photograph comes out older. `FIT_SHAPE=1` also fits the head's FLAME shape (opt-in). See
+  `docs/synthetic-faces.md § For a LAM head`.
 
 - **Broadcast shows each face's picture** (click to enlarge), and Saved faces has a Broadcast… button that opens
   the page with that face picked.

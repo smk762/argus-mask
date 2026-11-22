@@ -285,7 +285,7 @@ def test_inspect_writes_a_manifest_for_a_splat_archive(tmp_path) -> None:
         "format": "lam-splat",
         "splats": None,
     }
-    assert manifest["framing"] == {"distance": 0.7, "height": 1.65, "fov": 50.0}
+    assert manifest["framing"] == {"distance": 1.6, "height": 1.65, "fov": 23.0}
     assert manifest["provenance"]["kind"] == "personal" and manifest["mask_version"] == MASK_VERSION
     report = json.loads(runner.invoke(app, ["inspect", str(directory), "--json"]).output)
     assert report["format"] == "lam-splat" and report["refused"] is None and report["splats"] == 3

@@ -34,29 +34,36 @@ import { Backdrop } from './backdrop.js';
 import { ARKIT, lipBudget } from './motion.js';
 
 // Where the camera sits when the manifest does not say (faces.py SPLAT_FRAMING): LAM's heads stand at about
-// 1.65 m. The camera aims at `height` from a tenth of its distance above it, as a portrait is taken.
-export const SPLAT_FRAMING = { distance: 0.7, height: 1.65, fov: 50 };
+// 1.65 m. The camera aims at `height` from a tenth of its distance above it, as a portrait is taken. A long lens, as
+// the portrait was taken with: from 0.7 m at 50 degrees the same head reads narrower, longer and older (#151).
+export const SPLAT_FRAMING = { distance: 1.6, height: 1.65, fov: 23 };
+const SPLAT_FRAMING_OLD = { distance: 0.7, height: 1.65, fov: 50 };   // before #151, still in older manifests
 const MESH_DEFAULT = { distance: 0.6, height: 0, fov: 30 };   // models.Framing's defaults: "not set" for a splat head
 // Over a backdrop, closer: LAM's head fades out below the collarbone, which a plain dark background hides and a
 // scene shows as a floating head. This shot ends just above the fade. Used only when the manifest sets no framing.
-export const SPLAT_CLOSE = { distance: 0.45, height: 1.67, fov: 50 };
+export const SPLAT_CLOSE = { distance: 1.03, height: 1.67, fov: 23 };
 const LIFT = 0.1;
 // Where a LAM head ends: its splats thin out into ragged wisps below the collarbone, where the portrait's shoulders
 // ran out. Between these heights (metres, the head's own space) the picture fades to what is behind the head, so the
 // bust ends in a soft edge of our making. LAM stands every head alike, so one pair serves them all.
 export const FADE = { top: 1.5, bottom: 1.445 };
 const FADE_ROWS = 12;   // strips across the fade: a smooth curve in vertex alpha
+const FADE_COLS = 33;   // and down it: the shadow's curve across the picture
+// The shadow under the bust over a backdrop: how dark at its deepest, and the bust's half width (metres) it covers
+// fully before easing out over as much again.
+export const SHADOW = { depth: 0.55, width: 0.2 };
 
 export function splatFraming(framing) {
   const f = framing || {};
   return splatFraming.isDefault(framing) ? { ...SPLAT_FRAMING } : { distance: f.distance || SPLAT_FRAMING.distance, height: f.height || 0, fov: f.fov || SPLAT_FRAMING.fov };
 }
 // Whether a manifest's framing is "not set": absent, models.Framing's defaults (a mesh head's), or LAM's standard
-// shot, which `inspect` writes into every splat manifest. Only a framing chosen for this face is its own.
+// shot (now or before #151), which `inspect` writes into every splat manifest. Only a framing chosen for this face
+// is its own.
 splatFraming.isDefault = (framing) => {
   const f = framing || {};
   const same = (d) => f.distance === d.distance && (f.height || 0) === d.height && f.fov === d.fov;
-  return !framing || same(MESH_DEFAULT) || same(SPLAT_FRAMING);
+  return !framing || same(MESH_DEFAULT) || same(SPLAT_FRAMING) || same(SPLAT_FRAMING_OLD);
 };
 
 export const JAW = { knee: 0.35, slope: 0.35 };
@@ -242,18 +249,27 @@ export class SplatHead {
 
   // The soft edge under the bust (FADE): a strip across the bottom of the picture, drawn over the splats with the
   // same WebGL context, showing what is behind the head (the backdrop's own picture, or the background colour) and
-  // fading in from nothing at FADE.top to all of it at FADE.bottom. Nothing in it reads a clock: it is placed from
-  // the camera alone, so a recording has it exactly.
+  // fading in from nothing at FADE.top to all of it at FADE.bottom. Over a backdrop, the picture is dimmed under the
+  // bust (SHADOW), deepest below the head and gone towards the sides: a bust fading into a bright floor read as a
+  // pale band (#151), a shadow under it does not. Nothing in it reads a clock: it is placed from the camera alone,
+  // so a recording has it exactly.
   veil() {
     const v = this.r.viewer;
+    const picture = this.backdrop ? this.backdrop.texture : null;
+    const rows = FADE_ROWS + 2;   // the fade's strips, and one row at the bottom of the picture
     if (!this.fade) {
-      const rows = FADE_ROWS + 2;   // the fade's strips, and one row at the bottom of the picture
+      const n = rows * FADE_COLS;
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(rows * 2 * 3), 3));
-      geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(rows * 2 * 2), 2));
-      geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(rows * 2 * 4), 4));
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+      geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 4), 4));
       const index = [];
-      for (let i = 0; i < rows - 1; i += 1) index.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+      for (let i = 0; i < rows - 1; i += 1) {
+        for (let j = 0; j < FADE_COLS - 1; j += 1) {
+          const a = i * FADE_COLS + j, b = a + 1, c = a + FADE_COLS, d = c + 1;
+          index.push(a, b, c, b, d, c);
+        }
+      }
       geometry.setIndex(index);
       const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthTest: false, depthWrite: false });
       const mesh = new THREE.Mesh(geometry, material);
@@ -263,27 +279,38 @@ export class SplatHead {
       this.fade = { scene, mesh, camera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
     }
     const { scene, mesh, camera } = this.fade;
-    if (this.veiled !== this.shot) {
-      // The two heights on screen (y, -1 to 1), on the head's own axis.
+    if (this.veiled !== this.shot || this.veiledShadow !== Boolean(picture)) {
+      // The two heights on screen (y, -1 to 1), on the head's own axis, and the bust's half width at its foot.
       const at = (y) => new THREE.Vector3(0, y, 0).project(v.camera).y;
       const top = at(FADE.top);
       const bottom = Math.min(top, at(FADE.bottom));
+      const half = Math.abs(new THREE.Vector3(SHADOW.width, FADE.bottom, 0).project(v.camera).x);
       const ys = [-1.01];   // past the bottom edge: the strip below the fade is all background
       for (let i = 0; i <= FADE_ROWS; i += 1) ys.push(bottom + (top - bottom) * (i / FADE_ROWS));
       const alphas = [1];
       for (let i = 0; i <= FADE_ROWS; i += 1) { const k = 1 - i / FADE_ROWS; alphas.push(k * k * (3 - 2 * k)); }   // smoothstep
+      // Across: full shade within the bust's width, easing to none at twice it (smoothstep), on a backdrop only.
+      const shade = (x) => {
+        if (!picture) return 1;
+        const k = Math.min(1, Math.max(0, (Math.abs(x) - half) / half));
+        return 1 - SHADOW.depth * (1 - k * k * (3 - 2 * k));
+      };
       const { position, uv, color } = mesh.geometry.attributes;
       ys.forEach((y, i) => {
-        const low = Math.min(y, ys[1]);   // the first row never rises above the fade's foot
-        const yy = i === 0 ? low : y;
-        position.setXYZ(2 * i, -1, yy, 0); position.setXYZ(2 * i + 1, 1, yy, 0);
-        uv.setXY(2 * i, 0, (yy + 1) / 2); uv.setXY(2 * i + 1, 1, (yy + 1) / 2);
-        color.setXYZW(2 * i, 1, 1, 1, alphas[i]); color.setXYZW(2 * i + 1, 1, 1, 1, alphas[i]);
+        const yy = i === 0 ? Math.min(y, ys[1]) : y;   // the first row never rises above the fade's foot
+        for (let j = 0; j < FADE_COLS; j += 1) {
+          const x = -1 + (2 * j) / (FADE_COLS - 1);
+          const at3 = i * FADE_COLS + j;
+          const f = shade(x);
+          position.setXYZ(at3, x, yy, 0);
+          uv.setXY(at3, (x + 1) / 2, (yy + 1) / 2);
+          color.setXYZW(at3, f, f, f, alphas[i]);
+        }
       });
       position.needsUpdate = uv.needsUpdate = color.needsUpdate = true;
       this.veiled = this.shot;
+      this.veiledShadow = Boolean(picture);
     }
-    const picture = this.backdrop ? this.backdrop.texture : null;
     const material = mesh.material;
     if (material.map !== picture) { material.map = picture; material.needsUpdate = true; }
     material.color.copy(picture ? WHITE : this.ground);
@@ -344,10 +371,26 @@ export class SplatHead {
     if (!this.anchor) { this.anchor = new THREE.Group(); v.threeScene.add(this.anchor); }
     this.anchor.visible = Boolean(made);   // the renderer draws its scene, background and all, only if this is on
     v.threeScene.background = made ? made.texture : null;
-    this.aim(made && !this.ownFraming ? SPLAT_CLOSE : this.framing);
+    this.aim(this.shotFraming());
     this.sized = null;
     this.fit();
     return made;
+  }
+
+  // The shot (backgrounds.SHOTS): 'close', head and shoulders ending above the fade; 'wide', the floating head with
+  // room around it; '' or null, whichever suits the background (close over a backdrop, wide on a plain one).
+  setShot(shot) {
+    this.shotName = ['close', 'wide'].includes(shot) ? shot : '';   // not this.shot: aim() keeps the camera there
+    this.aim(this.shotFraming());
+    this.sized = null;
+    this.fit();
+  }
+
+  // A framing the face's manifest chose for itself wins over any shot.
+  shotFraming() {
+    if (this.ownFraming) return this.framing;
+    const close = this.shotName ? this.shotName === 'close' : Boolean(this.backdrop);
+    return close ? SPLAT_CLOSE : this.framing;
   }
 
   // The canvas at its host's size (CSS pixels, as the renderer counts them), and the backdrop at the canvas's.

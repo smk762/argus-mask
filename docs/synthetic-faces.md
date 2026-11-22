@@ -111,6 +111,32 @@ The sheet draws each head with its limits off: from the front, turned 12° and 2
 
 Say the age in the subject (18 or over), and never a name. The subject is the only part of the prompt to change; the rest is the recipe.
 
+### Pick the style: realistic character art, not a photograph
+
+LAM keeps a face's outline (rendered at the portrait's own camera, the landmarks land within about 3% of the eyes' spacing) but softens what is inside it: the lids sit lower over the iris, the lips thin, the skin loses its fine detail. A photograph comes out of that heavier and older than it went in; an idealised face with smooth, painted skin survives it (#151). So `--style` picks the template around the subject:
+
+| `--style` | Look | Verdict on the first batches |
+|---|---|---|
+| `character` | realistic adult proportions and light, a smooth painted finish | the pick: `lam-c1011` and `lam-c1022` |
+| `stylised` | a digital painting, idealised | good; a little more illustrated |
+| `photo` (default) | a studio photograph | a believable portrait, a head that reads about ten years older |
+| `semireal` | a 3D render | too doll-like, and reads young: don't use it |
+
+Every style is a text prompt only, so the face stays `synthetic`. Say "late twenties" or older in the subject: a painted style pulls a face younger. Reject a portrait with a signature or text in it (FLUX paints one now and then), however clean its face.
+
+### Fit its rest set to its portrait
+
+The viewer's default rest set (`warm`) closes the lids a little, which on a LAM head's already low lids reads as hooded. `lam/fit_rest.py` searches a rest set for each head instead: the viewer draws the head with each candidate, and MediaPipe scores it against the portrait (eyes, lips and brows placed against the outline; how much iris the lids show; how full the lips are; MediaPipe's own ARKit scores). About 3½ minutes per head on the CPU, against a running server:
+
+```bash
+python lam/fit_rest.py --url http://127.0.0.1:8109 --face lam-c1022 --portrait assets/lam-c1022/source/portrait.png \
+    --model face_landmarker.task --out work/lam-c1022.rest.json
+```
+
+It writes a rest set (`fit-<face>`) to define in `expressions.json` and choose for the face, its score against `warm`'s, and both renders. A slight smile is kept where the portrait has one. A splat head is drawn with a long lens by default (23° from 1.6 m, as the portrait was taken): from close up at a wide angle the same head reads narrower and longer.
+
+`FIT_SHAPE=1 lam/make_heads.sh ...` also searches the head's FLAME shape against the portrait at its own camera (about 10 minutes more per head). It helped `lam-s622` a little (misfit 0.033 to 0.026); it is off by default.
+
 ## More than one view
 
 One-shot routes need only the single frontal portrait. Prefer them.
