@@ -180,12 +180,16 @@ async function watchScreens() {
 
 const stage = new Stage();
 // Reviews may overlap (a quick switch of copy or framing, another face): after each wait, only the latest one goes
-// on, so the stage, the buttons and the side panel are all for one face.
+// on, so the stage, the buttons and the side panel are all for one face. A click takes the stage (reviewSeq) only
+// once its manifest is here: one that is refused leaves the review in progress to finish, or the stage would show
+// that review's model under the name, buttons and pickers of the one before.
+let reviewClicks = 0;
 let reviewSeq = 0;
 async function openReview(row, place = main(row), framing = 'head') {
-  const token = ++reviewSeq;
+  const token = ++reviewClicks;
   const manifest = await json(`/face/${enc(row.id)}?from=${place}`).catch((err) => { status(err.message, true); return null; });
-  if (!manifest || token !== reviewSeq) return;
+  if (!manifest || token < reviewSeq) return;   // refused, or a later click (or a close) got there first
+  reviewSeq = token;
   $('modal').hidden = false;
   stage.attach($('stage'));
   const framed = framing !== 'head' && manifest.framings?.[framing];
@@ -272,7 +276,7 @@ async function backdropPicker(row, place, token, splatHead) {
   return [el('h2', { textContent: 'Backdrop' }), select, shot];
 }
 
-function closeReview() { reviewSeq++; $('modal').hidden = true; }   // a review still loading must not reopen it
+function closeReview() { reviewSeq = ++reviewClicks; $('modal').hidden = true; }   // a review still loading must not reopen it
 $('m-close').onclick = closeReview;
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeReview(); });
 
