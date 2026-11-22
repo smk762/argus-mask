@@ -85,6 +85,32 @@ Generate a batch (16–32), shortlist using the table above, then refine.
 - **Avoid face restorers** (GFPGAN, CodeFormer). They smooth skin and quietly change the identity, which is fatal if you need more than one view of the same person.
 - **No real-person tools.** Never fix a portrait with a tool that takes a reference face, unless that reference is itself one of your synthetic portraits.
 
+## For a LAM head
+
+A LAM splat head ([lam/README.md](../lam/README.md)) is built from the one portrait, so it knows nothing the portrait did not show. Everything in the table above holds, and three things matter more:
+
+- **Hair must cover the hairline and the temples.** LAM invents the sides of the head. Where the forehead runs bare up to a centre parting, or the hair is pulled back off the temples, a pale gap opens as soon as the head tips back or turns (from about 7° and 12° on `splat-01`). A fringe, or hair that sweeps across the top of the forehead and down past the temples, hides it: `syn-w101` holds to 20° either way. This overrides "forehead visible" above: the brows and eyes stay clear, the hairline does not have to.
+- **Flat light, and no smile.** The head keeps the portrait's light and expression for good. Ask for a large soft light directly in front and a relaxed, closed mouth.
+- **Head and shoulders, plain dark background.** The bust fades out below the collarbone, so a low neckline or a plain top reads best; the background is matted away.
+
+Make a batch, build a head from each, and pick from a contact sheet, never from the portraits alone: two portraits that look alike can give heads that fail in different places.
+
+```bash
+# 1. Portraits: FLUX.1 schnell through argus-darkroom, no LoRA, so the face is synthetic. One per seed, each with its record.
+python lam/portraits.py --subject "a woman in her thirties, short dark hair with a fringe over the forehead, green eyes, \
+    wearing a charcoal crew-neck top" --seeds 501-508 --out work/portraits
+
+# 2. Heads, one per portrait (about 2 minutes and 9 GB of VRAM each).
+lam/make_heads.sh $(for p in work/portraits/*.png; do n=$(basename $p .png); echo "s$n=$p"; done)
+
+# 3. Add each as a face (argus-mask inspect --write-manifest), then draw the sheet from a running server.
+python lam/sheet.py --url http://127.0.0.1:8109 --out work/sheet.jpg s501 s502 s503
+```
+
+The sheet draws each head with its limits off: from the front, turned 12° and 20° each way, tipped back and forward, and with the jaw at 0.35 and 0.6. Reject a head with a gap at the hairline or a smear at the temple inside 12°. If the best head still gives out early, give its manifest its own `limits` (README § Faces) and the viewer will keep it inside them.
+
+Say the age in the subject (18 or over), and never a name. The subject is the only part of the prompt to change; the rest is the recipe.
+
 ## More than one view
 
 One-shot routes need only the single frontal portrait. Prefer them.

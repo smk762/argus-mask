@@ -135,3 +135,58 @@ const root = new THREE.Group(); root.add(mesh);
 console.log(JSON.stringify(lipBudget(root)));
 """)
     assert out is None
+
+
+def _splat_limits(calls: str) -> list:
+    """Run the splat head's limit functions in node (they are plain arithmetic) and return what *calls* gives."""
+    source = (VIEWER / "splat.js").read_text(encoding="utf-8")
+    consts = "\n".join(
+        line.removeprefix("export ")
+        for line in source.splitlines()
+        if line.startswith(("export const JAW =", "export const TURN =", "const TURN_KNEE ="))
+    )
+    functions = "\n".join(
+        _block(source, source.index(f"export function {n}(")).removeprefix("export ")
+        for n in ("eased", "turnLimit", "jawKnee")
+    )
+    script = f"{consts}\n{functions}\nconsole.log(JSON.stringify({calls}));"
+    return json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_splat_head_never_turns_past_its_limits_and_eases_into_them() -> None:
+    """A LAM head smears past what its portrait showed (#154): the turn is held inside the limits, with no kink."""
+    yaws = _splat_limits("[0, 5, 12, 12.01, 20, 40, 90, -40].map((y) => turnLimit(null)({ yaw: y }).yaw)")
+    assert yaws[:3] == [0, 5, 12]  # under the knee (0.6 of 20 degrees), a turn is shown as it is
+    assert yaws[3] == pytest.approx(12.01, abs=1e-4)  # and just past it barely changes: slope 1 on both sides
+    assert yaws[2] < yaws[4] < yaws[5] < yaws[6] < 20  # more turn always shows more, and never the limit
+    assert yaws[7] == -yaws[5]
+    # Tipped back (negative pitch) gives out sooner than tipped forward; the roll shows no new side.
+    up, down, roll = _splat_limits(
+        "(() => { const h = turnLimit(null); return [h({ pitch: -30 }).pitch, h({ pitch: 30 }).pitch, h({ roll: 30 }).roll]; })()"
+    )
+    assert -8 < up < -4.8 and 12 < down < 20 and roll == 30
+    # A face's own limits replace the defaults one by one; switched off, the head turns as told.
+    own = _splat_limits(
+        "[turnLimit({ yaw: 12, pitch_up: null })({ yaw: 40, pitch: -30 }), turnLimit(null, true)({ yaw: 40, pitch: -30 })]"
+    )
+    assert own[0]["yaw"] < 12 and -8 < own[0]["pitch"] < -4.8
+    assert own[1] == {"yaw": 40, "pitch": -30, "roll": 0}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_jaw_cap_sits_where_asked_then_where_the_face_says() -> None:
+    knees = _splat_limits(
+        "[jawKnee(null), jawKnee({ jaw: 0.5 }), jawKnee({ jaw: 0.5 }, 0.2), jawKnee({ jaw: null }), jawKnee(null, -1)]"
+    )
+    assert knees == [0.35, 0.5, 0.2, 0.35, 0]
+
+
+def test_every_frame_a_splat_head_draws_ends_with_its_soft_edge() -> None:
+    """The fade under the bust (#153) is drawn after the splats, live and in a recording alike, and reads no clock."""
+    source = (VIEWER / "splat.js").read_text(encoding="utf-8")
+    for method in ("step(t = 0)", "async exact(t = 0)"):
+        body = _block(source, source.index(f"  {method} "))
+        assert body.rstrip("} \n").endswith("this.veil();"), method
+    veil = _block(source, source.index("  veil() "))
+    assert not any(word in veil for word in ("performance.now", "Date", "Math.random"))

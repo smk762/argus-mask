@@ -9,6 +9,9 @@ them through cortex's lease client, under the kinds in ``gpu-tenant.yaml``:
   fallback, because the local lease is a host-wide lock and a broadcast would hold it for hours.
 - ``voice-make``: a TTS service (Miso) making a voice, a candidate or a clone. ``interactive``; waited for, with
   ``ARGUS_GPU_BROKER_FALLBACK`` when the broker can't be reached, like any other job.
+- ``lam-head``: building LAM splat heads (``lam/``, #155). ``batch``; waited for. Not preemptible: a head
+  interrupted mid-build is lost. Never held while argus-darkroom makes the portraits: darkroom leases for itself,
+  and a lease held around it starves it.
 
 Nothing here runs unless ``ARGUS_GPU_COORDINATOR`` says so (``none`` by default). The env is cortex's
 (``ARGUS_GPU_BROKER_URL``, ``_TOKEN``, ``ARGUS_GPU_TENANT_MANIFEST``...): see ``.env.example``.
@@ -28,9 +31,11 @@ log = structlog.get_logger()
 
 A2F_LIVE = "a2f-live"
 VOICE_MAKE = "voice-make"
+LAM_HEAD = "lam-head"
 # What each kind asks for: gpu-tenant.yaml declares the same (tests/test_gpu_tenant.py checks they agree).
 A2F_VRAM_MB = 500  # the Audio2Face worker, measured on a 3090: its model stays loaded
 VOICE_VRAM_MB = 2500  # Miso with its model loaded (2.3 GB on a 3090), and room to synthesise
+LAM_VRAM_MB = 10000  # LAM peaks near 9 GB on a 3090
 LEASES: dict[str, dict[str, Any]] = {
     A2F_LIVE: {
         "kind": A2F_LIVE,
@@ -46,6 +51,14 @@ LEASES: dict[str, dict[str, Any]] = {
         "min_vram_mb": VOICE_VRAM_MB,
         "model_mb": 2300,
         "priority": "interactive",
+        "preemptible": False,
+    },
+    LAM_HEAD: {
+        "kind": LAM_HEAD,
+        "target": "in-process",
+        "min_vram_mb": LAM_VRAM_MB,
+        "model_mb": 0,
+        "priority": "batch",
         "preemptible": False,
     },
 }

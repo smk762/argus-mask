@@ -199,7 +199,7 @@ async function makeSplat(face, manifest, token, { SplatHead, readSkin }) {
   host.hidden = stale(token);
   stageEl.prepend(host);
   try {
-    return { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin }), host, skin };
+    return { splat: await SplatHead.create(host, { url, framing: manifest.framing, background: BACKGROUND, skin, limits: manifest.limits }), host, skin };
   } catch (error) {   // no half-built head
     host.remove();
     throw error;
@@ -208,7 +208,7 @@ async function makeSplat(face, manifest, token, { SplatHead, readSkin }) {
 
 async function loadSplat(clip, take, sound, manifest, token) {
   const mod = await import('./viewer/splat.js');
-  const { jawCap, JAW } = mod;
+  const { jawCap, jawKnee } = mod;
   let making = splats.get(clip.face);
   if (!making) {
     making = makeSplat(clip.face, manifest, token, mod);
@@ -225,7 +225,7 @@ async function loadSplat(clip, take, sound, manifest, token) {
   showOnly(kept.host);
   await kept.splat.exact();   // a frame sorted for this canvas and camera before the clip shows: no stale depth order
   if (stale(token)) return leave();   // the latest load has the stage, or will clear it
-  const motion = new Motion({ budget: kept.skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(JAW.knee) });
+  const motion = new Motion({ budget: kept.skin.budget, seed: faceSeed(manifest.id), rest: clip.rest?.weights || {}, life: clip.rest?.life ?? 1, cap: jawCap(jawKnee(manifest.limits)) });
   shown = { clip, take, splat: kept.splat, host: kept.host, motion, names: take.header.blendshapes, current: new Float32Array(take.header.blendshapes.length) };
   ready(clip, manifest, sound);
 }

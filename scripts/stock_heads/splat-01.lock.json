@@ -69,6 +69,10 @@
       "fov": 50.0
     },
     "framings": {},
+    "limits": {
+      "yaw": 12.0,
+      "pitch_up": 6.0
+    },
     "provenance": {
       "kind": "synthetic",
       "source": "A LAM Gaussian head (argus-mask lam/, #126) from a synthetic portrait: argus-darkroom record 7359c3c507d543c4bf67c67d2cdde7fd, FLUX.1 schnell, seed 102, 896x1152, 4 steps, SFW policy, no LoRA, no prompt expansion",

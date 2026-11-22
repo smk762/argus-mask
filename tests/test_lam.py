@@ -330,3 +330,21 @@ def test_photometric_tracking_is_refused(lam, tmp_path) -> None:
     config.write_text("photometric: true\n")
     with pytest.raises(RuntimeError, match="photometric tracking must be off"):
         overrides.check_photometric_off(str(config))
+
+
+def test_a_portrait_darkroom_did_not_pass_or_made_with_a_lora_is_not_a_cleared_source(lam) -> None:
+    """lam/portraits.py (#151) keeps a portrait only with a record that shows it synthetic: passed, and no LoRA."""
+    import portraits  # noqa: PLC0415 - lam/ is on the path only inside the fixture
+
+    try:
+        assert portraits.seeds("501-503,507") == [501, 502, 503, 507]
+        assert portraits.refusal({"outcome": "passed", "request": {"loras": []}}) is None
+        assert "refused" in portraits.refusal({"outcome": "refused", "outcome_reason": "unchecked"})
+        assert "no record" in portraits.refusal({})
+        assert "LoRA" in portraits.refusal({"outcome": "passed", "request": {"loras": [{"name": "a-character"}]}})
+        stream = [b"event: progress\n", b'data: {"step": 1}\n', b"\n", b'data: {"record": {"id": "r1"}}\n']
+        assert portraits.last_event(stream) == {"record": {"id": "r1"}}
+        assert portraits.last_event([]) == {}
+        assert "{subject}" in portraits.TEMPLATE and "not smiling" in portraits.TEMPLATE
+    finally:
+        sys.modules.pop("portraits", None)

@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Broadcast remembers a voice per face**, and lists the voices typed before under "Used before", so a service
   that cannot list its speakers still gets a pick list.
 
+- **A splat head stays inside what its portrait showed** (#152, #154). A LAM head smears when it turns to a side
+  the portrait never showed, so a screen now eases every head turn towards a limit and never passes it: 20° of yaw,
+  8° tipped back and 20° tipped forward by default. A face's manifest can set its own in `limits` (wire 1.7:
+  `yaw`, `pitch_up`, `pitch_down`, and `jaw` for where the jaw cap sits); `splat-01` does. Takes are unchanged, and
+  a mesh head turns as before. `?turn=0` switches the limit off.
+- **LAM heads to a recipe** (#151): `docs/synthetic-faces.md § For a LAM head` (hair over the hairline and temples is
+  what lets a head turn), `lam/portraits.py` (a batch of FLUX schnell portraits through argus-darkroom, refusing any
+  record that did not pass or names a LoRA) and `lam/sheet.py` (a contact sheet of heads with their limits off).
+- **A `lam-head` GPU lease** (`gpu.py`, `gpu-tenant.yaml`): batch, 10 GB, for building LAM heads; never held around
+  darkroom, which leases for itself. `lam/Dockerfile.base` takes `--build-arg COMPILE_JOBS` (8 parallel CUDA
+  compiles ran a shared host out of memory).
+- **A splat head ends in a soft edge** (#153) in place of ragged wisps under the collarbone, over a plain colour
+  and over a backdrop, and in recordings.
+
 ### Fixed
 
 - **Voices are listed from agent-composer's rag-chat.** A TTS URL ending `/synthesise/pcm` was not taken for the

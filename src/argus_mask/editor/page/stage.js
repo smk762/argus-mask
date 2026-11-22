@@ -119,9 +119,9 @@ export class Stage {
   // thrown away, or a splat renderer it made would be left running, unseen, over the face asked for.
   // *body*: the model shows the body ('waist' or 'full'): its arms stand down from the A-pose they are built in,
   // and a full body stands on the floor.
-  async load(modelUrl, framing = {}, format = 'gltf', { body = null } = {}) {
+  async load(modelUrl, framing = {}, format = 'gltf', { body = null, limits = null } = {}) {
     const gen = (this.loads = (this.loads || 0) + 1);
-    if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen);
+    if (format === 'lam-splat') return this.loadSplat(modelUrl, framing, gen, limits);
     const gltf = await new GLTFLoader().loadAsync(modelUrl);
     if (gen !== this.loads) { dispose(gltf.scene); return; }
     this.dropSplat();
@@ -154,8 +154,8 @@ export class Stage {
     this.look.focus(gltf.scene);
   }
 
-  async loadSplat(modelUrl, framing, gen) {
-    const { SplatHead, readSkin, jawCap } = await import('./splat.js');
+  async loadSplat(modelUrl, framing, gen, limits) {
+    const { SplatHead, readSkin, jawCap, jawKnee } = await import('./splat.js');
     const skin = await readSkin(modelUrl);
     if (gen !== this.loads) return;
     this.dropSplat();
@@ -170,14 +170,14 @@ export class Stage {
     this.splatBox = box;
     let head;
     try {
-      head = await oneSplatAtATime(() => SplatHead.create(box, { url: modelUrl, framing, skin, instant: true }));
+      head = await oneSplatAtATime(() => SplatHead.create(box, { url: modelUrl, framing, skin, instant: true, limits }));
     } catch (err) {
       if (gen === this.loads) this.dropSplat(); else box.remove();
       throw err;
     }
     if (gen !== this.loads) { head.dispose(); box.remove(); return; }
     this.splat = head;
-    this.motion = new Motion({ budget: skin.budget, rest: this.restWeights, life: this.restLife, cap: jawCap() });
+    this.motion = new Motion({ budget: skin.budget, rest: this.restWeights, life: this.restLife, cap: jawCap(jawKnee(limits)) });
     this.loaded = true;
   }
 

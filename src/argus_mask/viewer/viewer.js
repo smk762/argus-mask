@@ -27,6 +27,7 @@
 //   ?rest=<name>     the rest set to show instead of the face's own (warm, calm, neutral, ...: GET /expressions)
 //   ?life=1          how much the face moves at rest: 0 still, up to 2 (default: the rest set's own)
 //   ?jaw=0.35        splat heads: where the jaw cap's knee sits (1 turns the cap off)
+//   ?turn=0          splat heads: no limit on the head turn (to see where a head gives out)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -286,7 +287,7 @@ async function sceneFor(faceId) {
 async function loadSplat(faceId, manifest) {
   if (DISPLAY === 'hld') throw new Error('A splat face cannot be shown on display=hld yet. Use display=flat.');
   state.renderer = 'splat';
-  const { SplatHead, readSkin, jawCap, JAW } = await import('./splat.js');
+  const { SplatHead, readSkin, jawCap, jawKnee } = await import('./splat.js');
   const url = `/face/${encodeURIComponent(faceId)}/model/${encodeURIComponent(manifest.model.file)}?v=${manifest.model.sha256}`;
   const skin = await readSkin(url);
   const host = document.createElement('div');
@@ -295,7 +296,7 @@ async function loadSplat(faceId, manifest) {
   let colour = params.get('bg') || '#101216';
   if (colour === 'transparent') colour = '#101216';   // the splat renderer draws on an opaque canvas
   try { new THREE.Color(colour); document.body.style.background = colour; } catch { colour = '#101216'; }
-  splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD });
+  splat = await SplatHead.create(host, { url, framing: manifest.framing, background: colour, skin, instant: RECORD, limits: manifest.limits, unlimited: params.get('turn') === '0' });
   // A backdrop is drawn by the splat renderer itself (splat.js setScene), behind the head, on the same canvas.
   SCENE = await sceneFor(faceId);
   if (SCENE) {
@@ -303,8 +304,7 @@ async function loadSplat(faceId, manifest) {
     backdrop = await showScene(() => splat.setScene(SCENE, { quality, options: sceneOptions() }));
   }
   state.scene = backdrop ? backdrop.summary : null;
-  const asked = Number.parseFloat(params.get('jaw'));
-  const knee = Number.isFinite(asked) ? Math.max(0, asked) : JAW.knee;   // below 0, the jaw would never open
+  const knee = jawKnee(manifest.limits, Number.parseFloat(params.get('jaw')));
   motion = new Motion({ budget: skin.budget, seed: faceSeed(manifest.id), life: LIFE ?? 1, cap: jawCap(knee) });
   state.lips = motion.budget;
   state.jaw = knee;

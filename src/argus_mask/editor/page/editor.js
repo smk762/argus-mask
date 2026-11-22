@@ -659,7 +659,7 @@ function meta() {
 async function showFace(faceId) {
   const from = made.get(faceId)?.previewed === false ? 'export' : 'preview';
   const manifest = await json(`/face/${encodeURIComponent(faceId)}?from=${from}`);
-  await stage.load(modelUrl(faceId, manifest, `from=${from}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
+  await stage.load(modelUrl(faceId, manifest, `from=${from}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format, { limits: manifest.limits });
   shown = manifest;
   if (!stage.host) stage.attach($('thumb'));
   $('empty').hidden = true;

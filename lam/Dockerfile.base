@@ -15,7 +15,11 @@ RUN pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url h
  && pip install xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu121
 COPY --from=lam requirements.txt /tmp/requirements.txt
 RUN grep -v "git+" /tmp/requirements.txt > /tmp/req-pypi.txt && pip install -r /tmp/req-pypi.txt "numpy==1.23.0"
-RUN pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@v0.7.7" \
+# Parallel compile jobs for the CUDA extensions. Each nvcc job can take several GB of RAM: on a host with other
+# tenants, build with --build-arg COMPILE_JOBS=2 (8 ran morpheus out of memory beside ComfyUI).
+ARG COMPILE_JOBS=8
+RUN export MAX_JOBS=${COMPILE_JOBS} \
+ && pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@v0.7.7" \
  && pip install --no-build-isolation "git+https://github.com/ashawkey/diff-gaussian-rasterization/" \
  && pip install --no-build-isolation "nvdiffrast@git+https://github.com/ShenhanQian/nvdiffrast@backface-culling" \
  && pip install --no-build-isolation "git+https://github.com/camenduru/simple-knn/"

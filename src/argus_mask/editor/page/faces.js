@@ -189,7 +189,7 @@ async function openReview(row, place = main(row), framing = 'head') {
   const framed = framing !== 'head' && manifest.framings?.[framing];
   const shown = framed || { model: manifest.model, framing: manifest.framing };
   await stage.load(modelUrl(row.id, manifest, `from=${place}&v=${shown.model.sha256}`, framed ? framing : 'head'),
-    shown.framing || {}, manifest.model.format, { body: framed ? framing : null });
+    shown.framing || {}, manifest.model.format, { body: framed ? framing : null, limits: manifest.limits });
   if (token !== reviewSeq) return;
   // An exported face keeps the rest set picked here (expressions.json); a preview's only previews.
   const keep = place === 'export' ? async (name) => {
