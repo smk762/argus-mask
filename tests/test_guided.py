@@ -111,9 +111,11 @@ def test_a_record_survives_a_round_trip(tmp_path: Path) -> None:
     assert again.created == T0 + timedelta(minutes=1) and again.updated > again.created
 
 
-def test_a_digest_is_what_the_step_found_not_when_or_what_was_overruled() -> None:
+def test_a_digest_is_what_the_step_found_not_when_or_how_or_what_was_overruled() -> None:
     found = result("portrait", "c1", check("temples", "advisory", "bare"), scores={"light": 0.1})
-    later = found.model_copy(update={"started": T0, "finished": T0, "after": {"source": SHA}})
+    later = found.model_copy(
+        update={"started": T0, "finished": T0, "after": {"source": SHA}, "run": {"seconds": 131.5, "log_tail": ["x"]}}
+    )
     assert later.digest == found.digest
     assert result("portrait", "c1", check("temples", "advisory", "bare"), scores={"light": 0.2}).digest != found.digest
     assert result("portrait", "c2", check("temples", "advisory", "bare"), scores={"light": 0.1}).digest != found.digest

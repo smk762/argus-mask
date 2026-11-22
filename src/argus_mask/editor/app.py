@@ -17,6 +17,9 @@
 ``GET  /faces.html``                    the saved-faces page
 ``GET  /guided``, ``/guided/{id}``      the guided builds, and one's record: every step's result, each with its status
                                         and what stands in the way of the next (``editor/guided.py``)
+``POST /guided/{id}/candidates/{candidate}/build``  build a candidate's LAM head from its portrait (a job, queued:
+                                        one head at a time); ``{"fit_shape": true}`` also fits its FLAME shape
+``GET  /guided/{id}/jobs/{job}``, ``POST /guided/{id}/jobs/{job}/stop``  a build job's progress; stop it
 ``GET  /broadcast/state``               the server's faces, who watches them, the TTS defaults, running broadcasts
 ``GET  /voices``                        the voices a (Wyoming) TTS service lists: ``?tts=`` its URL
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
@@ -33,6 +36,8 @@ reference is looked up in the installed library: no path from the request
 reaches the file system or Blender's command line except through that lookup.
 A pack is installed by its catalogue id alone: the URL, the hash and where it
 unpacks come from the catalogue and the configured data directory, never the request.
+A guided face's LAM build takes a build's id and a candidate's alone: the portrait
+is the one its record keeps, and the pipeline's paths are the editor's own settings.
 """
 
 from __future__ import annotations
@@ -60,13 +65,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, decode_wav, read_wav
 from argus_mask.backgrounds import PlateError, PlateStore, SceneChoices
-from argus_mask.config import EditorSettings, Settings
+from argus_mask.config import EditorSettings, LamSettings, Settings
 from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of, voice_refusal
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
-from argus_mask.editor.guided import GuidedError, GuidedStore, NoSuchBuild
+from argus_mask.editor.guided import GuidedError, GuidedStore, NoSuchBuild, NotReady
 from argus_mask.editor.guided import steps as guided_steps
+from argus_mask.editor.lam_build import Busy as BuildingHead
+from argus_mask.editor.lam_build import LamBuilds, LamError
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
 from argus_mask.editor.packs import Busy as Installing
 from argus_mask.editor.packs import Installs, PackError, load_catalogue
@@ -239,6 +246,13 @@ class RestDefine(BaseModel):
     life: float = 1.0
 
 
+class LamBuild(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Also search the head's FLAME shape against the portrait (lam/fit_shape.py): about ten minutes more.
+    fit_shape: bool = False
+
+
 class AliasTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
     face: str = Field(..., pattern=FACE_ID_PATTERN)
@@ -260,6 +274,7 @@ def create_editor_app(
     builder: Builder | None = None,
     packs: Installs | None = None,
     gpu: Any = None,  # noqa: ANN401 - a cortex GpuCoordinator; by default the one ARGUS_GPU_COORDINATOR names
+    lam: LamBuilds | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -284,6 +299,7 @@ def create_editor_app(
     voice_store = VoiceStore(ed.voices_dir)
     gpu = gpu if gpu is not None else gpu_coordinator()
     generations = Generations(voice_store, gpu)
+    lam = lam or LamBuilds(guided, LamSettings.from_env(), gpu)
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
     packs = packs or Installs(ed.data_dir, load_catalogue())
 
@@ -293,6 +309,7 @@ def create_editor_app(
         await broadcasts.stop_all()
         await generations.stop_all()
         await packs.stop_all()
+        await lam.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -542,7 +559,12 @@ def create_editor_app(
     @app.get("/guided")
     def guided_builds() -> dict:
         builds, unreadable = guided.scan()
-        return {"builds": [b.summary() for b in builds], "refused": unreadable, "steps": guided_steps()}
+        return {
+            "builds": [b.summary() for b in builds],
+            "refused": unreadable,
+            "steps": guided_steps(),
+            "lam": lam.state(),  # whether a head can be built here, why not, and the builds running or queued
+        }
 
     @app.get("/guided/{build_id}")
     def guided_build(build_id: str) -> dict:
@@ -552,6 +574,38 @@ def create_editor_app(
             raise HTTPException(404, str(exc)) from exc
         except GuidedError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/guided/{build_id}/candidates/{candidate}/build")
+    async def guided_lam_build(build_id: str, candidate: str, req: LamBuild | None = None) -> dict:
+        """Build a candidate's head from the portrait its record keeps (#155). Answers at once, with the job."""
+        try:
+            job = lam.start(build_id, candidate, fit_shape=bool(req and req.fit_shape))
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (NotReady, BuildingHead) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except LamError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("lam_build_asked", build=build_id, candidate=candidate, fit_shape=job.fit_shape)
+        return job.public()
+
+    def lam_job(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - a LamJob
+        job = lam.jobs.get(job_id)
+        if job is None or job.build_id != build_id:
+            raise HTTPException(404, "no such build job")
+        return job
+
+    @app.get("/guided/{build_id}/jobs/{job_id}")
+    def guided_job(build_id: str, job_id: str) -> dict:
+        return lam_job(build_id, job_id).public()
+
+    @app.post("/guided/{build_id}/jobs/{job_id}/stop")
+    async def guided_job_stop(build_id: str, job_id: str) -> dict:
+        job = lam_job(build_id, job_id)
+        await lam.stop(job_id)  # its container is killed; nothing is written to the record
+        return job.public()
 
     # ---- backdrops: the scene each face shows by default, kept in the assets' scenes.json ----------------
 

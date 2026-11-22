@@ -8,6 +8,7 @@
 #   BLENDER      Blender 4.5 [~/argus-mask-head/blender/blender]
 #   WORK         scratch for portraits, logs and LAM's output [~/lam-spike/work]
 #   HEADS        where the packed heads go [~/mask-examples/heads]
+#   LAM_CONTAINER  a name for LAM's container, so a watchdog can stop it (docker kill) [none]
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 LAM_DIR=${LAM_DIR:-~/lam-spike/LAM}
@@ -36,7 +37,7 @@ for pair in "$@"; do
   out="$WORK/out-$name"
   # The container writes as root: clear and re-own its output through a throwaway container.
   docker run --rm -v "$WORK":/work alpine:3.21 rm -rf "/work/out-$name"
-  docker run --rm --gpus all -e USER=lam -e PYTHONPATH=/lam -e IMG="/work/$name.png" -e OUT="/work/out-$name" \
+  docker run --rm --gpus all ${LAM_CONTAINER:+--name "$LAM_CONTAINER"} -e USER=lam -e PYTHONPATH=/lam -e IMG="/work/$name.png" -e OUT="/work/out-$name" \
     -e FIT_SHAPE -e FIT_DIMS -e FIT_GENERATIONS \
     -v "$LAM_DIR":/lam -v "$here":/argus:ro -v "$WORK":/work \
     -v "$FLAME_OPEN":$flame/flame_assets/flame/flame2023.pkl:ro -v "$FLAME_OPEN":$flame/flame_vhap/flame2023.pkl:ro \

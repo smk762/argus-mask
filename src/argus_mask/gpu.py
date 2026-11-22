@@ -10,8 +10,9 @@ them through cortex's lease client, under the kinds in ``gpu-tenant.yaml``:
 - ``voice-make``: a TTS service (Miso) making a voice, a candidate or a clone. ``interactive``; waited for, with
   ``ARGUS_GPU_BROKER_FALLBACK`` when the broker can't be reached, like any other job.
 - ``lam-head``: building LAM splat heads (``lam/``, #155). ``batch``; waited for. Not preemptible: a head
-  interrupted mid-build is lost. Never held while argus-darkroom makes the portraits: darkroom leases for itself,
-  and a lease held around it starves it.
+  interrupted mid-build is lost. Taken by the editor's build job (``editor/lam_build.py``) only while the
+  pipeline runs. Never held while argus-darkroom makes the portraits: darkroom leases for itself, and a lease
+  held around it starves it.
 
 Nothing here runs unless ``ARGUS_GPU_COORDINATOR`` says so (``none`` by default). The env is cortex's
 (``ARGUS_GPU_BROKER_URL``, ``_TOKEN``, ``ARGUS_GPU_TENANT_MANIFEST``...): see ``.env.example``.
