@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Voices are listed from agent-composer's rag-chat.** A TTS URL ending `/synthesise/pcm` was not taken for the
   `/synthesise` contract, so the editor never asked it for speakers. A named speaker (XTTS's studio speakers) is
   listed as `speaker:<name>`; listed bare, it was sent as a clone id.
+- **A review that cannot be opened leaves the one still loading to finish** (Saved faces, `faces.js`). A click whose
+  manifest was refused while another review's model was loading cancelled that review: its model reached the stage
+  under the name, buttons and pickers of the review before, which saved a backdrop or rest set for that one.
 
 ## [0.3.0] - 2026-11-19
 
