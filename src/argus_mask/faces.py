@@ -37,7 +37,6 @@ from pydantic import ValidationError
 from argus_mask.arkit import ARKIT_52
 from argus_mask.consent import ConsentStore, ConsentUse, refusal
 from argus_mask.models import (
-    FACE_ID_PATTERN,
     MAX_BOUND_SPLATS,
     MODEL_SUFFIXES,
     RESERVED_FACE_IDS,
@@ -46,6 +45,8 @@ from argus_mask.models import (
     Framing,
     ModelFile,
     Provenance,
+    is_face_id,
+    is_safe_name,
 )
 
 MANIFEST_NAME = "manifest.json"
@@ -62,7 +63,6 @@ MAX_TEXTURE = 2048
 _GLB_MAGIC = 0x46546C67  # "glTF"
 _CHUNK_JSON = 0x4E4F534A
 _CHUNK_BIN = 0x004E4942
-_FACE_ID = re.compile(FACE_ID_PATTERN)
 
 
 class FaceError(ValueError):
@@ -252,7 +252,7 @@ SPLAT_MAX_MEMBER = 64 << 20  # bytes unpacked, each (C101's largest, skin.glb, i
 SPLAT_MAX_TOTAL = 160 << 20  # bytes unpacked, all together; also the cap on the archive itself
 SPLAT_MAX_RATIO = 100  # unpacked to packed, for members over SPLAT_RATIO_FROM bytes: a zip bomb's tell
 SPLAT_RATIO_FROM = 64 << 10
-_SPLAT_FOLDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$")
+_SPLAT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,127}")
 _S_IFMT, _S_IFREG, _S_IFDIR = 0o170000, 0o100000, 0o040000
 
 
@@ -386,7 +386,7 @@ def inspect_splat(path: str | Path) -> SplatReport:
         if len(folders) != 1:
             raise FaceError(f"{label}: {len(folders)} top-level entries; a LAM head is one folder")
         folder = folders.pop()
-        if not _SPLAT_FOLDER.fullmatch(folder):
+        if not is_safe_name(folder, _SPLAT_FOLDER):
             raise FaceError(f"{label}: the folder name {folder!r} is not a plain name")
         if missing := [m for m in SPLAT_REQUIRED if m not in files]:
             raise FaceError(f"{label}: missing {', '.join(missing)}")
@@ -668,7 +668,7 @@ class FaceStore:
 
         A consented face must have a consent record that covers *use* now: served on a screen is ``avatar``.
         """
-        if not _FACE_ID.fullmatch(face_id):
+        if not is_face_id(face_id):
             raise FaceError(f"{face_id!r} is not a face id")
         if face_id in RESERVED_FACE_IDS:
             raise FaceError(f"{face_id!r} is reserved: the directory holds no faces")
@@ -815,7 +815,7 @@ class Aliases:
         return dict(self._raw)
 
     def _problem(self, name: str, target: str, raw: dict[str, str]) -> str | None:
-        if not _FACE_ID.fullmatch(name):
+        if not is_face_id(name):
             return f"{name!r} is not a face id"
         if (self.store.root / name).is_dir():
             return f"{name!r} is a face: an alias may not hide it"
@@ -839,7 +839,7 @@ class Aliases:
 
     def resolve(self, name: str) -> str:
         """The face a name stands for: a face's own id is itself, an alias its face; anything else as given."""
-        if not _FACE_ID.fullmatch(name) or (self.store.root / name).is_dir():
+        if not is_face_id(name) or (self.store.root / name).is_dir():
             return name
         raw = self.raw()
         target = raw.get(name)

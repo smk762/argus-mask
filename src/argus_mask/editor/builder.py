@@ -33,7 +33,7 @@ from argus_mask import __version__
 from argus_mask.editor.library import AssetLibrary, credits, licence_expression
 from argus_mask.editor.preset import Preset
 from argus_mask.faces import MANIFEST_NAME, FaceError, FaceStore, build_manifest, inspect_glb, sha256_file
-from argus_mask.models import FACE_ID_PATTERN, FaceManifest, FramedModel, Framing, ModelFile, Provenance
+from argus_mask.models import FaceManifest, FramedModel, Framing, ModelFile, Provenance, is_face_id, is_safe_name
 
 log = structlog.get_logger(__name__)
 
@@ -47,7 +47,7 @@ PREVIEW_DIR = ".preview"
 # so neither the server nor the preview listing sees it.
 CACHE_DIR = ".cache"
 DEFAULT_CACHE_SIZE = 40  # builds kept, least recently used first out: about 6 MB each
-_KEY = re.compile(r"^[0-9a-f]{64}$")
+_KEY = re.compile(r"[0-9a-f]{64}")
 TRASH_DIR = ".trash"  # deleted faces go here, not away: the server skips it, and a move restores one
 PLACES = ("export", "preview")
 # Where the stock heads put the camera: a bust, not a face filling the screen.
@@ -67,7 +67,6 @@ def frame_extent(above_eyes: float, below_eyes: float, fov: float = FRAME_FOV) -
 
 
 _ERROR_CHARS = 2000
-_FACE_ID = re.compile(FACE_ID_PATTERN)
 
 
 class BuildError(RuntimeError):
@@ -159,7 +158,7 @@ class Builder:
 
     def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
         """The cached build for *key* and its model, if it is whole: the model still matches its manifest."""
-        if self.cache_size == 0 or not _KEY.fullmatch(key):
+        if self.cache_size == 0 or not is_safe_name(key, _KEY):
             return None
         directory = self.cache_dir / key
         try:
@@ -197,7 +196,7 @@ class Builder:
             shutil.rmtree(old, ignore_errors=True)
 
     def _entries(self) -> list[Path]:
-        return [p for p in self.cache_dir.iterdir() if _KEY.fullmatch(p.name)]
+        return [p for p in self.cache_dir.iterdir() if is_safe_name(p.name, _KEY)]
 
     def _touch(self, entry: Path) -> None:
         """Mark *entry* the most recently used: later than every other entry, not merely now. The file system's
@@ -241,10 +240,10 @@ class Builder:
 
     def owned(self, face_id: str) -> bool:
         """Whether ``<assets>/<id>`` is a face the editor exported (so it may replace it)."""
-        return bool(_FACE_ID.fullmatch(face_id)) and (self.assets_dir / face_id / PRESET_NAME).is_file()
+        return is_face_id(face_id) and (self.assets_dir / face_id / PRESET_NAME).is_file()
 
     def previewed(self, face_id: str) -> bool:
-        return bool(_FACE_ID.fullmatch(face_id)) and (self.preview_dir / face_id / PRESET_NAME).is_file()
+        return is_face_id(face_id) and (self.preview_dir / face_id / PRESET_NAME).is_file()
 
     @staticmethod
     def _read_preset(directory: Path) -> Preset | None:
@@ -262,7 +261,7 @@ class Builder:
         for root, key in ((self.assets_dir, "exported"), (self.preview_dir, "previewed")):
             if not root.is_dir():
                 continue
-            for directory in sorted(p for p in root.iterdir() if p.is_dir() and _FACE_ID.fullmatch(p.name)):
+            for directory in sorted(p for p in root.iterdir() if p.is_dir() and is_face_id(p.name)):
                 preset = self._read_preset(directory)
                 if preset is None:
                     continue
@@ -282,7 +281,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.fullmatch(face_id):
+            if not is_face_id(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             try:
                 manifest, _ = FaceStore(self.preview_dir).load(face_id)
@@ -305,7 +304,7 @@ class Builder:
     async def _build(self, preset: Preset) -> BuildResult:
         # The id names a directory that is replaced: check it here as every other entry point does, not only
         # in the model (a preset made with model_construct or model_copy skips its validators).
-        if not _FACE_ID.fullmatch(preset.id):
+        if not is_face_id(preset.id):
             raise BuildError(f"{preset.id!r} is not a face id")
         if reason := self.check():
             raise BuildError(reason)
@@ -442,7 +441,7 @@ class Builder:
         return self.previewed(face_id) if place == "preview" else self.owned(face_id)
 
     def preset_in(self, face_id: str, place: str) -> Preset | None:
-        if not _FACE_ID.fullmatch(face_id):
+        if not is_face_id(face_id):
             return None
         return self._read_preset(self.root(place) / face_id)
 
@@ -471,7 +470,7 @@ class Builder:
                 }
             if place == "export":
                 for face_id, why in refused.items():
-                    if _FACE_ID.fullmatch(face_id):
+                    if is_face_id(face_id):
                         out.setdefault(face_id, {"id": face_id, "export": None, "preview": None})["refused"] = why
 
         def newest(e: dict) -> float:
@@ -485,7 +484,7 @@ class Builder:
             raise Busy("another build or export is running")
         async with self._lock:
             new_id = new_id or face_id
-            if bad := next((i for i in (face_id, new_id) if not _FACE_ID.fullmatch(i)), None):
+            if bad := next((i for i in (face_id, new_id) if not is_face_id(i)), None):
                 raise NoPreview(f"{bad!r} is not a face id")
             places = [p for p in PLACES if (self.root(p) / face_id).exists()]
             if not places:
@@ -556,7 +555,7 @@ class Builder:
         if self._lock.locked():
             raise Busy("another build or export is running")
         async with self._lock:
-            if not _FACE_ID.fullmatch(face_id):
+            if not is_face_id(face_id):
                 raise NoPreview(f"{face_id!r} is not a face id")
             found = [p for p in places if (self.root(p) / face_id).exists()]
             if not found:

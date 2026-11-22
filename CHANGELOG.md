@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Face ids, pack ids, cache keys, asset folder, recording and splat folder names are checked by argus-cortex's
+  `fs.safe_name`** (ai-code-auditor#60), each with its own pattern in place of safe_name's default, so every check
+  is exactly as strict as before. `models.is_face_id` replaces the three module copies of the face id regex, and
+  `models.is_safe_name` is the one place a pattern meets safe_name. `scripts/fetch_stock_head.py` keeps its own
+  check: it is standard library only.
+
 ### Added
 
 - **Broadcast shows each face's picture** (click to enlarge), and Saved faces has a Broadcast… button that opens

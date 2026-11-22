@@ -11,8 +11,10 @@ mono ``f32le`` PCM at ``StreamHeader.audio.sample_rate``.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 
+from argus_cortex.fs import PathRefused, safe_name
 from argus_cortex.wire import make_versioned_base, render_schema
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -33,8 +35,28 @@ WIRE_TITLE = "argus-mask wire contract"
 
 # A face id is a directory name under the assets root and a URL path segment.
 FACE_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+_FACE_ID = re.compile(FACE_ID_PATTERN)
 # Directories in the assets root that are not faces: plates of one's own live in backgrounds/.
 RESERVED_FACE_IDS: frozenset[str] = frozenset({"backgrounds"})
+
+
+def is_safe_name(value: object, pattern: re.Pattern[str], *, max_len: int = 128) -> bool:
+    """Whether *value* is one path segment *pattern* allows, by argus-cortex's ``fs.safe_name``.
+
+    safe_name matches the whole string (never ``.`` or ``..``) and refuses one longer than *max_len*. Each caller
+    passes its own *pattern*, which is stricter than safe_name's default (no capitals, no ``.``, a shorter limit).
+    """
+    try:
+        safe_name(value, pattern=pattern, max_len=max_len)  # type: ignore[arg-type]
+    except PathRefused:
+        return False
+    return True
+
+
+def is_face_id(value: object) -> bool:
+    """Whether *value* is a face id (`FACE_ID_PATTERN`): safe as a directory name and a URL path segment."""
+    return is_safe_name(value, _FACE_ID)
+
 
 _Versioned = make_versioned_base(
     "mask_version", MASK_VERSION, SUPPORTED_MASK_MAJORS, label="mask_version", class_name="_Versioned"
