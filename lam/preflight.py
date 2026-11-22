@@ -35,6 +35,35 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# All a pickled embedding may name: numpy's array reconstruction (`numpy.core` before numpy 2). Anything else is not
+# ours, and is refused before it can run: the check that vets a file must not execute it.
+_ARRAY_GLOBALS = {
+    (module, name)
+    for module in ("numpy.core.multiarray", "numpy._core.multiarray")
+    for name in ("_reconstruct", "scalar")
+} | {("numpy", "ndarray"), ("numpy", "dtype")}
+
+
+class _ArraysOnly(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        if (module, name) not in _ARRAY_GLOBALS:
+            raise pickle.UnpicklingError(f"{module}.{name} is not part of an embedding")
+        return super().find_class(module, name)
+
+
+def _load_embedding(path: Path) -> object:
+    """A `.npy` as LAM loads it (`np.load(allow_pickle=True)[()]`), but unpickling nothing beyond numpy arrays."""
+    with path.open("rb") as f:
+        version = np.lib.format.read_magic(f)
+        read_header = np.lib.format.read_array_header_1_0 if version == (1, 0) else np.lib.format.read_array_header_2_0
+        shape, _, dtype = read_header(f)
+        if dtype.hasobject:
+            array = _ArraysOnly(f, encoding="latin1").load()
+        else:
+            array = np.fromfile(f, dtype, int(np.prod(shape))).reshape(shape)
+    return array[()]
+
+
 def problems(root: Path = Path(), flame_sha256: str = FLAME_OPEN_SHA256) -> list[str]:
     """Why a head must not be made from the checkout at *root*: empty when every file is the one we checked."""
     found = []
@@ -48,9 +77,9 @@ def problems(root: Path = Path(), flame_sha256: str = FLAME_OPEN_SHA256) -> list
     for rel in EMBEDDING_PATHS:
         path = root / rel
         try:
-            theirs = np.load(path, allow_pickle=True, encoding="latin1")[()]
+            theirs = _load_embedding(path)
             mine = isinstance(theirs, dict) and embedding.same(theirs, ours)
-        except (OSError, ValueError, KeyError, TypeError, EOFError, pickle.UnpicklingError):
+        except Exception:  # noqa: BLE001 - a file that is not ours, however it fails, is a problem to list
             mine = False
         if not mine:
             found.append(f"{rel} is not argus-mask's landmark embedding: mount the one embedding.py writes over it")

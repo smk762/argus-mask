@@ -707,6 +707,8 @@ let shownContent = null;   // the content of the face on show (built here, or lo
 let failedContent = null;  // the content of the last build that failed: not retried until something changes
 let timer = null;
 let again = false;         // the form changed during a build: build once more when it ends
+let submitted = false;     // Build was pressed during a build or export: build when it ends, even for a new name or id
+let formGen = 0;           // bumped when a saved face replaces the form: a build of the form before must not show
 let ready = false;         // set once the page has loaded: restoring a draft is not a change to build
 
 const live = () => $('live').checked;
@@ -761,6 +763,7 @@ async function loadStarts() {
   meta();
   select.onchange = async () => {
     const chosen = presets.find((p) => p.id === select.value);
+    formGen++;
     if (chosen) adopt(chosen); else preset = structuredClone(DEFAULT);
     // A saved face is already built: live update has nothing to do until the form moves on from it.
     const before = shownContent;
@@ -793,7 +796,7 @@ $('filter').addEventListener('input', applyFilter);
 
 $('form').addEventListener('submit', (event) => {
   event.preventDefault();
-  if (busy) { again = true; status('A build is running; this one follows it.'); return; }
+  if (busy) { submitted = true; status('A build is running; this one follows it.'); return; }
   runBuild();
 });
 
@@ -801,7 +804,9 @@ async function runBuild() {
   clearTimeout(timer);
   const body = current();
   const content = contentOf(body);
+  const gen = formGen;
   again = false;
+  submitted = false;
   busy = true;
   $('build').disabled = true;
   building(true);
@@ -811,18 +816,24 @@ async function runBuild() {
   let ok = false;
   try {
     const done = await json('/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    status('Built. Loading the preview…');
-    built = JSON.stringify(body);
-    shownContent = content;
     failedContent = null;
     remember(body, done.key);
-    await showFace(done.manifest.id);
-    showBefore();
-    await loadStarts();
-    $('start').value = done.manifest.id;
-    status(done.cached
-      ? `From the build cache in ${done.seconds} s: no Blender run.`
-      : `Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
+    if (gen !== formGen) {
+      // A saved face was chosen while Blender worked: it keeps the stage and the form; this build is in history.
+      await loadStarts();
+      status(`Built ${done.manifest.id}, but another face was chosen meanwhile: it stays on show.`);
+    } else {
+      status('Built. Loading the preview…');
+      built = JSON.stringify(body);
+      shownContent = content;
+      await showFace(done.manifest.id);
+      showBefore();
+      await loadStarts();
+      if (gen === formGen) $('start').value = done.manifest.id;
+      status(done.cached
+        ? `From the build cache in ${done.seconds} s: no Blender run.`
+        : `Built in ${done.seconds} s: ${done.triangles?.toLocaleString() ?? '?'} triangles, about ${done.age_years}. A preview: Export to put it on /faces.`);
+    }
     if (!done.cached) store.set('seconds', done.seconds);
     ok = true;
   } catch (err) {
@@ -835,6 +846,13 @@ async function runBuild() {
     meta();
   }
   renderHistory();
+  // Build pressed while Blender worked: it was promised, so it runs even when only the name or id moved,
+  // which schedule() would skip as unchanged content.
+  if (submitted) {
+    again = false;
+    runBuild();
+    return ok;
+  }
   // Changes made while Blender worked: one more build for the latest form, not one per change.
   const moved = contentOf(current()) !== content;
   if (again || (live() && moved)) {
@@ -862,7 +880,7 @@ $('export').addEventListener('click', async () => {
     busy = false;
     meta();
     // A build asked for while the export ran (a submit, live update) follows it now, as runBuild's own do.
-    if (again) { again = false; schedule(0); }
+    if (submitted) { again = false; runBuild(); } else if (again) { again = false; schedule(0); }
   }
 });
 

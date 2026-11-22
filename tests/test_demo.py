@@ -9,6 +9,7 @@ import importlib.util
 import json
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -186,15 +187,13 @@ def test_a_denylisted_term_is_found_on_its_own_line_whatever_the_case_mapping() 
 def test_an_empty_denylist_term_matches_nothing_and_ends() -> None:
     docs = _build().docs_page
 
-    class Bounded(str):  # an empty term that gives up rather than loop forever, so a regression fails, not hangs
-        calls = 0
-
-        def lower(self) -> str:
-            Bounded.calls += 1
-            assert Bounded.calls < 100, "the search for an empty term never ends"
-            return super().lower()
-
-    assert docs.opsec_hits("nothing to see", [Bounded(""), "  "]) == []
+    # In a thread with a deadline, whatever the search does with the term: a regression fails, never hangs the suite.
+    found: list = []
+    search = threading.Thread(target=lambda: found.append(docs.opsec_hits("nothing to see", ["", "  "])), daemon=True)
+    search.start()
+    search.join(5)
+    assert not search.is_alive(), "the search for an empty term never ends"
+    assert found == [[]]
 
 
 def test_a_doc_cannot_publish_a_file_from_outside_the_repo() -> None:

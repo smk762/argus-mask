@@ -286,6 +286,7 @@ def test_a_plate_made_meanwhile_under_the_same_name_is_not_written_over(
     with fake_darkroom() as (url, _calls), pytest.raises(PlateError, match="not empty"):
         make(url, tmp_path / "garden")
     assert sorted(p.name for p in (tmp_path / "garden").iterdir()) == ["plate.png"]
+    assert (tmp_path / "garden" / "plate.png").read_bytes() == b"theirs", "the other writer's plate is untouched"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["garden"]
 
 

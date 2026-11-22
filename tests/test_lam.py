@@ -90,6 +90,27 @@ def _shifted(path: Path) -> None:
     np.save(path, theirs, allow_pickle=True)
 
 
+def _pickled(path: Path, pickle: bytes) -> None:
+    """An object-array `.npy` whose pickle is *pickle*, as np.save would frame it."""
+    np.save(path, np.array(None, dtype=object), allow_pickle=True)
+    data = path.read_bytes()
+    end = data.index(b"\n") + 1  # the header ends the first line
+    path.write_bytes(data[:end] + pickle)
+
+
+def test_the_preflight_never_runs_what_it_checks(lam, tmp_path) -> None:
+    """A pickle that would run code on load is refused unrun: the check that vets the embedding must not execute it."""
+    import preflight  # noqa: PLC0415
+
+    ran = tmp_path / "ran"
+    model = b"stands in for flame2023_Open.pkl"
+    payload = f"cos\nsystem\n(Vtouch {ran}\ntR.".encode()
+    _checkout(tmp_path, model, lambda path: _pickled(path, payload))
+    refused = preflight.problems(tmp_path, flame_sha256=hashlib.sha256(model).hexdigest())
+    assert len(refused) == 2 and all("not argus-mask's landmark embedding" in r for r in refused), refused
+    assert not ran.exists()
+
+
 @pytest.mark.parametrize(
     "embedding_of",
     [
@@ -97,8 +118,9 @@ def _shifted(path: Path) -> None:
         lambda path: path.write_bytes(b"not an array"),
         lambda path: np.save(path, np.zeros(3)),
         lambda path: None,  # not mounted
+        lambda path: _pickled(path, b"cchumpy.ch\nCh\n)\x81."),  # a class not importable here (chumpy's)
     ],
-    ids=["another", "garbage", "not-a-dict", "missing"],
+    ids=["another", "garbage", "not-a-dict", "missing", "foreign-class"],
 )
 def test_the_preflight_refuses_an_embedding_that_is_not_ours(lam, tmp_path, embedding_of) -> None:
     import preflight  # noqa: PLC0415
@@ -274,8 +296,9 @@ def _stand_ins(torch) -> dict[str, types.ModuleType]:
     ):
         module = types.ModuleType(name)
         if name != "vhap.model.tracker":
-            module.FlameMask, module.BufferContainer = FlameMask, BufferContainer
-            module.FlameMask.__module__ = name
+            # Each its own class, so each stand-in's FlameMask says it comes from its own module.
+            module.FlameMask = type("FlameMask", (FlameMask,), {"__module__": name})
+            module.BufferContainer = BufferContainer
             for fn in ("to_tensor", "to_np", "Struct", "lbs", "vertices2landmarks", "batch_rodrigues"):
                 setattr(module, fn, theirs)
         if name.endswith("flame_model.flame"):
@@ -313,11 +336,11 @@ def test_verify_names_what_is_still_lams_until_patch_replaces_it(lam, tmp_path, 
     assert sys.modules["vhap.model.lbs"] is flame_core
 
 
-def test_install_refuses_once_lams_skinning_is_imported(lam) -> None:
+def test_install_refuses_once_lams_skinning_is_imported(lam, monkeypatch) -> None:
     torch_or_skip()
     import overrides  # noqa: PLC0415
 
-    sys.modules["vhap.model.lbs"] = types.ModuleType("vhap.model.lbs")
+    monkeypatch.setitem(sys.modules, "vhap.model.lbs", types.ModuleType("vhap.model.lbs"))
     with pytest.raises(RuntimeError, match="before overrides.install"):
         overrides.install()
 

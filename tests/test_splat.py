@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import struct
+import time
 import warnings
 import zipfile
 
@@ -307,3 +309,41 @@ def test_a_member_that_lies_about_its_size_is_refused(tmp_path) -> None:
     path.write_bytes(bytes(data))
     with pytest.raises(FaceError, match="vertex_order.json (does not unpack|unpacks to more than it says)"):
         inspect_splat(path)
+
+
+def test_a_same_size_archive_with_its_mtime_kept_is_checked_again(tmp_path) -> None:
+    """The archive's report is cached as its sha256 is, by inode and ctime too: a swapped skin is never judged by the
+    report of the archive it replaced."""
+    directory = make_splat_face(tmp_path, "splat-head")
+    store = FaceStore(tmp_path)
+    store.load("splat-head")
+    model = directory / "head.zip"
+    data, before = bytearray(model.read_bytes()), model.stat()
+    entry = bytes(data).rindex(b"avatar/skin.glb") - 46  # the skin's central directory entry
+    data[entry + 16] ^= 0xFF  # its CRC-32: the same size, other content, and the skin no longer checks out
+    time.sleep(0.05)  # past a coarse clock's tick, so the ctime moves
+    model.write_bytes(bytes(data))
+    os.utime(model, ns=(before.st_atime_ns, before.st_mtime_ns))  # as cp -p or rsync -t leave it
+    manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    manifest["model"]["sha256"] = faces.sha256_file(model)
+    (directory / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(FaceError):
+        store.load("splat-head")
+
+
+def test_a_vertex_count_too_long_to_be_one_is_no_count_not_a_crash(tmp_path) -> None:
+    members = splat_members()
+    members["offset.ply"] = members["offset.ply"].replace(
+        b"element vertex 3\n", b"element vertex " + b"9" * 5000 + b"\n"
+    )
+    assert inspect_splat(make_splat_zip(tmp_path / "head.zip", members)).splats is None
+    assert inspect_splat(make_splat_zip(tmp_path / "ok.zip")).splats == 3
+
+
+def test_a_member_whose_stream_is_broken_is_refused_not_raised(tmp_path) -> None:
+    model = make_splat_zip(tmp_path / "head.zip")
+    data = bytearray(model.read_bytes())
+    data[bytes(data).index(b"avatar/skin.glb") + len("avatar/skin.glb") + 40] ^= 0xFF  # inside its deflated data
+    model.write_bytes(bytes(data))
+    with pytest.raises(FaceError, match="does not unpack"):
+        inspect_splat(model)

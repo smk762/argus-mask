@@ -218,10 +218,12 @@ def zip_file(tmp_path: Path, data: bytes) -> Path:
 @pytest.mark.parametrize("name", ["../escape.txt", "/etc/escape", "hair/../../escape", "C:/escape", "hair\\..\\escape"])
 def test_a_member_outside_the_data_directory_is_refused(tmp_path: Path, data_dir: Path, name: str) -> None:
     path = zip_file(tmp_path, pack_zip(extra={name: b"x"}))
+    before = files_under(tmp_path)
     with pytest.raises(PackError):
         unpack(path, data_dir, "hair09")
     assert files_under(data_dir) == set()
-    assert not (tmp_path / "escape.txt").exists()
+    assert files_under(tmp_path) == before, "nothing is written anywhere, inside the data directory or out of it"
+    assert not Path("/etc/escape").exists()
 
 
 def test_a_link_in_the_zip_is_refused(tmp_path: Path, data_dir: Path) -> None:

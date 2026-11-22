@@ -131,6 +131,9 @@ def ray_hits(origins, dirs, tris, chunk=1024, with_triangle=False):
     """
     if len(origins) == 0:
         return (np.empty((0, 3)), np.empty(0, dtype=np.int64)) if with_triangle else np.empty((0, 3))
+    if len(tris) == 0:  # nothing to hit: every ray misses (and t.min over no triangles would raise)
+        hits = np.full((len(origins), 3), np.nan)
+        return (hits, np.full(len(origins), -1, dtype=np.int64)) if with_triangle else hits
     a, b, c = (torch.as_tensor(np.ascontiguousarray(tris[:, i]), device=DEVICE, dtype=torch.float32) for i in range(3))
     e1, e2 = b - a, c - a
     hits, which = [], []

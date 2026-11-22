@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 import wave
@@ -79,6 +80,8 @@ class VoiceStore:
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self.staged = self.root / ".staged"
+        self._guard = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}  # one per voice id: a voice's clips and record change together
 
     # -- staged clips --
 
@@ -139,15 +142,36 @@ class VoiceStore:
         voice_id = record.get("id")
         if not isinstance(voice_id, str) or not re.fullmatch(VOICE_ID, voice_id):
             raise VoiceError(f"{voice_id!r} is not a voice id")
-        folder = self.root / voice_id
+        with self._guard:
+            lock = self._locks.setdefault(voice_id, threading.Lock())
+        with lock:
+            self._write(self.root / voice_id, record, clips)
+
+    @staticmethod
+    def _write(folder: Path, record: dict, clips: list[Path]) -> None:
         folder.mkdir(parents=True, exist_ok=True)
+        # Everything new is copied under temp names of its own first, so a copy that fails (a staged clip evicted
+        # meanwhile, a full disk) leaves the voice as it was, and a clip re-saved from the folder itself is read
+        # before anything replaces it.
+        part = uuid.uuid4().hex
+        made = [(folder / f"clip-{i + 1}.wav.{part}.part", folder / f"clip-{i + 1}.wav") for i in range(len(clips))]
+        tmp = folder / f"voice.json.{part}.part"
+        try:
+            for (temp, _), path in zip(made, clips, strict=True):
+                shutil.copyfile(path, temp)
+            tmp.write_text(json.dumps(record, indent=2) + "\n")
+        except BaseException:
+            for temp, _ in made:
+                temp.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
+            raise
+        for temp, final in made:
+            temp.replace(final)
         # The folder holds this record's clips and no others: one left from an earlier voice would be cloned from.
+        keep = {final.name for _, final in made}
         for old in folder.glob("clip-*.wav"):
-            old.unlink()
-        for i, path in enumerate(clips):
-            shutil.copyfile(path, folder / f"clip-{i + 1}.wav")
-        tmp = folder / "voice.json.part"
-        tmp.write_text(json.dumps(record, indent=2) + "\n")
+            if old.name not in keep:
+                old.unlink()
         tmp.replace(folder / "voice.json")
 
     def trash(self, voice_id: str) -> bool:

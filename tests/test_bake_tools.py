@@ -123,3 +123,41 @@ def test_a_view_without_ground_truth_is_drawn_not_compared(tmp_path: Path, monke
     line = drive.compare(3, np.zeros((2, 2, 3), np.uint8), tmp_path)
     assert line.startswith("view 3: drawn")
     assert "view0003_gt.png" in line
+
+
+# ---- spz: PLY in, SPZ out
+
+spz = _load("bake_spz", BAKE / "spz.py")
+
+
+def _splats(n: int = 2, rest: int = 0) -> dict[str, np.ndarray]:
+    names = ["x", "y", "z", "opacity", *(f"f_dc_{c}" for c in range(3)), *(f"scale_{c}" for c in range(3))]
+    ply = {name: np.zeros(n, np.float32) for name in names + [f"f_rest_{i}" for i in range(rest * 3)]}
+    ply |= {f"rot_{c}": np.full(n, 1.0 if c == 0 else 0.0, np.float32) for c in range(4)}
+    return ply
+
+
+def test_spz_at_sh_degree_0_carries_colour_only() -> None:
+    body = spz.gzip.decompress(spz.encode(_splats(), sh_degree=0))
+    assert len(body) == 16 + 2 * (9 + 1 + 3 + 3 + 4)  # header, then no SH bytes
+
+
+@pytest.mark.parametrize("x", [math.nan, math.inf, 1e6], ids=["nan", "inf", "beyond-int32"])
+def test_spz_refuses_a_position_it_cannot_hold(x: float) -> None:
+    ply = _splats()
+    ply["x"][0] = x
+    with pytest.raises(ValueError, match="24-bit range"):
+        spz.encode(ply, sh_degree=0)
+
+
+def test_spz_refuses_no_splats() -> None:
+    with pytest.raises(ValueError, match="no splats"):
+        spz.encode(_splats(0), sh_degree=0)
+
+
+def test_a_ply_with_another_element_is_refused_not_misread(tmp_path: Path) -> None:
+    header = "ply\nformat binary_little_endian 1.0\nelement chunk 1\nproperty float a\nelement vertex 1\n"
+    path = tmp_path / "splats.ply"
+    path.write_bytes((header + "property float x\nend_header\n").encode() + np.zeros(2, "<f4").tobytes())
+    with pytest.raises(ValueError, match="vertex alone"):
+        spz.read_ply(path)

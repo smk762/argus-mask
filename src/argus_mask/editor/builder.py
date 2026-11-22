@@ -157,14 +157,18 @@ class Builder:
         return hashlib.sha256(f"{self._recipe}\n{text}".encode()).hexdigest()
 
     def cached_face(self, key: str) -> tuple[FaceManifest, Path] | None:
-        """The cached build for *key* and its model, if it is whole: the model still matches its manifest."""
+        """The cached build for *key* and its model, if it is whole: the model, and every framing's model served
+        with it, still match the manifest."""
         if self.cache_size == 0 or not is_safe_name(key, _KEY):
             return None
         directory = self.cache_dir / key
         try:
             manifest = FaceManifest.model_validate_json((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
-            model = directory / manifest.model.file
-            return (manifest, model) if model.is_file() and sha256_file(model) == manifest.model.sha256 else None
+            for model in (manifest.model, *(framed.model for framed in manifest.framings.values())):
+                path = directory / model.file
+                if not path.is_file() or sha256_file(path) != model.sha256:
+                    return None
+            return manifest, directory / manifest.model.file
         except (OSError, ValueError):
             return None
 
@@ -565,8 +569,16 @@ class Builder:
                     raise NotOwned(f"{face_id!r} is a face the editor did not make")
             bin_ = self.assets_dir / TRASH_DIR / f"{face_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
             bin_.mkdir(parents=True)
-            for place in found:
-                (self.root(place) / face_id).rename(bin_ / place)
+            moved: list[str] = []
+            try:
+                for place in found:
+                    (self.root(place) / face_id).rename(bin_ / place)
+                    moved.append(place)
+            except BaseException:  # all or none: never a face left as its preview alone, half in the bin
+                for place in reversed(moved):
+                    (bin_ / place).rename(self.root(place) / face_id)
+                shutil.rmtree(bin_, ignore_errors=True)
+                raise
             log.info("face_deleted", face=face_id, places=found, trash=str(bin_))
             return bin_
 

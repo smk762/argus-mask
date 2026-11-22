@@ -613,6 +613,15 @@ def test_a_changed_or_damaged_cache_entry_is_rebuilt(client, rig) -> None:
     assert third["cached"] is True and len(calls(rig)) == 2
 
 
+def test_a_damaged_framing_in_a_cache_entry_is_rebuilt(client, rig) -> None:
+    first = client.post("/build", json=preset(framings=["waist"])).json()
+    waist = rig["assets"] / ".preview" / ".cache" / first["key"] / "waist.glb"
+    waist.write_bytes(waist.read_bytes()[:-4] + b"oops")  # the head is whole: only what it is served with is not
+    built = len(calls(rig))
+    again = client.post("/build", json=preset(framings=["waist"])).json()
+    assert again["cached"] is False and len(calls(rig)) > built
+
+
 def test_no_cache_when_it_is_off(rig) -> None:
     builder = builder_for(rig, cache_size=0)
     result = asyncio.run(builder.build(Preset.model_validate(preset())))
@@ -697,6 +706,25 @@ def test_delete_moves_to_the_trash(client, rig) -> None:
     assert (Path(trash) / "export" / "head.glb").is_file()
     assert client.delete("/saved/stock-01").status_code == 409  # never another's face
     assert client.delete("/saved/my-face").status_code == 404
+
+
+def test_a_delete_that_fails_part_way_puts_back_what_it_moved(client, rig, monkeypatch) -> None:
+    assert client.post("/build", json=preset()).status_code == 200
+    assert client.post("/export/my-face").status_code == 200
+    rename = Path.rename
+
+    def failing(self: Path, target):  # noqa: ANN001, ANN202 - Path.rename's own signature
+        if self.parent.name == ".preview" and ".trash" in str(target):
+            raise OSError("the preview cannot move")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing)
+    with pytest.raises(OSError):
+        asyncio.run(builder_for(rig).delete("my-face"))
+    monkeypatch.undo()
+    assert (rig["assets"] / "my-face" / "head.glb").is_file() and (rig["assets"] / ".preview" / "my-face").is_dir()
+    trash = rig["assets"] / ".trash"
+    assert not trash.exists() or not any(trash.iterdir())  # no half-filled bin left behind
 
 
 def test_rename_and_delete_are_guarded_writes(client, rig) -> None:
@@ -1576,11 +1604,12 @@ def test_a_plain_rgb_tuple_is_a_tint_not_a_colourway(recipe_module) -> None:
     build_head = recipe_module
 
     class Image:
-        size, channels = (1, 1), 4
+        size, channels = (2, 1), 4
 
         def __init__(self) -> None:
             self.pixels = self
-            self.data = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
+            # Two greys: a tint keeps their difference, a solid colourway paints both one colour.
+            self.data = np.array([0.25, 0.25, 0.25, 1.0, 0.75, 0.75, 0.75, 1.0], dtype=np.float32)
 
         def foreach_get(self, out) -> None:
             out[:] = self.data
@@ -1597,4 +1626,11 @@ def test_a_plain_rgb_tuple_is_a_tint_not_a_colourway(recipe_module) -> None:
         build_head.recolour(image, target)
         painted.append(image.data)
     assert np.allclose(painted[0], painted[1]) and np.allclose(painted[0], painted[2]), "the container doesn't matter"
-    assert painted[3][3] == 1.0, "a colourway still keeps the alpha"
+    assert painted[3][3] == painted[3][7] == 1.0, "a colourway still keeps the alpha"
+    tint, flat = painted[0].reshape(2, 4), painted[3].reshape(2, 4)
+    assert np.allclose(flat[0], flat[1]), "a solid colourway is one colour"
+    assert not np.allclose(tint[0], tint[1]), "a tint keeps the texture's variation"
+    expected = build_head.hair_colour.recolour(
+        np.array([[0.25] * 3 + [1.0], [0.75] * 3 + [1.0]]), np.array([0.2, 0.1, 0.05])
+    )
+    assert np.allclose(tint, expected, atol=1e-6)

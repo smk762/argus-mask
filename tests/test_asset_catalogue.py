@@ -56,3 +56,29 @@ def test_a_pack_whose_page_lacks_its_zip_once_keeps_its_entry(monkeypatch: pytes
     # A pack the catalogue never had is still skipped.
     out.write_text(json.dumps({"packs": []}))
     assert _run(monkeypatch, out, "--no-hash", page="<html></html>") == []
+
+
+def test_a_pack_never_hashed_is_hashed_on_a_full_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    out = tmp_path / "catalogue.json"
+    out.write_text(json.dumps({"packs": [{**KNOWN, "sha256": None}]}))
+    monkeypatch.setattr(cat, "fetch", lambda url: PAGE.encode())
+    monkeypatch.setattr(cat, "pack_ids", lambda: ["hair09"])
+    monkeypatch.setattr(cat, "head_size", lambda url: 1234)
+    monkeypatch.setattr(cat, "sha256_of", lambda url: ("b" * 64, 1234))
+    assert cat.main(["--out", str(out)]) == 0
+    assert json.loads(out.read_text())["packs"][0]["sha256"] == "b" * 64
+
+
+def test_a_write_cut_short_leaves_the_old_catalogue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    out = tmp_path / "catalogue.json"
+    out.write_text(before := json.dumps({"packs": [KNOWN]}))
+
+    def full(self, *args, **kwargs):  # the disk fills part-way through the file
+        self.write_bytes(b'{"pa')
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", full)
+    with pytest.raises(OSError, match="disk full"):
+        _run(monkeypatch, out, "--no-hash")
+    monkeypatch.undo()
+    assert out.read_text() == before
