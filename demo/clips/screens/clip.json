@@ -4,22 +4,22 @@
   "face": "splat-04",
   "framing": "head",
   "scene": "ftl",
-  "duration_ms": 12067,
-  "frames": 363,
+  "duration_ms": 12376,
+  "frames": 372,
   "captions": [
     {
       "start_ms": 0,
-      "end_ms": 1578,
-      "text": "At home, I run live."
+      "end_ms": 2410,
+      "text": "At home, I run in real time."
     },
     {
-      "start_ms": 1878,
-      "end_ms": 7030,
+      "start_ms": 2710,
+      "end_ms": 7670,
       "text": "A speech service talks, and every screen on the network that shows me moves in step."
     },
     {
-      "start_ms": 7330,
-      "end_ms": 12066,
+      "start_ms": 7970,
+      "end_ms": 12376,
       "text": "Pick a face and a backdrop, and frame me close or as a floating head."
     }
   ],
@@ -40,7 +40,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.3.0-31-g3ddc436",
+    "argus_mask": "v0.3.0-33-g93b1b8b",
     "driver": {
       "name": "a2f",
       "model": null
