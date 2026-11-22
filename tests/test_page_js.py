@@ -241,7 +241,7 @@ const stage = {{
   setScene: async (n) => scenes.push(n),
   setShot: () => {{}},
 }};
-let reviewSeq = 0;
+let reviewClicks = 0; let reviewSeq = 0;
 {_function(source, "async function openReview(")}
 {_function(source, "async function backdropPicker(")}
 const x = openReview({{ id: 'x' }}); await tick();
@@ -251,6 +251,75 @@ loads[0].resolve(); await x;
 console.log(JSON.stringify({{ name: $('m-name').textContent, posed, scenes: scenes.length }}));
 """)
     assert out == {"name": "Y (y)", "posed": ["y"], "scenes": 1}
+
+
+def _reviews(source: str, script: str) -> object:
+    """openReview and its backdrop picker over a stage whose loads the test settles; ``face(id)`` is a manifest."""
+    counters = source[source.index("let reviewClicks = 0;") : source.index("async function openReview(")]
+    return _node(f"""
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {{}}, ...children) => {{ const n = Object.assign(document.createElement(tag), props); n.append(...children); return n; }};
+const enc = encodeURIComponent; const main = () => 'export'; const restSets = () => {{}};
+const said = []; const status = (text) => said.push(text);
+const modelUrl = (id) => id;
+const face = (id) => ({{ id, name: id.toUpperCase(), model: {{ sha256: id, file: 'f.glb', format: 'gltf' }}, framing: {{}}, blendshapes: [],
+  provenance: {{ license: 'CC0', kind: 'synthetic', cleared: true, source: 's', notes: '' }} }});
+const manifests = {{}};   // a face id here: its manifest waits for the test to settle it
+const json = async (url) => {{
+  if (!url.startsWith('/face/')) return url === '/scenes' ? [] : {{}};
+  const id = url.split('/')[2].split('?')[0];
+  return id in manifests ? manifests[id] : face(id);
+}};
+const loads = []; const posed = [];
+const stage = {{
+  attach() {{}},
+  load: (url) => {{ const p = later(); p.url = url; loads.push(p); return p; }},
+  poseButtons: (box, _, o) => posed.push(o.faceId),
+  setScene: async () => {{}},
+  setShot: () => {{}},
+}};
+const shown = () => ({{ name: $('m-name').textContent, posed, loads: loads.map((l) => l.url), side: $('m-side').children.length > 0, said }});
+{counters}
+{_function(source, "async function openReview(")}
+{_function(source, "async function backdropPicker(")}
+{script}
+console.log(JSON.stringify(shown()));
+""")
+
+
+def test_a_review_that_cannot_load_leaves_the_one_in_progress_whole() -> None:
+    """X's model still loading when a click on Y is refused (it has no manifest): X finishes as it would have.
+
+    The stage is X's either way: Y never reached it. So the name, the pose buttons and the side panel (whose
+    pickers save a rest set and a backdrop) must be X's too, not those of the review before.
+    """
+    source = (PAGE / "faces.js").read_text(encoding="utf-8")
+    out = _reviews(
+        source,
+        """
+manifests.y = Promise.reject(new Error('no manifest.json')); manifests.y.catch(() => {});
+const x = openReview({ id: 'x' }); await tick();
+await openReview({ id: 'y' });
+loads[0].resolve(); await x;
+""",
+    )
+    assert out == {"name": "X (x)", "posed": ["x"], "loads": ["x"], "side": True, "said": ["no manifest.json"]}
+
+
+def test_a_manifest_arriving_late_for_an_earlier_click_never_takes_the_stage() -> None:
+    """X clicked, then Y: Y's manifest comes first and Y has the stage; X's, arriving after, loads nothing."""
+    source = (PAGE / "faces.js").read_text(encoding="utf-8")
+    out = _reviews(
+        source,
+        """
+manifests.x = later();
+const x = openReview({ id: 'x' }); await tick();
+const y = openReview({ id: 'y' }); await tick();
+manifests.x.resolve(face('x')); await x;
+loads[0].resolve(); await y;
+""",
+    )
+    assert out == {"name": "Y (y)", "posed": ["y"], "loads": ["y"], "side": True, "said": []}
 
 
 def test_an_open_pack_with_few_assets_can_be_closed() -> None:
@@ -402,7 +471,7 @@ const reply = later();
 const json = () => reply;
 const loads = [];
 const stage = {{ attach() {{}}, load: async (url) => loads.push(url), poseButtons() {{}}, setScene: async () => {{}} }};
-let reviewSeq = 0;
+let reviewClicks = 0; let reviewSeq = 0;
 {_function(source, "async function openReview(")}
 {_function(source, "function closeReview(")}
 $('modal').hidden = true;
