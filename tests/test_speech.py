@@ -79,8 +79,8 @@ def test_ordinal_words() -> None:
         ("in 1999, 2005 and 2026", "in nineteen ninety-nine, two thousand and five and twenty twenty-six"),
         ("agent 007", "agent zero zero seven"),
         ("on 2026-11-11", "on the eleventh of November twenty twenty-six"),
-        ("host 192.168.1.39", "host one nine two dot one six eight dot one dot thirty-nine"),
-        ("Ping 192.168.1.39.", "Ping one nine two dot one six eight dot one dot thirty-nine."),
+        ("host 203.0.113.39", "host two zero three dot zero dot one one three dot thirty-nine"),
+        ("Ping 203.0.113.39.", "Ping two zero three dot zero dot one one three dot thirty-nine."),
         ("$1.234 a share", "one point two three four dollars a share"),
         # names keep their digits
         ("A2F renders 3D to mp4, v1.2.3", "A2F renders 3D to mp4, v1.2.3"),

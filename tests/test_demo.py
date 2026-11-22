@@ -140,7 +140,9 @@ def test_a_docs_page_is_csp_neutral_and_links_stay_on_site(docs_site: tuple[Path
 
 def test_the_opsec_gate_refuses_and_never_echoes_the_denylist() -> None:
     docs = _build().docs_page
-    text = "see 192.168.1.5 and /home/someone/x\nmail ops@example.com about Mithril\nfine: docs/media/a.jpg, 127.0.0.1"
+    text = (
+        "see 192.168.200.5 and /home/someone/x\nmail ops@example.com about Mithril\nfine: docs/media/a.jpg, 127.0.0.1"
+    )
     hits = docs.opsec_hits(text, ["mithril"])
     assert sorted((n, kind) for n, kind, _ in hits) == [
         (1, "home directory path"),

@@ -240,7 +240,7 @@ def test_a_cross_site_page_cannot_open_either_socket(assets) -> None:
     [
         ((), "testserver", False),  # a screen at http://morpheus:8109 with nothing set
         (("testserver",), "testserver", True),  # ARGUS_MASK_TRUSTED_HOSTS=morpheus
-        ((), "192.168.1.39:8109", True),  # an IP address cannot be rebound
+        ((), "203.0.113.39:8109", True),  # an IP address cannot be rebound
         ((), "localhost:8109", True),
         (("other",), "testserver", False),
     ],
