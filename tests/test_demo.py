@@ -71,6 +71,12 @@ def test_a_committed_clip_is_what_its_spec_says(clip_id: str) -> None:
     assert any(f.cue for f in frames), "the frames carry their cues, for the gestures"
     assert (folder / "audio.m4a").stat().st_size > 10_000
     assert meta["made_with"]["voice"] == spec["voice"].removeprefix("speaker:")
+    # The face rests as its lock says (a splat head's set is fitted to its portrait), else on the default.
+    lock_rest = _lock(spec["face"]).get("rest")
+    if lock_rest:
+        assert meta["rest"] == {"name": lock_rest["name"], "weights": lock_rest["weights"], "life": 1.0}
+    else:
+        assert meta["rest"]["name"] == "warm"
     assert set(p.name for p in folder.iterdir()) == {"clip.json", "take.ndjson", "audio.m4a"}
 
 

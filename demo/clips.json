@@ -6,7 +6,7 @@
     {
       "id": "hello",
       "title": "Hello",
-      "face": "splat-01",
+      "face": "splat-02",
       "framing": "head",
       "scene": "lake",
       "voice": "speaker:Rosemary Okafor",
@@ -34,10 +34,10 @@
     {
       "id": "screens",
       "title": "On a screen",
-      "face": "splat-01",
+      "face": "splat-03",
       "framing": "head",
       "scene": "ftl",
-      "voice": "speaker:Rosemary Okafor",
+      "voice": "speaker:Damien Black",
       "seed": 9,
       "sentences": [
         "At home, I run live.",
