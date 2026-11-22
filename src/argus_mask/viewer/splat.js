@@ -41,6 +41,11 @@ const MESH_DEFAULT = { distance: 0.6, height: 0, fov: 30 };   // models.Framing'
 // scene shows as a floating head. This shot ends just above the fade. Used only when the manifest sets no framing.
 export const SPLAT_CLOSE = { distance: 0.45, height: 1.67, fov: 50 };
 const LIFT = 0.1;
+// Where a LAM head ends: its splats thin out into ragged wisps below the collarbone, where the portrait's shoulders
+// ran out. Between these heights (metres, the head's own space) the picture fades to what is behind the head, so the
+// bust ends in a soft edge of our making. LAM stands every head alike, so one pair serves them all.
+export const FADE = { top: 1.5, bottom: 1.445 };
+const FADE_ROWS = 12;   // strips across the fade: a smooth curve in vertex alpha
 
 export function splatFraming(framing) {
   const f = framing || {};
@@ -55,6 +60,44 @@ splatFraming.isDefault = (framing) => {
 };
 
 export const JAW = { knee: 0.35, slope: 0.35 };
+
+// How far a LAM head turns before the side its portrait never showed comes into view: past about 20 degrees of yaw
+// the far temple smears, and tipped back past about 10 a pale gap opens at the hairline; tipped forward it holds
+// longer. Degrees; a manifest's `limits` (models.Limits) replaces any of them for its face.
+export const TURN = { yaw: 20, pitchUp: 8, pitchDown: 20 };
+const TURN_KNEE = 0.6;   // the share of a limit that passes untouched
+
+// x eased towards ±max: unchanged up to TURN_KNEE of it, then slower and slower, never reaching max. Smooth at
+// the knee (slope 1 on both sides), so a turn that crosses it shows no kink.
+export function eased(x, max) {
+  const a = Math.abs(x);
+  const knee = TURN_KNEE * max;
+  if (!(max > 0) || a <= knee) return x;
+  const span = max - knee;
+  return Math.sign(x) * (knee + span * Math.tanh((a - knee) / span));
+}
+
+// A head turn ({ yaw, pitch, roll }, degrees; positive pitch tips forward) held inside a face's limits. The roll is
+// left alone: a tilt shows no new side. `limits` is the manifest's (snake case) or null; null fields keep TURN's.
+// off: no limit at all (?turn=0, to see where a head gives out).
+export function turnLimit(limits, off = false) {
+  const l = limits || {};
+  const yaw = l.yaw ?? TURN.yaw;
+  const up = l.pitch_up ?? TURN.pitchUp;
+  const down = l.pitch_down ?? TURN.pitchDown;
+  return (head) => {
+    const h = head || {};
+    if (off) return { yaw: h.yaw || 0, pitch: h.pitch || 0, roll: h.roll || 0 };
+    const pitch = h.pitch || 0;
+    return { yaw: eased(h.yaw || 0, yaw), pitch: eased(pitch, pitch < 0 ? up : down), roll: h.roll || 0 };
+  };
+}
+
+// Where a face's jaw cap sits: what was asked (?jaw=), else the manifest's, else JAW.knee.
+export function jawKnee(limits, asked = NaN) {
+  if (Number.isFinite(asked)) return Math.max(0, asked);   // below 0, the jaw would never open
+  return limits && Number.isFinite(limits.jaw) ? limits.jaw : JAW.knee;
+}
 
 // Past the knee, jawOpen (and the lower lip with it) opens at `slope` of the rate. A knee of 1 or more is no cap.
 // Returns a Motion `cap`: (weights, index) => void, in place.
@@ -98,6 +141,7 @@ const NECK_CHAIN = [['neckLower', 0.2], ['neckUpper', 0.3], ['head', 0.5]];
 const _euler = new THREE.Euler();
 const _share = new THREE.Quaternion();
 const _local = new THREE.Quaternion();
+const WHITE = new THREE.Color(1, 1, 1);
 
 const until = async (ready, what, ms = 20000) => {
   const start = performance.now();   // a timeout only: no pose depends on it
@@ -111,11 +155,15 @@ const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
 export class SplatHead {
   // host: an element with a size (the canvas fills it). url: the archive, ending .zip (the renderer insists).
   // framing: the manifest's. background: any CSS colour. skin: readSkin(url)'s result. instant: no fade-in (record).
-  static async create(host, { url, framing, background = '#101216', skin, instant = false }) {
+  // limits: the manifest's (turnLimit). unlimited: the head turns as far as it is told.
+  static async create(host, { url, framing, background = '#101216', skin, instant = false, limits = null, unlimited = false }) {
     const head = new SplatHead();
+    head.limit = turnLimit(limits, unlimited);
     head.rest = skin.rest;
     head.expression = Object.fromEntries(ARKIT.map((n) => [n, 0]));
     head.turn = new THREE.Quaternion();
+    head.ground = new THREE.Color(0x101216);
+    try { head.ground.set(background); } catch { /* keep the default */ }
     head.bones = [];   // filled once the renderer has loaded the skin (its first frame, inside create(), has none)
     let colour = '0x101216';
     try { colour = `0x${new THREE.Color(background).getHexString()}`; } catch { /* keep the default */ }
@@ -189,6 +237,63 @@ export class SplatHead {
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
     this.shot = f;
+    this.veiled = null;   // the fade sits at a height in the head's space: place it again for this camera
+  }
+
+  // The soft edge under the bust (FADE): a strip across the bottom of the picture, drawn over the splats with the
+  // same WebGL context, showing what is behind the head (the backdrop's own picture, or the background colour) and
+  // fading in from nothing at FADE.top to all of it at FADE.bottom. Nothing in it reads a clock: it is placed from
+  // the camera alone, so a recording has it exactly.
+  veil() {
+    const v = this.r.viewer;
+    if (!this.fade) {
+      const rows = FADE_ROWS + 2;   // the fade's strips, and one row at the bottom of the picture
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(rows * 2 * 3), 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(rows * 2 * 2), 2));
+      geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(rows * 2 * 4), 4));
+      const index = [];
+      for (let i = 0; i < rows - 1; i += 1) index.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+      geometry.setIndex(index);
+      const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthTest: false, depthWrite: false });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.frustumCulled = false;
+      const scene = new THREE.Scene();
+      scene.add(mesh);
+      this.fade = { scene, mesh, camera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+    }
+    const { scene, mesh, camera } = this.fade;
+    if (this.veiled !== this.shot) {
+      // The two heights on screen (y, -1 to 1), on the head's own axis.
+      const at = (y) => new THREE.Vector3(0, y, 0).project(v.camera).y;
+      const top = at(FADE.top);
+      const bottom = Math.min(top, at(FADE.bottom));
+      const ys = [-1.01];   // past the bottom edge: the strip below the fade is all background
+      for (let i = 0; i <= FADE_ROWS; i += 1) ys.push(bottom + (top - bottom) * (i / FADE_ROWS));
+      const alphas = [1];
+      for (let i = 0; i <= FADE_ROWS; i += 1) { const k = 1 - i / FADE_ROWS; alphas.push(k * k * (3 - 2 * k)); }   // smoothstep
+      const { position, uv, color } = mesh.geometry.attributes;
+      ys.forEach((y, i) => {
+        const low = Math.min(y, ys[1]);   // the first row never rises above the fade's foot
+        const yy = i === 0 ? low : y;
+        position.setXYZ(2 * i, -1, yy, 0); position.setXYZ(2 * i + 1, 1, yy, 0);
+        uv.setXY(2 * i, 0, (yy + 1) / 2); uv.setXY(2 * i + 1, 1, (yy + 1) / 2);
+        color.setXYZW(2 * i, 1, 1, 1, alphas[i]); color.setXYZW(2 * i + 1, 1, 1, 1, alphas[i]);
+      });
+      position.needsUpdate = uv.needsUpdate = color.needsUpdate = true;
+      this.veiled = this.shot;
+    }
+    const picture = this.backdrop ? this.backdrop.texture : null;
+    const material = mesh.material;
+    if (material.map !== picture) { material.map = picture; material.needsUpdate = true; }
+    material.color.copy(picture ? WHITE : this.ground);
+    // Drawn as three.js draws a scene's background: a picture already in the output's colours is not tone mapped.
+    material.toneMapped = Boolean(picture) && THREE.ColorManagement.getTransfer(picture.colorSpace) !== THREE.SRGBTransfer;
+    const r = v.renderer;
+    const auto = r.autoClear;
+    r.autoClear = false;
+    r.render(scene, camera);
+    r.autoClear = auto;
   }
 
   // Called by the renderer once a frame (as getNeckPose), after its mixer and before skinning: the rest pose,
@@ -213,14 +318,17 @@ export class SplatHead {
   }
 
   // What to show: weights (any array) in *names* order, and the head turn in degrees ({ yaw, pitch, roll }).
-  // Shapes the head lacks are ignored; names it has that the frame does not are 0.
+  // Shapes the head lacks are ignored; names it has that the frame does not are 0. The turn is held inside the
+  // face's limits here, so every page that draws a splat head (viewer, editor, demo, record) shows the same one.
   set(weights, names, head) {
     const e = this.expression;
     for (const n of ARKIT) e[n] = 0;
     for (let i = 0; i < names.length; i += 1) if (names[i] in e) e[names[i]] = weights[i];
     const rad = Math.PI / 180;
+    const turn = this.limit(head);
+    this.shown = turn;
     // As the mesh viewer turns its head: Euler YXZ of (pitch, yaw, roll), about world axes.
-    _euler.set(((head && head.pitch) || 0) * rad, ((head && head.yaw) || 0) * rad, ((head && head.roll) || 0) * rad, 'YXZ');
+    _euler.set(turn.pitch * rad, turn.yaw * rad, turn.roll * rad, 'YXZ');
     this.turn.setFromEuler(_euler);
   }
 
@@ -263,6 +371,7 @@ export class SplatHead {
     this.backdrop?.update(t);
     this.r.render();
     cancelAnimationFrame(this.r.viewer.requestFrameId);
+    this.veil();
   }
 
   // Record mode: resolves once exactly the pose last set() is on the canvas, drawn with the depth sort for it and
@@ -277,10 +386,12 @@ export class SplatHead {
     this.fit();
     this.backdrop?.update(t, { exact: true });
     v.render();
+    this.veil();
   }
 
   dispose() {
     this.backdrop?.dispose();
+    if (this.fade) { this.fade.mesh.geometry.dispose(); this.fade.mesh.material.dispose(); }
     // The renderer takes its canvas off the page, then starts its viewer's async dispose, which removes the same
     // canvas from its root again: that throws (removeChild: not a child) before the WebGL renderer is disposed, so
     // each splat head shown would leak a context. Put the canvas back (hidden) for the viewer to remove itself.

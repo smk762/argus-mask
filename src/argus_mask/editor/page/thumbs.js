@@ -17,7 +17,7 @@ export function still(id, place = 'export', width = 240, height = 288) {
     const key = `${place}/${id}/${manifest.model.sha256}/${width}x${height}`;
     if (!cache.has(key)) {
       stage ??= new Stage({ animate: false });
-      await stage.load(modelUrl(id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format);
+      await stage.load(modelUrl(id, manifest, `from=${place}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format, { limits: manifest.limits });
       cache.set(key, await stage.snapshot(width, height));
     }
     return cache.get(key);

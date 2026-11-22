@@ -3,7 +3,7 @@
 # tests/test_gpu_tenant.py fails if it stops validating or disagrees with src/argus_mask/gpu.py.
 #
 # Mask's own process uses no GPU. It leases on behalf of the GPU work it asks of others: the Audio2Face
-# server while a source is live, and a TTS service (Miso) making a voice. With ARGUS_GPU_COORDINATOR=broker,
+# server while a source is live, a TTS service (Miso) making a voice, and LAM head builds. With ARGUS_GPU_COORDINATOR=broker,
 # ARGUS_GPU_TENANT_MANIFEST points here (the image has it at /app/gpu-tenant.yaml). Tokens never go here:
 # ARGUS_GPU_BROKER_TOKEN lives in the host's .env.
 #
@@ -33,6 +33,16 @@ kinds:
     priority: interactive
     preemptible: false
     description: A TTS service making a voice (a synthetic candidate, or a clone) for the Voices page.
+
+  # LAM splat heads (lam/make_heads.sh, its container on this host). Nothing stays loaded afterwards. The portraits
+  # for them come from argus-darkroom, which leases for itself: never hold this around them.
+  - kind: lam-head
+    target: in-process
+    vram_mb: 10000
+    model_mb: 0
+    priority: batch
+    preemptible: false
+    description: Building LAM splat heads from portraits, in a batch.
 
 residents:
   # The Audio2Face worker keeps its TensorRT engine loaded (500 MB on a 3090). It has no unload route:

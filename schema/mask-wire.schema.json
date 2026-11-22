@@ -455,8 +455,19 @@
           "title": "Id",
           "type": "string"
         },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Limits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "mask_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Mask Version",
           "type": "string"
         },
@@ -734,6 +745,74 @@
       "title": "Health",
       "type": "object"
     },
+    "Limits": {
+      "additionalProperties": false,
+      "description": "How far a screen lets this head move, where the head itself gives out before the take does.\n\nA LAM splat head is made from one portrait: turned past what the portrait showed, the unseen side smears, and\nits mouth has no inside to show when the jaw opens wide. A screen eases the head turn towards these angles and\nnever passes them, and opens the jaw more slowly past ``jaw``. They shape what is drawn, never a take: the same\ntake plays in full on a head without them. Unset fields keep the screen's defaults for the model's format\n(``viewer/splat.js``); a mesh head has none.",
+      "properties": {
+        "jaw": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "jawOpen past which the jaw opens slowly; 1: no cap",
+          "title": "Jaw"
+        },
+        "pitch_down": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "degrees the head may tip forward",
+          "title": "Pitch Down"
+        },
+        "pitch_up": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "degrees the head may tip back",
+          "title": "Pitch Up"
+        },
+        "yaw": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "degrees, either way",
+          "title": "Yaw"
+        }
+      },
+      "title": "Limits",
+      "type": "object"
+    },
     "ModelFile": {
       "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.\n\nA ``gltf`` model may carry ``splats`` (:class:`BoundSplats`): files beside it that a screen able to draw\nthem shows riding the mesh; one that is not shows the mesh.",
       "properties": {
@@ -908,7 +987,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Mask Version",
           "type": "string"
         },
@@ -1322,7 +1401,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Mask Version",
           "type": "string"
         },

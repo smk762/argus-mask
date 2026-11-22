@@ -28,7 +28,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 #      ``Frame.cue``: a stress or a phrase edge that began on the frame, for gestures.
 # 1.6: ``ModelFile.splats``: Gaussian splats bound to a mesh model's triangles (#126 route A), with the licence of
 #      every input that went into them.
-MASK_VERSION = "1.6"
+# 1.7: ``FaceManifest.limits``: how far a screen lets a head turn and open its jaw (#152, #154).
+MASK_VERSION = "1.7"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -349,6 +350,24 @@ class FramedModel(BaseModel):
     framing: Framing
 
 
+class Limits(BaseModel):
+    """How far a screen lets this head move, where the head itself gives out before the take does.
+
+    A LAM splat head is made from one portrait: turned past what the portrait showed, the unseen side smears, and
+    its mouth has no inside to show when the jaw opens wide. A screen eases the head turn towards these angles and
+    never passes them, and opens the jaw more slowly past ``jaw``. They shape what is drawn, never a take: the same
+    take plays in full on a head without them. Unset fields keep the screen's defaults for the model's format
+    (``viewer/splat.js``); a mesh head has none.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    yaw: float | None = Field(None, gt=0, le=90, description="degrees, either way")
+    pitch_up: float | None = Field(None, gt=0, le=90, description="degrees the head may tip back")
+    pitch_down: float | None = Field(None, gt=0, le=90, description="degrees the head may tip forward")
+    jaw: float | None = Field(None, ge=0, le=1, description="jawOpen past which the jaw opens slowly; 1: no cap")
+
+
 class FaceManifest(_Versioned):
     """``manifest.json`` in a face's directory.
 
@@ -362,6 +381,7 @@ class FaceManifest(_Versioned):
     blendshapes: list[str] = Field(default_factory=list)
     framing: Framing = Field(default_factory=Framing)
     framings: dict[BodyFraming, FramedModel] = Field(default_factory=dict)
+    limits: Limits | None = None
     provenance: Provenance
 
     @model_validator(mode="after")

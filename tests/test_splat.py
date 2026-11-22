@@ -210,6 +210,21 @@ def test_the_store_lists_a_splat_face_and_refuses_a_bad_archive(tmp_path) -> Non
     assert splat.framing.height == 1.65  # LAM's heads stand at about 1.65 m
 
 
+def test_a_face_carries_its_own_limits_and_a_screen_is_given_them(tmp_path) -> None:
+    """How far a splat head turns and opens is its manifest's to say (#152, #154): kept by the store, served whole."""
+    directory = make_splat_face(tmp_path, "splat-head")
+    manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert manifest["limits"] is None  # none of its own: the screen's defaults for a splat head
+    manifest["limits"] = {"yaw": 12, "pitch_up": 6}
+    (directory / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+    with TestClient(create_app(Settings(assets_dir=tmp_path))) as client:
+        served = client.get("/face/splat-head").json()
+    assert served["limits"] == {"yaw": 12.0, "pitch_up": 6.0, "pitch_down": None, "jaw": None}
+    for bad in ({"yaw": 0}, {"pitch_up": 120}, {"jaw": 1.5}, {"roll": 10}):  # not an angle, not a weight, not a limit
+        with pytest.raises(ValidationError):
+            FaceManifest.model_validate({**manifest, "limits": bad})
+
+
 def test_a_manifest_naming_shapes_the_skin_lacks_is_refused(tmp_path) -> None:
     directory = make_splat_face(tmp_path, "splat-head")
     manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
