@@ -520,19 +520,14 @@ def schema(
     check: bool = Option(False, "--check", help="Exit non-zero if the committed schema is stale (for CI)"),
 ) -> None:
     """Emit the wire-contract JSON Schema consumers codegen against."""
+    from argus_cortex.wire import sync_schema
+
     from argus_mask.models import render_wire_schema
 
-    rendered = render_wire_schema()
-    if check:
-        existing = output.read_text(encoding="utf-8") if output.exists() else ""
-        if existing != rendered:
-            typer.echo(f"{output} is stale: run `argus-mask schema` and commit the result.", err=True)
-            raise typer.Exit(1)
-        typer.echo(f"{output} is up to date.")
-        return
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(rendered, encoding="utf-8")
-    typer.echo(f"wrote {output}")
+    result = sync_schema(render_wire_schema(), output, check=check, command="argus-mask schema")
+    typer.echo(result.message, err=not result.ok)
+    if not result.ok:
+        raise typer.Exit(1)
 
 
 # ── consent ───────────────────────────────────────────────────────────────────
