@@ -1,6 +1,6 @@
 {
   "about": "The hosted demo's clips (#118). demo/make_clips.py speaks each clip's sentences through the TTS service, turns the audio into a take with the a2f driver, and writes demo/clips/<id>/. Synthetic faces and voices only.",
-  "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial), through agent-composer",
+  "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial)",
   "fps": 30,
   "clips": [
     {

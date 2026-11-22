@@ -4,8 +4,8 @@
   "face": "splat-01",
   "framing": "head",
   "scene": "lake",
-  "duration_ms": 13912,
-  "frames": 418,
+  "duration_ms": 13773,
+  "frames": 414,
   "captions": [
     {
       "start_ms": 0,
@@ -14,12 +14,12 @@
     },
     {
       "start_ms": 3681,
-      "end_ms": 8417,
+      "end_ms": 8694,
       "text": "Give me any voice and I'll speak it, with my lips and jaw in step with every syllable."
     },
     {
-      "start_ms": 8717,
-      "end_ms": 13912,
+      "start_ms": 8994,
+      "end_ms": 13773,
       "text": "Between words I blink, glance around and breathe, so I never freeze."
     }
   ],
@@ -39,7 +39,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.2.0-153-geeb873f",
+    "argus_mask": "v0.3.0-13-ge5d3b96",
     "driver": {
       "name": "a2f",
       "model": null
@@ -47,6 +47,6 @@
     "fps": 30,
     "seed": 2,
     "voice": "Rosemary Okafor",
-    "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial), through agent-composer"
+    "voice_licence": "XTTS-v2 studio speaker (Coqui Public Model License 1.0.0, non-commercial)"
   }
 }
