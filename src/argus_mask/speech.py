@@ -185,7 +185,7 @@ def _plain_text(text: str) -> str:
 # Order matters: the most specific shapes first, so 9:30 is a time before 9 is a number.
 _RULES: list[tuple[re.Pattern, object]] = [
     (re.compile(r"(?<!\w)#(?=\d)"), lambda m: "number "),
-    # 203.0.113.39, 1.2.3: dotted groups, each group a number
+    # 192.168.1.39, 1.2.3: dotted groups, each group a number
     (
         re.compile(r"(?<![\w.])\d+(?:\.\d+){2,}(?!\w|\.\d)"),
         lambda m: " dot ".join(_digits(g) if len(g) > 2 else number_words(int(g)) for g in m[0].split(".")),
