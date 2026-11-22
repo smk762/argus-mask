@@ -7,7 +7,10 @@ published, its size, and the manifest that goes beside it (which holds the
 model's sha256). A head built at more than one framing (``waist``) lists each
 other model under ``framings``, by url and size; the manifest names its file and
 sha256. This script downloads every model, checks each against the lock, and
-writes them and ``manifest.json`` into ``<assets>/<id>/``.
+writes them and ``manifest.json`` into ``<assets>/<id>/``. A lock may also carry
+the head's ``rest`` set (a splat head's is fitted to its portrait, #151): it is
+added to ``<assets>/expressions.json`` and chosen for the head, unless a set of
+that name is already there and differs, or the head already has a choice.
 
     python scripts/fetch_stock_head.py                 # stock-01 into ./assets
     python scripts/fetch_stock_head.py --id stock-01 --assets-dir /srv/faces
@@ -35,6 +38,8 @@ MAX_BYTES = 64 * 1024 * 1024  # no stock head is near this; a lock that says oth
 # A mesh head is a .glb; a LAM Gaussian-splat head (#126) is a .zip, its manifest's model.format "lam-splat".
 MODEL_SUFFIX = {"gltf": ".glb", "lam-splat": ".zip"}
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SHAPE = re.compile(r"^[a-zA-Z]{3,32}$")  # an ARKit blendshape name; the server checks it against the 52
+EXPRESSIONS = "expressions.json"
 
 
 class FetchError(RuntimeError):
@@ -76,9 +81,65 @@ def read_lock(face_id: str, lock_dir: Path = LOCK_DIR) -> dict:
                 or not 0 < where["size"] <= MAX_BYTES
             ):
                 raise FetchError(f"{path}: the {name} framing needs a url and a size between 1 and {MAX_BYTES} bytes")
+        if "rest" in lock:
+            check_rest(lock["rest"], path)
     except (ValueError, KeyError, TypeError) as exc:
         raise FetchError(f"{path}: not a usable lock file ({exc})") from exc
     return lock
+
+
+def check_rest(rest: object, path: Path) -> None:
+    """A lock's rest set: a name like a face id, ARKit weights from 0 to 1, life from 0 to 2."""
+    if not isinstance(rest, dict) or not isinstance(rest.get("name"), str) or not _ID.fullmatch(rest["name"]):
+        raise FetchError(f"{path}: the rest set needs a name like a face id")
+    weights, life = rest.get("weights"), rest.get("life", 1.0)
+    if not isinstance(weights, dict) or not all(
+        isinstance(k, str) and _SHAPE.fullmatch(k) and isinstance(v, (int, float)) and 0 <= v <= 1
+        for k, v in weights.items()
+    ):
+        raise FetchError(f"{path}: the rest set's weights are ARKit names with weights from 0 to 1")
+    if not isinstance(life, (int, float)) or not 0 <= life <= 2:
+        raise FetchError(f"{path}: the rest set's life is from 0 to 2")
+
+
+def install_rest(assets_dir: Path, face_id: str, rest: dict) -> str:
+    """Add *rest* to the assets' expressions.json and choose it for *face_id*. Never replaces a set or a choice.
+
+    Returns what happened, for the message. The file is replaced whole, as the server writes it.
+    """
+    path = assets_dir / EXPRESSIONS
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError) as exc:
+        raise FetchError(f"{path}: cannot read it ({exc}); the head is in place, its rest set is not") from exc
+    if not isinstance(raw, dict):
+        raise FetchError(f"{path}: not a JSON object; the head is in place, its rest set is not")
+    sets = raw.setdefault("sets", {})
+    faces = raw.setdefault("faces", {})
+    if not isinstance(sets, dict) or not isinstance(faces, dict):
+        raise FetchError(f"{path}: sets and faces must be objects; the head is in place, its rest set is not")
+    entry = {"weights": rest["weights"], "life": rest.get("life", 1.0)}
+    name = rest["name"]
+    if name in sets and sets[name] != entry:
+        return f"rest set {name} not installed: {path} has a different set of that name"
+    if face_id in faces and faces[face_id] != name:
+        sets.setdefault(name, entry)
+        note = f"rest set {name} added; {face_id} keeps its own choice ({faces[face_id]})"
+    else:
+        sets[name], faces[face_id] = entry, name
+        note = f"rest set {name} chosen for {face_id}"
+    handle, partial = tempfile.mkstemp(dir=assets_dir, prefix=".expressions-", suffix=".part")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(json.dumps(raw, indent=2) + "\n")
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(partial, 0o666 & ~mask)
+        os.replace(partial, path)
+    finally:
+        if os.path.exists(partial):
+            os.unlink(partial)
+    return note
 
 
 def download(url: str, size: int, sha256: str, target: Path) -> None:
@@ -150,6 +211,8 @@ def fetch(face_id: str, assets_dir: Path, *, force: bool = False, lock_dir: Path
     if manifest_path.is_file() and manifest_path.read_text(encoding="utf-8") != text and not force and not downloaded:
         raise FetchError(f"{manifest_path} exists and differs from the lock; pass --force to replace it")
     manifest_path.write_text(text, encoding="utf-8")
+    if "rest" in lock:
+        print(install_rest(assets_dir, face_id, lock["rest"]))
     return directory, downloaded
 
 
