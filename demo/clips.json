@@ -34,10 +34,10 @@
     {
       "id": "screens",
       "title": "On a screen",
-      "face": "splat-01",
+      "face": "splat-04",
       "framing": "head",
       "scene": "ftl",
-      "voice": "speaker:Rosemary Okafor",
+      "voice": "speaker:Annmarie Nele",
       "seed": 9,
       "sentences": [
         "At home, I run live.",

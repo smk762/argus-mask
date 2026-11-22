@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A fourth cleared splat head, `splat-04`** (#151), from a character-art portrait like `splat-02` and `splat-03`,
+  with its rest set and a look-alike check. **Every demo clip is now on a splat head**: Hello on `splat-02`, How it
+  works on `splat-03`, On a screen on `splat-04`, each with its own voice and resting as its lock says
+  (`demo/make_clips.py`); the mesh full body is off the demo. `fetch_stock_head.py --no-rest` keeps
+  `expressions.json` out of the demo's site.
+
 - **A LAM head's rest set fitted to its portrait** (#151): `lam/fit_rest.py` scores the viewer's drawing of a head
   against its portrait with MediaPipe (features placed against the outline, how much iris the lids show, how full
   the lips are) and searches the rest set that matches best; `warm`'s closed lids were what hooded them. Portraits
