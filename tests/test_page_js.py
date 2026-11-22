@@ -276,7 +276,7 @@ def test_a_qr_code_drawn_on_a_canvas_is_not_transposed() -> None:
     script = f"""
 const qrcode = require({json.dumps(str(PAGE / "qr" / "qrcode.js"))});
 const qr = qrcode(0, 'M');
-qr.addData('http://192.168.1.10:8109/?face=stock-01&kiosk=1');
+qr.addData('http://203.0.113.10:8109/?face=stock-01&kiosk=1');
 qr.make();
 const dark = new Set();
 const ctx = {{ fillStyle: '', fillRect(x, y) {{ if (this.fillStyle === 'black') dark.add(`${{x}},${{y}}`); }} }};
