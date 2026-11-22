@@ -20,3 +20,4 @@ spec.orig.md
 
 # The hosted demo's build (make demo)
 /demo/out/
+.env.bak*
