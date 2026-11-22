@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two more cleared splat heads, `splat-02` and `splat-03`** (#151): LAM heads from synthetic character-art
+  portraits (FLUX.1 schnell, text prompt only, no LoRA), each with a look-alike check in its provenance, published to
+  the `stock-heads` release. A lock may now carry the head's `rest` set: `scripts/fetch_stock_head.py` adds it to
+  `assets/expressions.json` and chooses it for the head, and never replaces a set or a choice already there.
+
 - **Broadcast shows each face's picture** (click to enlarge), and Saved faces has a Broadcast… button that opens
   the page with that face picked.
 - **Broadcast remembers a voice per face**, and lists the voices typed before under "Used before", so a service
