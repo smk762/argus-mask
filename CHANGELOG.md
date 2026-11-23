@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guided head builder docs** (#177): README step-by-step for `/guided.html` (what each
+  step checks and refuses), `docs/synthetic-faces.md` points at the guided flow first
+  (by-hand CLI kept), `lam/README.md` lists what the editor runs, `.env.example` names
+  the LAM / FLAME / curator / OCR / eval settings.
+
 - **A guided face's save and look-alike record** (#176, step 7 of #163, wire 1.9):
   `POST /guided/{id}/save` writes the picked head into the assets root with its
   measured limits, rest set, scene/shot, and `build.json` as the editor's ownership

@@ -93,6 +93,14 @@ A LAM splat head ([lam/README.md](../lam/README.md)) is built from the one portr
 - **Flat light, and no smile.** The head keeps the portrait's light and expression for good. Ask for a large soft light directly in front and a relaxed, closed mouth.
 - **Head and shoulders, plain dark background.** The bust fades out below the collarbone, so a low neckline or a plain top reads best; the background is matted away.
 
+### Guided flow (prefer this)
+
+The editor's [guided head builder](../README.md#guided-head-builder) (`/guided.html`) runs source → portrait checks → LAM build → likeness / rest / turns / speech / age → pick → scene → save. It keeps the build record, refuses unsettled steps, measures turn limits, fits the rest set, and writes the face the server serves. Open it once darkroom, curator, retina OCR and the LAM image are configured (README § Configuration). Say the age in the subject (18 or over), and never a name.
+
+The subsections below are what that flow checks and scores. Use them when reading a refusal on the page, or when you want the same checks by hand.
+
+### By hand (CLI)
+
 Make a batch, build a head from each, and pick from a contact sheet, never from the portraits alone: two portraits that look alike can give heads that fail in different places.
 
 ```bash
