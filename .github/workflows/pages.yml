@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
       # The vendored design layer is unedited, and say so (not fail) if dragonhound.dev has a newer one.
       - run: node demo/vendor/dh/sync-shared.mjs --check . --against https://dragonhound.dev/brand/v1/manifest.json --allow-outdated
-      - run: python3 -m pip install markdown-it-py==4.2.0
+      - run: python3 -m pip install markdown-it-py==4.2.0 argus-cortex==0.14.0  # demo/docs_page.py: sha256_hex
       - run: python3 demo/build.py
         env:
           OPSEC_DENYLIST: ${{ secrets.OPSEC_DENYLIST }}
