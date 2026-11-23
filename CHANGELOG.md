@@ -34,8 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable. It used to surface when the step ran.
 - `argus-mask plate --darkroom` no longer reads its default through the option's `envvar`; unset, it resolves as
   above (mask's variable, the suite's, then `http://localhost:8106`).
-- `.env.example` drops `ARGUS_GPU_COORDINATOR` and `ARGUS_GPU_BROKER_FALLBACK`: the URL and token are enough.
-  `compose.yaml` still passes them through for a host that sets them.
+- `.env.example` drops `ARGUS_GPU_BROKER_FALLBACK`: with a broker, the URL and token are enough. It keeps
+  `ARGUS_GPU_COORDINATOR`, empty, now described as the setting for a host with no broker (`lease`: the host lock
+  file). `compose.yaml` still passes both through for a host that sets them.
 
 ## [0.4.0] - 2026-11-23
 
