@@ -433,7 +433,7 @@ function pickPanel() {
     grid.append(card);
 
     // Preview after the card is in the DOM so the stage has a size.
-    queue previewCandidate(name, stageBox, poses, !blockers.length);
+    void previewCandidate(name, stageBox, poses, !blockers.length);
   }
   if (!names.length) grid.append(el('p', { className: 'hint', textContent: 'Add a candidate and settle its evals first.' }));
   body.push(grid);
