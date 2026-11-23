@@ -176,6 +176,29 @@ LANDMARKER_IN_CACHE = Path.home() / ".cache" / "argus-mask" / "face_landmarker.t
 
 
 @dataclass(frozen=True)
+class SourceSettings:
+    """What a guided face's source step needs (``editor/source.py``, argus-darkroom)."""
+
+    darkroom_url: str = "http://localhost:8106"
+    policy: str = "default"
+    width: int = 1024
+    height: int = 1280
+    timeout_s: float = 900.0
+    restyle_denoise: float = 0.7
+
+    @classmethod
+    def from_env(cls) -> SourceSettings:
+        return cls(
+            darkroom_url=(_env("DARKROOM_URL") or "http://localhost:8106").rstrip("/"),
+            policy=_env("DARKROOM_POLICY") or "default",
+            width=int(_number("PORTRAIT_WIDTH", "1024", 256, 2048)),
+            height=int(_number("PORTRAIT_HEIGHT", "1280", 256, 2048)),
+            timeout_s=_number("DARKROOM_TIMEOUT_S", "900", 30, 7200),
+            restyle_denoise=_number("RESTYLE_DENOISE", "0.7", 0.05, 1.0),
+        )
+
+
+@dataclass(frozen=True)
 class RestSettings:
     """What a guided face's rest fit needs (``editor/rest_fit.py``, ``lam/fit_rest.py``)."""
 

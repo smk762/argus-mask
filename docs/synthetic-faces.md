@@ -113,16 +113,16 @@ Say the age in the subject (18 or over), and never a name. The subject is the on
 
 ### Pick the style: realistic character art, not a photograph
 
-LAM keeps a face's outline (rendered at the portrait's own camera, the landmarks land within about 3% of the eyes' spacing) but softens what is inside it: the lids sit lower over the iris, the lips thin, the skin loses its fine detail. A photograph comes out of that heavier and older than it went in; an idealised face with smooth, painted skin survives it (#151). So `--style` picks the template around the subject:
+LAM keeps a face's outline (rendered at the portrait's own camera, the landmarks land within about 3% of the eyes' spacing) but softens what is inside it: the lids sit lower over the iris, the lips thin, the skin loses its fine detail. A photograph comes out of that heavier and older than it went in; an idealised face with smooth, painted skin survives it (#151). So `--style` picks the template around the subject (the same templates live in `argus_mask.portraits`, which the guided editor's source step uses too, #167):
 
 | `--style` | Look | Verdict on the first batches |
 |---|---|---|
 | `character` | realistic adult proportions and light, a smooth painted finish | the pick: `lam-c1011` and `lam-c1022` |
 | `stylised` | a digital painting, idealised | good; a little more illustrated |
-| `photo` (default) | a studio photograph | a believable portrait, a head that reads about ten years older |
+| `photo` (CLI default) | a studio photograph | a believable portrait, a head that reads about ten years older |
 | `semireal` | a 3D render | too doll-like, and reads young: don't use it |
 
-Every style is a text prompt only, so the face stays `synthetic`. Say "late twenties" or older in the subject: a painted style pulls a face younger. Reject a portrait with a signature or text in it (FLUX paints one now and then), however clean its face.
+The guided editor defaults to `character`. Every style is a text prompt only, so the face stays `synthetic`. Say "late twenties" or older in the subject: a painted style pulls a face younger. Reject a portrait with a signature or text in it (FLUX paints one now and then), however clean its face.
 
 ### Score likeness, then fit its rest set
 

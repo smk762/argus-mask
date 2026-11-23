@@ -5,7 +5,10 @@
 
 Writes ``<out>/<seed>.png`` and ``<out>/<seed>.generation.json`` (darkroom's record: the face's provenance). A
 seed darkroom did not pass, or a record that names a LoRA, writes nothing: such a face would not be `synthetic`.
-The prompt around the subject is the recipe in docs/synthetic-faces.md § For a LAM head. Standard library only.
+The prompt around the subject is the recipe in docs/synthetic-faces.md § For a LAM head.
+
+Uses :mod:`argus_mask.portraits` (the same templates and checks the guided editor's source step uses, #167).
+Standard library + the installed package only.
 """
 
 from __future__ import annotations
@@ -16,45 +19,16 @@ import sys
 import urllib.request
 from pathlib import Path
 
-CHECKPOINT = "flux/flux1-schnell-fp8-e4m3fn.safetensors"
-SAMPLING = {"sampler": "euler", "scheduler": "simple", "steps": 4, "cfg": 1.0, "guidance": 3.5}
-# What LAM needs of a portrait: square on, neutral, flat light (a smile or a shadow is baked into the head).
-TEMPLATE = (
-    "close-up studio portrait photograph of {subject}, head and shoulders, facing the camera squarely, head level, "
-    "calm neutral expression, mouth closed and relaxed, not smiling, eyes open looking into the lens, "
-    "very soft flat lighting from a large softbox directly in front, face evenly lit, no shadows on the face, "
-    "plain dark grey background, sharp focus, natural skin texture, 85mm lens, f/8"
+from argus_mask.portraits import (
+    CHECKPOINT,
+    DEFAULT_HEIGHT,
+    DEFAULT_WIDTH,
+    TEMPLATES,
+    generate_body,
+    prompt_for,
+    refusal,
+    seeds,
 )
-# An idealised, painted look: LAM softens what it is given, and a smooth stylised face survives that where a
-# photograph's skin and shading come out heavier and older (#151). Still a text prompt only, so still synthetic.
-STYLISED = (
-    "digital painting portrait of {subject}, idealized smooth flawless skin, clear bright eyes, refined features, "
-    "head and shoulders, facing the camera squarely, head level, calm neutral expression, lips closed, "
-    "eyes looking into the lens, soft even front lighting, plain dark grey background, highly detailed, sharp focus"
-)
-# Between the two: realistic proportions and light, rendered-smooth skin; the look LAM keeps (#151).
-SEMIREAL = (
-    "semi-realistic 3D render portrait of {subject}, realistic proportions, smooth even skin, natural colouring, "
-    "clear eyes, head and shoulders, facing the camera squarely, head level, calm neutral expression, lips closed, "
-    "eyes looking into the lens, soft even front lighting, plain grey background, clean image, sharp focus"
-)
-# Realistic character art: a photograph's proportions and light, an idealised painted finish (#151).
-CHARACTER = (
-    "highly realistic digital art portrait of {subject}, realistic adult proportions, flawless smooth skin, "
-    "subtle natural makeup, clear detailed eyes, head and shoulders, facing the camera squarely, head level, "
-    "calm neutral expression, lips closed, eyes looking into the lens, soft even front lighting, plain grey background, "
-    "cinematic character art, sharp focus"
-)
-TEMPLATES = {"photo": TEMPLATE, "stylised": STYLISED, "semireal": SEMIREAL, "character": CHARACTER}
-
-
-def seeds(text: str) -> list[int]:
-    """``501-508`` or ``501,503,507``."""
-    out: list[int] = []
-    for part in text.split(","):
-        first, _, last = part.partition("-")
-        out.extend(range(int(first), int(last or first) + 1))
-    return out
 
 
 def last_event(reply) -> dict:
@@ -68,27 +42,14 @@ def last_event(reply) -> dict:
 
 
 def generate(darkroom: str, prompt: str, seed: int, width: int, height: int, policy: str) -> dict:
-    body = {
-        "user_prompt": prompt,
-        "seed": seed,
-        "enforcing_policy": policy,
-        "checkpoint": CHECKPOINT,
-        "sampling": {**SAMPLING, "width": width, "height": height},
-    }
+    body = generate_body(prompt, seed, width=width, height=height, policy=policy, checkpoint=CHECKPOINT)
     request = urllib.request.Request(  # noqa: S310 - the caller's own darkroom
-        f"{darkroom}/generate/stream", json.dumps(body).encode(), {"Content-Type": "application/json"}
+        f"{darkroom.rstrip('/')}/generate/stream",
+        json.dumps(body).encode(),
+        {"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=900) as reply:  # noqa: S310
         return last_event(reply).get("record") or {}
-
-
-def refusal(record: dict) -> str | None:
-    """Why this record's image is not a cleared source, or None."""
-    if record.get("outcome") != "passed":
-        return f"darkroom: {record.get('outcome', 'no record')} ({record.get('outcome_reason') or 'no reason given'})"
-    if (record.get("request") or {}).get("loras"):
-        return "the record names a LoRA: the face would be personal, not synthetic"
-    return None
 
 
 def main() -> None:
@@ -98,18 +59,18 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--darkroom", default="http://localhost:8106")
     ap.add_argument("--policy", default="default")
-    ap.add_argument("--width", type=int, default=1024)
-    ap.add_argument("--height", type=int, default=1280)
+    ap.add_argument("--width", type=int, default=DEFAULT_WIDTH)
+    ap.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     ap.add_argument("--style", choices=sorted(TEMPLATES), default="photo")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    prompt = TEMPLATES[a.style].format(subject=a.subject)
+    prompt = prompt_for(a.subject, a.style)
     for seed in a.seeds:
         record = generate(a.darkroom, prompt, seed, a.width, a.height, a.policy)
         if why := refusal(record):
             print(f"{seed}: skipped: {why}", file=sys.stderr)
             continue
-        with urllib.request.urlopen(f"{a.darkroom}/image/{record['id']}", timeout=120) as reply:  # noqa: S310
+        with urllib.request.urlopen(f"{a.darkroom.rstrip('/')}/image/{record['id']}", timeout=120) as reply:  # noqa: S310
             (a.out / f"{seed}.png").write_bytes(reply.read())
         (a.out / f"{seed}.generation.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"{seed}: {a.out / f'{seed}.png'}")
