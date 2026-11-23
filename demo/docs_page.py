@@ -13,12 +13,11 @@ doc, the images they show, and ``docs/sources.json``: the commit, the version at
 - **CSP-neutral.** Markdown is rendered with raw HTML off; no inline script or style (table alignment becomes a
   class); images are copied into the site, never hot-linked, and remote ones (badges) are dropped.
 
-Needs markdown-it-py; the rest is the standard library.
+Needs markdown-it-py and argus-cortex (``sha256_hex``); the rest is the standard library.
 """
 
 from __future__ import annotations
 
-import hashlib
 import html
 import json
 import os
@@ -27,6 +26,7 @@ import subprocess
 import unicodedata
 from pathlib import Path, PurePosixPath
 
+from argus_cortex.hashing import sha256_hex
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
@@ -79,10 +79,6 @@ OPSEC = (
 
 class Refused(Exception):
     """The docs or the clips cannot be published as they are."""
-
-
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 # ---- the gate and the record -----------------------------------------------------------------------------------
@@ -368,8 +364,8 @@ def build(out: Path, frame, clips: list[dict], env: dict[str, str] | None = None
         "commit": commit,
         "version": version,
         "pypi": PYPI,
-        "docs": {path: sha256(data) for path, data in texts.items()},
-        "images": {path: sha256((ROOT / path).read_bytes()) for path in sorted(images.values())},
+        "docs": {path: sha256_hex(data) for path, data in texts.items()},
+        "images": {path: sha256_hex((ROOT / path).read_bytes()) for path in sorted(images.values())},
         "clips": {
             clip["id"]: {"made_with": clip["made_with"]["argus_mask"], "commit": made[clip["id"]]} for clip in clips
         },
