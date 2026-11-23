@@ -511,7 +511,11 @@ def editor(
             ed = replace(ed, voices_dir=voices_dir)
     except ConfigError as exc:
         raise _fail(str(exc)) from exc
-    uvicorn.run(create_editor_app(cfg, ed), host=host, port=port)
+    try:
+        editor_app = create_editor_app(cfg, ed)
+    except ConfigError as exc:  # a peer URL that is not one (config._peer)
+        raise _fail(str(exc)) from exc
+    uvicorn.run(editor_app, host=host, port=port)
 
 
 @app.command()
@@ -738,7 +742,23 @@ plate_app = typer.Typer(
 )
 app.add_typer(plate_app, name="plate")
 
-DARKROOM = Option("http://localhost:8106", "--darkroom", envvar="ARGUS_MASK_DARKROOM_URL", help="argus-darkroom's URL")
+DARKROOM = Option(
+    "",
+    "--darkroom",
+    help="argus-darkroom's URL; default: ARGUS_MASK_DARKROOM_URL, then ARGUS_DARKROOM_URL, then http://localhost:8106",
+)
+
+
+def _darkroom_url(given: str) -> str:
+    """--darkroom, else mask's variable, then the suite's (cortex's peers), then the local default."""
+    from argus_mask.config import DEFAULT_DARKROOM_URL, _peer
+
+    if given.strip():
+        return given.strip()
+    try:
+        return _peer("darkroom", "DARKROOM_URL", DEFAULT_DARKROOM_URL)
+    except ConfigError as exc:
+        raise _fail(str(exc)) from exc
 
 
 def _plate_progress(event: str, data: object) -> None:
@@ -783,6 +803,8 @@ def plate_generate(
 
     from argus_mask.backgrounds import Darkroom, PlateError, PlateRequest, make_plate
     from argus_mask.models import PlateEffects
+
+    darkroom = _darkroom_url(darkroom)
 
     try:
         effects = PlateEffects(drift=drift, sway=sway, dapple=dapple, pulse=pulse, soft=soft, exposure=exposure)
@@ -829,7 +851,7 @@ def plate_depth(
     from argus_mask.backgrounds import Darkroom, PlateError, add_depth
 
     try:
-        manifest = add_depth(Darkroom(darkroom), directory)
+        manifest = add_depth(Darkroom(_darkroom_url(darkroom)), directory)
     except PlateError as exc:
         raise _fail(str(exc)) from exc
     assert manifest.darkroom is not None and manifest.darkroom.depth is not None

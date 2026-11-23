@@ -79,6 +79,7 @@ from typing import Any, Literal
 import numpy as np
 import structlog
 from argus_cortex.gpu import GpuLeaseRefused, GpuLeaseTimeout
+from argus_cortex.service import install_health
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -157,6 +158,7 @@ from argus_mask.models import (
     CLEARED_KINDS,
     FACE_ID_PATTERN,
     FRAMINGS,
+    MASK_VERSION,
     FaceManifest,
     LookAlike,
     ModelFile,
@@ -474,16 +476,20 @@ def create_editor_app(
     app.state.builder = builder
     origin_refusal = install_guards(app, cfg)
 
-    @app.get("/health")
-    def health() -> dict:
-        reason = builder.check()
-        return {
-            "version": __version__,
-            "ready": reason is None,
-            "reason": reason,
-            "building": builder.busy,
-            "read_only": cfg.read_only,
-        }
+    async def own_health() -> dict:
+        reason = await asyncio.to_thread(builder.check)
+        return {"ready": reason is None, "reason": reason, "building": builder.busy}
+
+    # GET /health: cortex's ServiceHealth with the editor's own fields beside it (ready: whether a build can run).
+    install_health(
+        app,
+        service="argus-mask",
+        version=__version__,
+        wire={"mask_version": MASK_VERSION},
+        capabilities=("editor",),
+        read_only=cfg.read_only,
+        extra=own_health,
+    )
 
     @app.get("/library")
     def assets() -> dict[str, list[dict]]:

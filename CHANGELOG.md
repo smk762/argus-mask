@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /health` is argus-cortex's `ServiceHealth`** on the server and the editor (`install_health`): `service`,
+  `version`, `status` (`ok`, or `degraded` when the driver does not answer), `started_at`, `wire`
+  (`mask_version`), `checks` (`driver`), `read_only`, and `build` / `peer` from `ARGUS_BUILD` / `ARGUS_PEER`. Every
+  field it had is still there under the same name: the server's `driver`, `fps`, `free_vram_mb`, `faces`, `live`,
+  `screens`, `aliases`; the editor's `ready`, `reason`, `building`. It still answers 200 whenever the process does.
+  `GET /health?checks=0` skips the check; the image's healthcheck uses it.
+- **Suite-wide peer URLs** (cortex's `peers`). `ARGUS_MASK_DARKROOM_URL`, `ARGUS_MASK_CURATOR_URL` and
+  `ARGUS_MASK_OCR_URL` still win; unset, mask reads `ARGUS_DARKROOM_URL`, `ARGUS_CURATOR_URL` and `ARGUS_OCR_URL`.
+  `off` turns one off for mask. `ARGUS_MASK_TTS_URL` is used as written (a stream endpoint, or `wyoming://`); unset,
+  mask uses the suite's XTTS engine, `ARGUS_XTTS_URL`, at `/synthesise/stream`.
+- **The suite file** (`$XDG_CONFIG_HOME/argus/suite.env`, `/etc/argus/suite.env` in a container): the broker URL and token
+  and the peer URLs can be set there once. `live_coordinator()` reads the broker settings through cortex's
+  `settings`, as `coordinator_from_env()` does. `compose.yaml` carries the mount as a commented-out line (compose
+  cannot make a bind mount optional).
+- `compose.yaml` labels the server for argus-iris's directory: `argus.peer: mask`, `argus.service: argus-mask`,
+  `argus.health: /health`, `argus.port: "8109"`, and sets `ARGUS_PEER`.
+
+### Changed
+
+- **argus-cortex `>=0.16,<0.17`** (was `>=0.15,<0.16`).
+- A peer URL that is not an absolute `http(s)` URL (`ARGUS_MASK_DARKROOM_URL`, `ARGUS_MASK_CURATOR_URL`,
+  `ARGUS_MASK_OCR_URL`, or their suite-wide names) is now a configuration error when the editor starts, naming the
+  variable. It used to surface when the step ran.
+- `argus-mask plate --darkroom` no longer reads its default through the option's `envvar`; unset, it resolves as
+  above (mask's variable, the suite's, then `http://localhost:8106`).
+- `.env.example` drops `ARGUS_GPU_BROKER_FALLBACK`: with a broker, the URL and token are enough. It keeps
+  `ARGUS_GPU_COORDINATOR`, empty, now described as the setting for a host with no broker (`lease`: the host lock
+  file). `compose.yaml` still passes both through for a host that sets them.
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

@@ -34,6 +34,6 @@ VOLUME /assets
 
 EXPOSE 8109
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8109/health', timeout=4)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8109/health?checks=0', timeout=4)"
 # 0.0.0.0 inside the container; which host address it is published on is compose's choice.
 CMD ["argus-mask", "serve", "--host", "0.0.0.0", "--port", "8109"]

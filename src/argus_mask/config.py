@@ -11,6 +11,7 @@ from argus_mask.drivers import DRIVERS
 DEFAULT_PORT = 8109
 DEFAULT_EDITOR_PORT = 8111  # 8110 is the Audio2Face server
 DEFAULT_FPS = 30
+DEFAULT_DARKROOM_URL = "http://localhost:8106"
 
 
 class ConfigError(ValueError):
@@ -19,6 +20,36 @@ class ConfigError(ValueError):
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(f"ARGUS_MASK_{name}", default).strip()
+
+
+def _peer(peer: str, name: str | None, default: str | None = None) -> str:
+    """Another service's base URL: ``ARGUS_MASK_<name>``, then the suite-wide ``ARGUS_<PEER>_URL``, then *default*
+    (cortex's ``peers``, which also reads the suite file). Empty when nothing names it, or ``off`` turns it off.
+    A value that is not an http(s) URL is a :class:`ConfigError` naming the variable, never read as unset."""
+    from argus_cortex.peers import PeerRefused, peer_url  # noqa: PLC0415
+
+    try:
+        return peer_url(peer, *([f"ARGUS_MASK_{name}"] if name else []), default=default) or ""
+    except PeerRefused as exc:
+        raise ConfigError(str(exc)) from None
+
+
+# The echo engine mask falls back to when ARGUS_MASK_TTS_URL is unset: XTTS-v2, the suite's cloning engine.
+TTS_PEER = "xtts"
+TTS_STREAM_PATH = "/synthesise/stream"
+
+
+def _tts_url() -> str:
+    """The TTS stream endpoint. ``ARGUS_MASK_TTS_URL`` is used as written (a stream endpoint with its path, or
+    ``wyoming://host:port``, so it is not a peer's base URL); ``off`` or ``none`` means no TTS. Unset, the suite's
+    XTTS engine (``ARGUS_XTTS_URL``, a base URL) is used at its ``/synthesise/stream``."""
+    from argus_cortex import settings  # noqa: PLC0415
+
+    own = settings.get("ARGUS_MASK_TTS_URL") or ""
+    if own:
+        return "" if own.lower() in ("off", "none") else own
+    base = _peer(TTS_PEER, None)
+    return f"{base}{TTS_STREAM_PATH}" if base else ""
 
 
 @dataclass(frozen=True)
@@ -62,7 +93,7 @@ class Settings:
             assets_dir=Path(_env("ASSETS_DIR", "assets")),
             driver=_env("DRIVER", "energy").lower() or "energy",
             a2f_url=_env("A2F_URL"),
-            tts_url=_env("TTS_URL"),
+            tts_url=_tts_url(),
             tts_voice=_env("TTS_VOICE"),
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
@@ -179,7 +210,7 @@ LANDMARKER_IN_CACHE = Path.home() / ".cache" / "argus-mask" / "face_landmarker.t
 class SourceSettings:
     """What a guided face's source step needs (``editor/source.py``, argus-darkroom)."""
 
-    darkroom_url: str = "http://localhost:8106"
+    darkroom_url: str = DEFAULT_DARKROOM_URL
     policy: str = "default"
     width: int = 1024
     height: int = 1280
@@ -189,7 +220,7 @@ class SourceSettings:
     @classmethod
     def from_env(cls) -> SourceSettings:
         return cls(
-            darkroom_url=(_env("DARKROOM_URL") or "http://localhost:8106").rstrip("/"),
+            darkroom_url=_peer("darkroom", "DARKROOM_URL", DEFAULT_DARKROOM_URL),
             policy=_env("DARKROOM_POLICY") or "default",
             width=int(_number("PORTRAIT_WIDTH", "1024", 256, 2048)),
             height=int(_number("PORTRAIT_HEIGHT", "1280", 256, 2048)),
@@ -221,8 +252,8 @@ class PortraitSettings:
         else:
             landmarker = LANDMARKER_IN_CACHE if LANDMARKER_IN_CACHE.is_file() else None
         return cls(
-            curator_url=(_env("CURATOR_URL") or "").rstrip("/"),
-            ocr_url=(_env("OCR_URL") or "").rstrip("/"),
+            curator_url=_peer("curator", "CURATOR_URL"),
+            ocr_url=_peer("ocr", "OCR_URL"),
             landmarker=landmarker,
             min_side_px=int(_number("PORTRAIT_MIN_SIDE_PX", "512", 64, 4096)),
             min_face_frac=_number("PORTRAIT_MIN_FACE_FRAC", "0.15", 0.01, 1.0),
@@ -274,7 +305,7 @@ class AgeSettings:
     @classmethod
     def from_env(cls) -> AgeSettings:
         return cls(
-            curator_url=(_env("CURATOR_URL") or "").rstrip("/"),
+            curator_url=_peer("curator", "CURATOR_URL"),
             older_years=_number("AGE_OLDER_YEARS", "7", 1.0, 30.0),
             timeout_s=_number("AGE_TIMEOUT_S", "120", 10, 3600),
         )

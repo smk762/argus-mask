@@ -1,6 +1,7 @@
 """The argus-mask server.
 
-``GET /health``                       version, the driver and whether it answers, free VRAM, ``read_only``, live faces
+``GET /health``                       cortex's ``ServiceHealth`` (version, status, wire, checks, ``read_only``) with
+                                      the driver and whether it answers, free VRAM and live faces beside it
 ``GET /faces``                        the faces that may be served
 ``GET /aliases``                      stable names for faces (alias -> face id); every route taking a face takes one
 ``GET /face/{id}``                    one face's manifest
@@ -40,6 +41,7 @@ import anyio
 import structlog
 from argus_cortex.gpu import free_vram_mb
 from argus_cortex.server import WriteGuard, constant_refuse, cross_site_refuse
+from argus_cortex.service import DependencyCheck, install_health
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -58,6 +60,7 @@ from argus_mask.gpu import A2F_LIVE, hold, live_coordinator, registered
 from argus_mask.models import (
     FACE_ID_PATTERN,
     FRAMINGS,
+    MASK_VERSION,
     VOICE_DISCLOSURE,
     DriverHealth,
     FaceManifest,
@@ -81,6 +84,7 @@ VIEWER_DIR = Path(__file__).resolve().parent.parent / "viewer"
 READ_ONLY_REFUSAL = "this server is read-only (ARGUS_MASK_READ_ONLY)"
 HELLO_TIMEOUT_S = 10.0
 DRIVER_CHECK_TTL_S = 2.0
+DRIVER_CHECK_TIMEOUT_S = 5.0  # /health's bound on the driver check: past the a2f driver's own 3 s
 MAX_CHUNK_BYTES = 4 * 1024 * 1024  # one source message: over 5 s of 48 kHz stereo float
 # A viewer this many messages behind is dropped. Sources send in real time plus a small lead, so a
 # healthy viewer's queue stays near empty.
@@ -385,11 +389,11 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
 
     probe = _DriverProbe(driver)
 
-    @app.get("/health", response_model=Health)
-    async def health() -> Health:
+    async def own_health() -> dict:
+        """Mask's own /health fields, as before cortex's contract: they ride beside it under the same names."""
         reason = await probe.reason()
         faces, _ = store.scan()
-        return Health(
+        own = Health(
             version=__version__,
             driver=DriverHealth(name=driver.name, model=driver.model, available=reason is None, reason=reason),
             fps=cfg.fps,
@@ -400,6 +404,26 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
             screens={fid: list(stage.screens.values()) for fid, stage in sorted(stages.items()) if stage.screens},
             aliases=aliases.all(),
         )
+        # version and read_only are also the contract's, with the same values: it supplies them.
+        return own.model_dump(mode="json", exclude={"version", "read_only"})
+
+    async def driver_check() -> DependencyCheck:
+        # Why not is in `driver.reason`, as it always was; a check's detail is kept free of it.
+        return DependencyCheck(ok=await probe.reason() is None)
+
+    # GET /health: cortex's ServiceHealth (service, version, status, wire, checks, ...) with mask's fields beside
+    # it. Always 200 once the app answers: a driver that is down makes the status `degraded`, never a 503.
+    install_health(
+        app,
+        service="argus-mask",
+        version=__version__,
+        wire={"mask_version": MASK_VERSION},
+        checks={"driver": driver_check},
+        read_only=cfg.read_only,
+        extra=own_health,
+        check_ttl_s=DRIVER_CHECK_TTL_S,
+        check_timeout_s=DRIVER_CHECK_TIMEOUT_S,
+    )
 
     @app.get("/aliases")
     def alias_list() -> dict[str, str]:
