@@ -297,6 +297,9 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_DARKROOM_POLICY` | `default` | Enforcing policy a source portrait's darkroom record must carry |
 | `ARGUS_MASK_PORTRAIT_WIDTH` / `_HEIGHT` | `1024` / `1280` | Size asked of darkroom for a guided source generate or restyle |
 | `ARGUS_MASK_RESTYLE_DENOISE` | `0.7` | Image-to-image denoise when restyling a source into a style template |
+| `ARGUS_MASK_CURATOR_URL` | unset | argus-curator for guided portrait `face_source` (#168). Unset, those checks are `not_checked` and block the build |
+| `ARGUS_MASK_OCR_URL` | unset | argus-retina-ocr for guided portrait text/signature checks (#168). Unset, text is `not_checked` and blocks |
+| `ARGUS_MASK_PORTRAIT_MIN_SIDE_PX` | `512` | Refuse a guided source portrait shorter than this on either side |
 | `ARGUS_MASK_LAM_DIR` | unset | The LAM checkout with its `model_zoo`, for a guided face's LAM build ([lam/README.md](lam/README.md)). Unset, no LAM head is built |
 | `ARGUS_MASK_FLAME_OPEN` | unset | `flame2023_Open.pkl`. The pipeline refuses any other FLAME |
 | `ARGUS_MASK_LAM_IMAGE` | `argus-mask-lam` | The image the pipeline runs in |

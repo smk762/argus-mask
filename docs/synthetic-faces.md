@@ -124,6 +124,10 @@ LAM keeps a face's outline (rendered at the portrait's own camera, the landmarks
 
 The guided editor defaults to `character`. Every style is a text prompt only, so the face stays `synthetic`. Say "late twenties" or older in the subject: a painted style pulls a face younger. Reject a portrait with a signature or text in it (FLUX paints one now and then), however clean its face.
 
+### Check the portrait before any GPU time
+
+The guided editor's portrait step (#168) runs before LAM: curator `face_source` (one adult identity, frontal, sharp, eyes open), retina OCR for a painted signature, and mask's own framing / expression / lighting / temples / photograph advisory. A temple-bare crop and a picture with text are caught; a photograph is an advisory with a restyle offer (#167). A required check that could not run (`not_checked`) blocks the build.
+
 ### Score likeness, then fit its rest set
 
 After the head is built, `lam/likeness.py` scores it against the portrait at the portrait's own camera (colour per region, DINOv2 identity, lid aperture, lip fullness, landmark misfit). The scores that ranked character heads above photo heads on #151's set are kept; detail did not separate them and is not. The guided editor runs this as a job after the build.

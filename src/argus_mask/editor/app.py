@@ -23,6 +23,8 @@
 ``POST /guided/{id}/candidates/{c}/source/pick``  take a darkroom record as the candidate's portrait
 ``POST /guided/{id}/candidates/{c}/source/upload``  upload a portrait with its provenance
 ``POST /guided/{id}/candidates/{c}/source/restyle``  image-to-image restyle through darkroom (a job)
+``POST /guided/{id}/portrait``          run portrait checks on every source candidate (a job; #168)
+``GET  /guided/{id}/portrait``          the batch ranked by how the checks went
 ``POST /guided/{id}/candidates/{candidate}/build``  build a candidate's LAM head from its portrait (a job, queued:
                                         one head at a time); ``{"fit_shape": true}`` also fits its FLAME shape
 ``POST /guided/{id}/candidates/{candidate}/likeness``  score the head against its portrait (#169; a job)
@@ -77,6 +79,7 @@ from argus_mask.config import (
     EditorSettings,
     LamSettings,
     LikenessSettings,
+    PortraitSettings,
     RestSettings,
     Settings,
     SourceSettings,
@@ -94,6 +97,8 @@ from argus_mask.editor.likeness import Busy as ScoringLikeness
 from argus_mask.editor.likeness import LikenessError, LikenessJobs
 from argus_mask.editor.packs import Busy as Installing
 from argus_mask.editor.packs import Installs, PackError, load_catalogue
+from argus_mask.editor.portrait import Busy as CheckingPortraits
+from argus_mask.editor.portrait import PortraitError, PortraitJobs
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.editor.rest_fit import Busy as FittingRest
 from argus_mask.editor.rest_fit import RestError, RestFits
@@ -308,6 +313,12 @@ class SourceRestyle(BaseModel):
     denoise: float | None = Field(None, ge=0.05, le=1.0)
 
 
+class PortraitRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[str] | None = Field(None, description="subset to check; default: every candidate with a source")
+
+
 class AliasTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
     face: str = Field(..., pattern=FACE_ID_PATTERN)
@@ -333,6 +344,7 @@ def create_editor_app(
     likeness: LikenessJobs | None = None,
     rest: RestFits | None = None,
     source: SourceJobs | None = None,
+    portrait: PortraitJobs | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -361,6 +373,7 @@ def create_editor_app(
     likeness = likeness or LikenessJobs(guided, LikenessSettings.from_env())
     rest = rest or RestFits(guided, RestSettings.from_env())
     source = source or SourceJobs(guided, SourceSettings.from_env(), consents)
+    portrait = portrait or PortraitJobs(guided, PortraitSettings.from_env())
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
     packs = packs or Installs(ed.data_dir, load_catalogue())
 
@@ -374,6 +387,7 @@ def create_editor_app(
         await likeness.stop_all()
         await rest.stop_all()
         await source.stop_all()
+        await portrait.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -628,6 +642,7 @@ def create_editor_app(
             "refused": unreadable,
             "steps": guided_steps(),
             "source": source.state(),
+            "portrait": portrait.state(),
             "lam": lam.state(),  # whether a head can be built here, why not, and the builds running or queued
             "likeness": likeness.state(),
             "rest": rest.state(),
@@ -759,6 +774,32 @@ def create_editor_app(
         log.info("source_restyle_asked", build=build_id, candidate=candidate, style=req.style)
         return job.public()
 
+    @app.post("/guided/{build_id}/portrait")
+    async def guided_portrait_check(build_id: str, req: PortraitRun | None = None) -> dict:
+        """Run portrait checks on source candidates before any GPU time (#168). Answers with the job."""
+        try:
+            job = portrait.start(build_id, candidates=req.candidates if req else None)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (NotReady, CheckingPortraits) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except PortraitError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("portrait_checks_asked", build=build_id, n=len(job.candidates))
+        return job.public()
+
+    @app.get("/guided/{build_id}/portrait")
+    def guided_portrait_ranking(build_id: str) -> dict:
+        """The build's candidates ranked by how the portrait checks went (#168)."""
+        try:
+            return {"ranking": portrait.ranking_of(build_id), **portrait.state()}
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
     @app.post("/guided/{build_id}/candidates/{candidate}/build")
     async def guided_lam_build(build_id: str, candidate: str, req: LamBuild | None = None) -> dict:
         """Build a candidate's head from the portrait its record keeps (#155). Answers at once, with the job."""
@@ -807,8 +848,8 @@ def create_editor_app(
         log.info("rest_fit_asked", build=build_id, candidate=candidate)
         return job.public()
 
-    def guided_job_of(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - SourceJob, LamJob, LikenessJob or RestJob
-        for pool in (source.jobs, lam.jobs, likeness.jobs, rest.jobs):
+    def guided_job_of(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - guided step jobs
+        for pool in (source.jobs, portrait.jobs, lam.jobs, likeness.jobs, rest.jobs):
             job = pool.get(job_id)
             if job is not None and job.build_id == build_id:
                 return job
@@ -823,6 +864,8 @@ def create_editor_app(
         job = guided_job_of(build_id, job_id)
         if job_id in source.jobs:
             await source.stop(job_id)
+        elif job_id in portrait.jobs:
+            await portrait.stop(job_id)
         elif job_id in lam.jobs:
             await lam.stop(job_id)
         elif job_id in likeness.jobs:
