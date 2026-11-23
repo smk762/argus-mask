@@ -21,6 +21,7 @@
 ``POST /guided``                        create an empty guided build (``{"id", "name?"}``)
 ``POST /guided/{id}/pick``              choose a candidate (step 5; ``{"candidate"}``)
 ``POST /guided/{id}/scene``             background and shot (step 6; ``{"scene", "shot"}``; bright-floor advisory)
+``POST /guided/{id}/save``              write the face the server serves (step 7; lookalike optional)
 ``POST /guided/{id}/overrule``          overrule an advisory on a face step (``{"step", "check", "reason"}``)
 ``POST /guided/{id}/candidates/{c}/overrule``  overrule an advisory on a candidate step
 ``GET  /guided/{id}/file/{path}``       a file a step kept (portrait, render, …)
@@ -71,6 +72,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -125,6 +127,8 @@ from argus_mask.editor.portrait import PortraitError, PortraitJobs
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.editor.rest_fit import Busy as FittingRest
 from argus_mask.editor.rest_fit import RestError, RestFits
+from argus_mask.editor.save import SaveError
+from argus_mask.editor.save import save as save_guided
 from argus_mask.editor.scene import SceneError
 from argus_mask.editor.scene import choose as choose_scene
 from argus_mask.editor.source import Busy as Sourcing
@@ -154,6 +158,7 @@ from argus_mask.models import (
     FACE_ID_PATTERN,
     FRAMINGS,
     FaceManifest,
+    LookAlike,
     ModelFile,
     is_face_id,
     is_safe_name,
@@ -359,6 +364,23 @@ class GuidedScene(BaseModel):
 
     scene: str | None = Field(None, max_length=64, description="a scene's name (GET /scenes); null: a plain background")
     shot: Literal["close", "wide"] | None = Field(None, description="a splat head's shot; null: the background's")
+
+
+class GuidedLookAlike(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    who: str = Field(..., min_length=1, max_length=200)
+    at: date
+    how: str = Field(..., min_length=1, max_length=500)
+    found: str = Field(..., min_length=1, max_length=2000)
+
+
+class GuidedSave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field("", max_length=80)
+    notes: str = Field("", max_length=4000)
+    lookalike: GuidedLookAlike | None = None
 
 
 class GuidedOverrule(BaseModel):
@@ -772,6 +794,34 @@ def create_editor_app(
         except NotReady as exc:
             raise HTTPException(409, str(exc)) from exc
         except SceneError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return kept.model_dump(mode="json")
+
+    @app.post("/guided/{build_id}/save")
+    def guided_save(build_id: str, req: GuidedSave | None = None) -> dict:
+        """Write the picked head into the assets root (#176). Needs settled pick and scene."""
+        req = req or GuidedSave()
+        lookalike = LookAlike.model_validate(req.lookalike.model_dump(mode="json")) if req.lookalike else None
+        try:
+            kept = save_guided(
+                guided,
+                assets_dir=cfg.assets_dir,
+                expressions=expressions,
+                scenes=scene_choices,
+                build_id=build_id,
+                name=req.name,
+                lookalike=lookalike,
+                notes=req.notes,
+            )
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NotReady as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (NotOwned, Taken) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except SaveError as exc:
             raise HTTPException(422, str(exc)) from exc
         except GuidedError as exc:
             raise HTTPException(422, str(exc)) from exc

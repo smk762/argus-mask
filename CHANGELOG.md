@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's save and look-alike record** (#176, step 7 of #163, wire 1.9):
+  `POST /guided/{id}/save` writes the picked head into the assets root with its
+  measured limits, rest set, scene/shot, and `build.json` as the editor's ownership
+  mark. `Provenance.lookalike` records who checked, when, how, and what was found;
+  derived `demo_ready` is true only for a cleared face with that check. Without one
+  a cleared face still saves, but is not offered for the demo. Companion:
+  argus-cortex#201.
+
 - **A guided face's background and shot** (#175, step 6 of #163): after pick,
   `POST /guided/{id}/scene` records the backdrop and splat shot (`close` / `wide`),
   scores the plate's floor behind the bust, and flags a bright floor as an advisory

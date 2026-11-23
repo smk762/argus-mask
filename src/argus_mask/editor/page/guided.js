@@ -558,6 +558,68 @@ function scenePanel() {
   return stepShell('scene', face.status, body);
 }
 
+function savePanel() {
+  const face = record?.face?.save || { status: 'missing', blockers: [] };
+  const result = resultOf('save', null);
+  const body = [];
+  body.push(el('p', {
+    className: 'hint',
+    textContent: 'Writes the picked head into assets with its record beside it. A look-alike check makes a cleared face demo_ready.',
+  }));
+  if (face.blockers?.length) body.push(el('p', { className: 'blockers', textContent: face.blockers.join('; ') }));
+  if (result) {
+    body.push(checksList(result), scoresLine(result));
+    const d = result.data || {};
+    body.push(el('p', {
+      className: 'hint',
+      textContent: `Saved as ${d.face || '—'}${d.demo_ready ? ' (demo_ready)' : ''}`,
+    }));
+  }
+
+  const form = el('form', { className: 'stack', 'aria-label': 'Save the face' });
+  const name = el('input', { id: 'save-name', maxlength: 80, value: record?.name || '' });
+  const notes = el('textarea', { id: 'save-notes', rows: 2, maxlength: 4000 });
+  const who = el('input', { id: 'la-who', maxlength: 200, placeholder: 'e.g. the maintainer' });
+  const at = el('input', { id: 'la-at', type: 'date' });
+  const how = el('input', { id: 'la-how', maxlength: 500, placeholder: 'e.g. Bing visual search of the portrait' });
+  const found = el('textarea', { id: 'la-found', rows: 2, maxlength: 2000, placeholder: 'what was found' });
+  form.append(
+    el('label', {}, 'Display name', name),
+    el('label', {}, 'Notes', notes),
+    el('strong', { textContent: 'Look-alike check (for the demo)' }),
+    el('label', {}, 'Who', who),
+    el('label', {}, 'When', at),
+    el('label', {}, 'How', how),
+    el('label', {}, 'Found', found),
+  );
+  const btn = el('button', { type: 'submit', className: 'primary', textContent: 'Save face' });
+  btn.disabled = !!face.blockers?.length && face.status === 'missing';
+  form.append(btn);
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const bodyJson = { name: name.value.trim(), notes: notes.value.trim() };
+    if (who.value.trim() && at.value && how.value.trim() && found.value.trim()) {
+      bodyJson.lookalike = {
+        who: who.value.trim(),
+        at: at.value,
+        how: how.value.trim(),
+        found: found.value.trim(),
+      };
+    }
+    try {
+      await json(`/guided/${enc(buildId)}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyJson),
+      });
+      status(`Saved ${buildId}.`);
+      await reload();
+    } catch (err) { status(err.message, true); }
+  };
+  body.push(form);
+  return stepShell('save', face.status, body);
+}
+
 async function previewCandidate(candidate, host, posesBar, ready) {
   if (!ready) {
     host.textContent = 'Settle likeness, rest, turns, speech and age to preview.';
@@ -611,6 +673,7 @@ function renderWorkspace() {
     ...EVAL_STEPS.map((s) => evalPanel(s, c)),
     pickPanel(),
     scenePanel(),
+    savePanel(),
   );
 }
 

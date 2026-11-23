@@ -42,7 +42,7 @@
     "life": 1.0
   },
   "made_with": {
-    "argus_mask": "v0.3.0-29-g4b11f2b",
+    "argus_mask": "v0.3.0-73-g062ff26",
     "driver": {
       "name": "a2f",
       "model": null
