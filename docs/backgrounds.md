@@ -122,6 +122,9 @@ and provenance. Then add the name to `SCENES` in `backdrop.js` (`<name>: plate('
   only person on screen. A plate cannot be `consented`, and `curated` is refused.
 - **Small.** At most 4 MB per image and 6 MB per plate. A 1344x768 plate is about 2 MB.
 - **Soft and dark in the middle**, as for any scene: the face is the subject.
+- **A bright floor under the bust warns.** The guided scene step (#175) scores the plate’s lower-middle
+  band (behind a close-shot bust). A pale share above 5% is an advisory — garden’s path trips it; lake
+  does not. The splat renderer’s fade shadow softens the band on screen, but the record still says so.
 
 ## Plates of your own
 

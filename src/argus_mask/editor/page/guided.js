@@ -47,7 +47,8 @@ function stepMeta(name) {
 
 function resultOf(step, candidate) {
   if (!record) return null;
-  return record.results.find((r) => r.step === step && (step === 'pick' || r.candidate === candidate)) || null;
+  const want = candidate ?? null;
+  return record.results.find((r) => r.step === step && (r.candidate ?? null) === want) || null;
 }
 
 function fileUrl(file) {
@@ -105,8 +106,11 @@ function artThumbs(result) {
 async function overrule(step, candidate, check) {
   const reason = window.prompt(`Why overrule ${step}/${check}?`);
   if (!reason || !reason.trim()) return;
+  const path = candidate
+    ? `/guided/${enc(buildId)}/candidates/${enc(candidate)}/overrule`
+    : `/guided/${enc(buildId)}/overrule`;
   try {
-    await json(`/guided/${enc(buildId)}/candidates/${enc(candidate)}/overrule`, {
+    await json(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ step, check, reason: reason.trim() }),
@@ -440,6 +444,120 @@ function pickPanel() {
   return stepShell('pick', face.status, body);
 }
 
+function scenePanel() {
+  const face = record?.face?.scene || { status: 'missing', blockers: [] };
+  const result = resultOf('scene', null);
+  const body = [];
+  body.push(el('p', {
+    className: 'hint',
+    textContent: 'Backdrop and shot as Saved faces uses them. A pale floor under the bust warns (garden’s path).',
+  }));
+  if (face.blockers?.length) body.push(el('p', { className: 'blockers', textContent: face.blockers.join('; ') }));
+  if (result) {
+    body.push(checksList(result), scoresLine(result));
+    const chosen = result.data || {};
+    body.push(el('p', {
+      className: 'hint',
+      textContent: `Recorded: ${chosen.scene || 'plain background'}${chosen.shot ? `, shot ${chosen.shot}` : ''}`,
+    }));
+  }
+
+  const form = el('form', { className: 'stack', 'aria-label': 'Background and shot' });
+  const sceneSel = el('select', { id: 'scene-name' });
+  sceneSel.append(new Option('None: a plain background', ''));
+  const shotSel = el('select', { id: 'scene-shot' });
+  shotSel.append(
+    new Option('Shot: as the background suits', ''),
+    new Option('Shot: close, head and shoulders', 'close'),
+    new Option('Shot: wide, a floating head', 'wide'),
+  );
+  if (result?.data) {
+    sceneSel.value = result.data.scene || '';
+    shotSel.value = result.data.shot || '';
+  }
+  form.append(
+    el('label', {}, 'Backdrop', sceneSel),
+    el('label', {}, 'Shot', shotSel),
+  );
+  const previewHost = el('div', { className: 'stage', style: 'max-width:320px;min-height:280px;aspect-ratio:5/6;background:#0a0c10;border-radius:8px;overflow:hidden' });
+  const poses = el('div', { className: 'poses' });
+  form.append(previewHost, poses);
+
+  const save = el('button', { type: 'submit', className: 'primary', textContent: 'Keep background' });
+  save.disabled = !!face.blockers?.length && face.status === 'missing';
+  form.append(save);
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      await json(`/guided/${enc(buildId)}/scene`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene: sceneSel.value || null, shot: shotSel.value || null }),
+      });
+      status(`Scene set to ${sceneSel.value || 'plain'}${shotSel.value ? ` / ${shotSel.value}` : ''}.`);
+      await reload();
+    } catch (err) { status(err.message, true); }
+  };
+  body.push(form);
+
+  // Load scene list and preview the picked head over the chosen backdrop.
+  void (async () => {
+    try {
+      const scenes = await json('/scenes');
+      const keep = sceneSel.value;
+      while (sceneSel.options.length > 1) sceneSel.remove(1);
+      for (const s of scenes) {
+        sceneSel.append(new Option(
+          `${s.title} (${s.name}${s.built_in ? '' : ', yours'})${s.cleared ? '' : ': own screens only'}`,
+          s.name,
+        ));
+      }
+      sceneSel.value = keep;
+    } catch (err) { status(err.message, true); }
+    const picked = record?.picked;
+    if (!picked) {
+      previewHost.textContent = 'Pick a candidate first.';
+      return;
+    }
+    const build = resultOf('build', picked);
+    if (!build?.outputs?.some((a) => a.name === 'head')) {
+      previewHost.textContent = 'No head for the picked candidate.';
+      return;
+    }
+    let stage = stages.get(`scene:${picked}`);
+    if (!stage) {
+      stage = new Stage();
+      stages.set(`scene:${picked}`, stage);
+    }
+    stage.attach(previewHost);
+    const turns = resultOf('turns', picked);
+    const rest = resultOf('rest', picked);
+    if (rest?.data?.weights) stage.setRest({ weights: rest.data.weights, life: rest.data.life ?? 1 });
+    try {
+      await talkReady;
+      await stage.load(
+        `/guided/${enc(buildId)}/candidates/${enc(picked)}/head.zip`,
+        {},
+        'lam-splat',
+        { limits: turns?.data?.limits || null },
+      );
+      stage.pose = 'speak';
+      stage.poseButtons(poses);
+      const apply = () => {
+        stage.setScene(sceneSel.value || '').catch((err) => status(err.message, true));
+        stage.setShot(shotSel.value || '');
+      };
+      sceneSel.onchange = apply;
+      shotSel.onchange = apply;
+      apply();
+    } catch (err) {
+      previewHost.textContent = `Preview failed: ${err.message}`;
+    }
+  })();
+
+  return stepShell('scene', face.status, body);
+}
+
 async function previewCandidate(candidate, host, posesBar, ready) {
   if (!ready) {
     host.textContent = 'Settle likeness, rest, turns, speech and age to preview.';
@@ -492,6 +610,7 @@ function renderWorkspace() {
     buildPanel(c),
     ...EVAL_STEPS.map((s) => evalPanel(s, c)),
     pickPanel(),
+    scenePanel(),
   );
 }
 

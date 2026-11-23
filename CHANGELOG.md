@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's background and shot** (#175, step 6 of #163): after pick,
+  `POST /guided/{id}/scene` records the backdrop and splat shot (`close` / `wide`),
+  scores the plate's floor behind the bust, and flags a bright floor as an advisory
+  (garden's pale path; lake does not). Face-step overrule at `POST /guided/{id}/overrule`.
+  The guided page previews the picked head over the chosen scene.
+
 - **The guided head builder page and pick** (#174, step 5 of #163): `GET /guided.html`
   reads the build record only (every check, score, refusal and blocker), with panels
   for source / portrait / build / evals and a side-by-side pick. `POST /guided/{id}/pick`
