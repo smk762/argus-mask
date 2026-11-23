@@ -323,6 +323,8 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_SPEECH_TAKE` | the package's `talk.json` | Fixed Audio2Face take (no TTS) both the candidate and the reference play |
 | `ARGUS_MASK_SPEECH_REFERENCE` | `splat-01` | Reference face under assets; absent, #161's after baseline is used |
 | `ARGUS_MASK_SPEECH_TIMEOUT_S` | `900` | The editor stops a speech job that takes longer |
+| `ARGUS_MASK_AGE_OLDER_YEARS` | `7` | Flag when the head reads this many years older than its portrait (#172; photo ≈ +10) |
+| `ARGUS_MASK_AGE_TIMEOUT_S` | `120` | Timeout for each curator `POST /faces` age read |
 | `ARGUS_MASK_SERVER_URL` | `http://127.0.0.1:8109` | How the editor reaches the server, to check a face and send a test |
 | `ARGUS_MASK_VIEWER_URL` | the server URL | The origin screens open the viewer at (the TLS proxy, on a LAN); the editor's links point here |
 | `ARGUS_MASK_RECORDINGS_DIR` | `recordings` | Where the Broadcast page's recordings go (an MP4, its WAV and take) |
