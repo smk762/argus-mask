@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's portrait checks before any GPU time** (#168, step 2 of #163): `POST /guided/{id}/portrait`
+  runs curator `face_source`, retina OCR (cortex `OcrClient`), and mask's own checks (framing, expression,
+  lighting, temples, photograph advisory with a restyle hint). A required check that could not run is
+  `not_checked` and blocks the build; advisories can be overruled. `GET /guided/{id}/portrait` returns the
+  batch ranked by how the checks went. Settings: `ARGUS_MASK_CURATOR_URL`, `ARGUS_MASK_OCR_URL`,
+  `ARGUS_MASK_PORTRAIT_*`.
+
 - **A guided face's source portrait and provenance** (#167, step 1 of #163): four ways into the build record —
   generate a batch of seeds through darkroom (`POST /guided/{id}/source/generate`), pick a passed darkroom record
   (`POST .../source/pick`), upload with declared provenance (`POST .../source/upload`), or restyle a settled source

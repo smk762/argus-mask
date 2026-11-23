@@ -199,6 +199,40 @@ class SourceSettings:
 
 
 @dataclass(frozen=True)
+class PortraitSettings:
+    """What a guided face's portrait checks need (``editor/portrait.py``, #168)."""
+
+    # Unset: the curator-owned checks are ``not_checked`` (required) and block the build.
+    curator_url: str = ""
+    # Unset: OCR is ``not_checked`` (required) and blocks the build.
+    ocr_url: str = ""
+    landmarker: Path | None = None  # MediaPipe face_landmarker.task; unset: expression/light/temples skip
+    min_side_px: int = 512  # refuse a portrait shorter than this on either side
+    min_face_frac: float = 0.15  # face box short side vs image short side (when landmarks available)
+    photo_laplacian: float = 80.0  # above this, treat an unknown upload as a photograph (advisory)
+    ocr_min_score: float = 0.5
+    timeout_s: float = 120.0
+
+    @classmethod
+    def from_env(cls) -> PortraitSettings:
+        model = _env("LANDMARKER")
+        if model:
+            landmarker: Path | None = Path(model).expanduser()
+        else:
+            landmarker = LANDMARKER_IN_CACHE if LANDMARKER_IN_CACHE.is_file() else None
+        return cls(
+            curator_url=(_env("CURATOR_URL") or "").rstrip("/"),
+            ocr_url=(_env("OCR_URL") or "").rstrip("/"),
+            landmarker=landmarker,
+            min_side_px=int(_number("PORTRAIT_MIN_SIDE_PX", "512", 64, 4096)),
+            min_face_frac=_number("PORTRAIT_MIN_FACE_FRAC", "0.15", 0.01, 1.0),
+            photo_laplacian=_number("PORTRAIT_PHOTO_LAPLACIAN", "80", 1.0, 10_000.0),
+            ocr_min_score=_number("OCR_MIN_SCORE", "0.5", 0.0, 1.0),
+            timeout_s=_number("PORTRAIT_TIMEOUT_S", "120", 10, 3600),
+        )
+
+
+@dataclass(frozen=True)
 class RestSettings:
     """What a guided face's rest fit needs (``editor/rest_fit.py``, ``lam/fit_rest.py``)."""
 
