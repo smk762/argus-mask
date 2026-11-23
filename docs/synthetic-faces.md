@@ -142,6 +142,10 @@ python lam/measure_turns.py --url http://127.0.0.1:8109 --face splat-01 --out wo
 
 Needs playwright and pillow. The editor runs it as a job (`POST /guided/{id}/candidates/{candidate}/turns`).
 
+### Compare apparent age
+
+LAM brings a photograph out about ten years older; character art holds its age (#151). The guided age step (#172) asks argus-curator `POST /faces` (MiVOLO) for the age of the portrait-crop and of the head render at the portrait's camera, writes both and the difference, and flags when the head reads much older (default ≥ 7 years). This is a likeness score, not the 18-or-over check (that one is on the portrait before any build).
+
 ### Score the mouth in speech
 
 A head can look right at rest and stutter in speech. Lip-parting shapes held under speech fought every closure (#161: lips closed 42% → 62% of frames, direction reversals 52 → 38 once those shapes drop out under speech, in line with `splat-01`). The guided speech step (#171) plays one fixed, cleared take (`talk.json`, no TTS) on the candidate and on `splat-01`, reads the lip gap per frame with MediaPipe, and writes closed-share / reversals / opening p95 into the record (stutter and oversized mouth are advisories):

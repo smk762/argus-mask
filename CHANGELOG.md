@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's age read** (#172, step 4 of #163): after a LAM build,
+  `POST /guided/{id}/candidates/{candidate}/age` asks argus-curator `POST /faces` (MiVOLO) for the
+  apparent age of the portrait-crop and of the head render, writes both and their difference, and
+  flags when the head reads much older (≥ 7 years by default: #151's photograph heads ≈ +10,
+  character heads did not). A likeness score, not the 18-or-over gate. Settings: `ARGUS_MASK_AGE_*`,
+  `ARGUS_MASK_CURATOR_URL`.
+
 - **A guided face's speech eval** (#171, step 4 of #163): after build and rest fit,
   `POST /guided/{id}/candidates/{candidate}/speech` plays the fixed `talk.json` take (no TTS), reads the
   lip gap per frame (MediaPipe), and scores closed-share / direction reversals / opening p95 against

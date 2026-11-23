@@ -264,6 +264,23 @@ class TurnsSettings:
 
 
 @dataclass(frozen=True)
+class AgeSettings:
+    """What a guided face's age step needs (``editor/age.py``, curator ``POST /faces``, #172)."""
+
+    curator_url: str = ""
+    older_years: float = 7.0  # head − portrait; #151 photo ≈ +10, character ≈ 0
+    timeout_s: float = 120.0
+
+    @classmethod
+    def from_env(cls) -> AgeSettings:
+        return cls(
+            curator_url=(_env("CURATOR_URL") or "").rstrip("/"),
+            older_years=_number("AGE_OLDER_YEARS", "7", 1.0, 30.0),
+            timeout_s=_number("AGE_TIMEOUT_S", "120", 10, 3600),
+        )
+
+
+@dataclass(frozen=True)
 class SpeechSettings:
     """What a guided face's speech eval needs (``editor/speech.py``, ``lam/measure_speech.py``, #171)."""
 

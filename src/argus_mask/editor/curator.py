@@ -26,13 +26,59 @@ class FaceSourceRow:
     rank: int | None = None
 
 
+@dataclass(frozen=True)
+class AgeReading:
+    """Apparent age from curator's ``POST /faces`` (MiVOLO), for one image."""
+
+    years: float
+    source: str  # e.g. mivolo
+    faces: int
+
+
 @dataclass
 class CuratorClient:
-    """The few curator routes a guided portrait needs. *opener* is injectable for tests."""
+    """The few curator routes a guided portrait / age step needs. *opener* is injectable for tests."""
 
     url: str
     timeout: float = 120.0
     opener: Any = request.urlopen  # noqa: ANN401 - urllib opener or a test double
+
+    def age(self, image: bytes) -> AgeReading:
+        """Apparent age of the primary face in *image* (``POST /faces``, memory only)."""
+        if not self.url.startswith(("http://", "https://")):
+            raise CuratorError(f"ARGUS_MASK_CURATOR_URL {self.url!r}: must be an http(s) URL")
+        if not image:
+            raise CuratorError("no image for age")
+        payload = self._call("POST", "/faces", image, content_type="image/png")
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise CuratorError("curator /faces returned non-JSON") from exc
+        faces = data.get("faces")
+        if not isinstance(faces, list) or not faces:
+            raise CuratorError("curator found no face to age")
+        source = str(data.get("source") or "mivolo")
+        # Largest face by bbox area is the primary (curator may return several).
+        best: dict | None = None
+        best_area = -1.0
+        for face in faces:
+            if not isinstance(face, dict):
+                continue
+            years = face.get("age_estimate_years")
+            if not isinstance(years, (int, float)):
+                continue
+            bbox = face.get("bbox") or [0, 0, 0, 0]
+            try:
+                x, y, w, h = (float(bbox[i]) for i in range(4))
+                area = abs(w * h)
+            except (TypeError, ValueError, IndexError):
+                area = 0.0
+            if area >= best_area:
+                best_area = area
+                best = face
+        if best is None:
+            raise CuratorError("curator returned faces with no age")
+        return AgeReading(years=float(best["age_estimate_years"]), source=source, faces=len(faces))
 
     def face_source(self, images: dict[str, bytes], *, folder: str | None = None) -> list[FaceSourceRow]:
         """Run face_source on *images* (name → PNG/JPEG bytes). Returns one row per name."""
