@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -39,14 +39,14 @@ wheels = [
 
 [[package]]
 name = "argus-cortex"
-version = "0.9.0"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/08/09878f8551c7b8405c1633c3d4881d46e26980f6415d0715e46650bac224/argus_cortex-0.9.0.tar.gz", hash = "sha256:5b66648633b3920f3d0b9a3c8c6e3b8cc3c6b75cd1166be8aacb23253e673885", size = 191747, upload-time = "2026-11-16T17:19:59.329Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/78/3df0f69d095305c5545eca998a2592e1667e6b4f88a8a560edbf93d829b2/argus_cortex-0.14.0.tar.gz", hash = "sha256:3e088c75c86b0a147d6c2fd7264524f218d43cf0a09c892ac1ab066f92137c74", size = 344179, upload-time = "2026-11-23T02:25:23.013Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/7f/22982995c8244e6e05cdfc049d73bf62c8817275d3668863c192a8adb3cc/argus_cortex-0.9.0-py3-none-any.whl", hash = "sha256:69f270748837415544ce3f2f3d0342acce270c70ca2ba644572797c37d5e2adc", size = 115068, upload-time = "2026-11-16T17:19:57.912Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/eb/b0a1f77d96611f159b3097f131a7679d9e6286fbab8a43a336b6602a19e1/argus_cortex-0.14.0-py3-none-any.whl", hash = "sha256:cf3cc64ea621cf0c5164189697479bbc9dc82c1f4938b72de4fe0b163828e8e8", size = 132690, upload-time = "2026-11-23T02:25:21.492Z" },
 ]
 
 [package.optional-dependencies]
@@ -123,10 +123,10 @@ server = [
 
 [package.metadata]
 requires-dist = [
-    { name = "argus-cortex", specifier = ">=0.9,<0.10" },
-    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'all'", specifier = ">=0.9,<0.10" },
-    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'dev'", specifier = ">=0.9,<0.10" },
-    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'server'", specifier = ">=0.9,<0.10" },
+    { name = "argus-cortex", specifier = ">=0.14,<0.15" },
+    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'all'", specifier = ">=0.14,<0.15" },
+    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'dev'", specifier = ">=0.14,<0.15" },
+    { name = "argus-cortex", extras = ["gpu", "remote", "server", "yaml"], marker = "extra == 'server'", specifier = ">=0.14,<0.15" },
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
