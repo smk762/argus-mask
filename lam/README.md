@@ -65,7 +65,18 @@ docker run --rm --gpus all -v $PWD/lam:/argus:ro -v <dir>:/d -v <flame dir>:/fla
   (`src/argus_mask/editor/lam_build.py`, #155): it runs this script for one portrait of a guided face, names
   LAM's container (`LAM_CONTAINER`) so it can kill it, and holds the `lam-head` GPU lease while it runs.
 
-## Run it
+## What the editor runs for you
+
+Prefer the [guided head builder](../README.md#guided-head-builder) (`argus-mask editor` → `/guided.html`). For each candidate it:
+
+1. Checks the portrait (curator + OCR + framing) before any GPU time.
+2. Runs `make_heads.sh` for that portrait (`lam_build.py`): FLAME Open gate, 12 GB free host memory, one head at a time, `lam-head` lease only while the pipeline runs, cache by portrait sha256.
+3. Scores likeness (`likeness.py`), fits rest (`fit_rest.py`), measures turn limits (`measure_turns.py`), scores speech (`measure_speech.py`), and reads apparent age (curator).
+4. Lets you pick, choose a scene/shot, and save the face with `build.json` as the ownership mark.
+
+Point the editor at this checkout with `ARGUS_MASK_LAM_DIR`, `ARGUS_MASK_FLAME_OPEN` and `ARGUS_MASK_LAM_IMAGE` (README § Configuration). Refining the Gaussians against the portrait (#173) is not in the guided flow yet; `FIT_SHAPE=1` below stays the by-hand shape search.
+
+## Run it by hand
 
 ```bash
 lam/make_heads.sh my-head=portrait.png

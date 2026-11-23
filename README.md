@@ -45,7 +45,7 @@ argus-mask plate generate assets/backgrounds/highland-forest --title "Highland p
   --drift 0.6 --sway 0.4 --dapple 0.35
 ```
 
-**A photoreal splat head**, made from one portrait. A synthetic portrait comes from darkroom ([docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md): frontal, neutral, even light, hair over the temples). LAM turns it into a Gaussian head ([Splat heads](#splat-heads)), and mask drives it like a mesh, in front of the same backdrops. A splat face over a backdrop is framed head and shoulders, since LAM's heads fade out below the collarbone. Two characters made this way:
+**A photoreal splat head**, made from one portrait. Prefer the [guided head builder](#guided-head-builder) (`/guided.html` on the editor): portrait and provenance in, checks, a LAM build, evals, pick, scene and save. By hand, a synthetic portrait comes from darkroom ([docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md): frontal, neutral, even light, hair over the temples), then `lam/` ([Splat heads](#splat-heads)). Mask drives the head like a mesh, in front of the same backdrops. A splat face over a backdrop is framed head and shoulders, since LAM's heads fade out below the collarbone. Two characters made this way:
 
 - **Callum MacRae**, a Highland man of about 25, red-bearded, with optional blue woad: SDXL photoreal portrait, LAM head, Highland forest backdrop.
 - **Nadia Volkova**, a blonde operative of about 25 in a black tactical jacket: SDXL photoreal portrait, LAM head, bunker backdrop.
@@ -86,7 +86,7 @@ Or both in containers: `docker compose --profile a2f up --build`, with `DRIVER=a
 | `argus-mask say "<text>" --face <id>` | The same, with the audio streamed from a TTS service. |
 | `argus-mask record --face <id> --out clip.mp4` | Waits for the next session on a face and renders it to a video, offline and frame-exact, with the audio. |
 | `argus-mask serve` | The server and the viewer. Binds `127.0.0.1` unless given `--host`. |
-| `argus-mask editor` | The face editor (port 8111): build heads from presets with Blender. See [Face editor](#face-editor). |
+| `argus-mask editor` | The face editor (port 8111): mesh heads from presets with Blender, and the [guided head builder](#guided-head-builder) for splat heads (`/guided.html`). |
 | `argus-mask consent new\|list\|revoke` | Consent records for a real person's face or voice: write one from a signed release, list them, revoke one. See [Consented faces and voices](#consented-faces-and-voices). |
 | `argus-mask schema [--check]` | Writes or checks `schema/mask-wire.schema.json`. |
 
@@ -109,7 +109,7 @@ This is self-hosted software. What you put on your own screens at home is up to 
 
 Showing or sharing is different. A face is **cleared** (`cleared: true` in its provenance, and in `/faces`) when it is `stock`, `synthetic` or `consented`. Only cleared faces and voices go in this repo, its fixtures and examples, demos, recordings made to publish, or anything commercial. The editor marks a face that is not cleared as `personal`.
 
-To make a synthetic source portrait (an SDXL image of a person who does not exist) for the planned photoreal face routes, see [docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md).
+To make a synthetic source portrait (or run the [guided head builder](#guided-head-builder) end to end), see [docs/synthetic-faces.md](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md).
 
 ### Consented faces and voices
 
@@ -271,9 +271,31 @@ argus-mask editor --assets-dir assets \
 
 - **Only licensed assets.** The editor offers the assets that an installed pack lists with a licence, and writes each part's licence and author into the face's provenance (`kind: synthetic`). An asset from a CC-BY pack shows up in the licence line.
 - **Adults only.** Age defaults to about 25 (MakeHuman's 0.5); the slider stops at 18 (0.3542), and the preset model and the recipe refuse anything younger.
-- **It only replaces its own faces.** Each face it builds keeps its `preset.json` beside the model; a directory without one (a stock head, a face added by hand) is never overwritten.
-- **Builds and exports go one at a time.** A failed one leaves nothing behind, and the face that was there stays.
+- **It only replaces its own faces.** A mesh export keeps `preset.json` beside the model; a guided save keeps `build.json`. A directory with neither (a stock head, a face added by hand) is never overwritten.
+- **Builds and exports go one at a time.** A failed one leaves nothing behind, and the face that was there stays. Guided LAM builds are one at a time too (host memory watched; the `lam-head` lease only while the pipeline runs).
 - **Keep it local.** A build starts Blender. The editor binds `127.0.0.1`, and `/build` and `/export` are behind the same origin and read-only guards as the server's writes.
+
+### Guided head builder
+
+`/guided.html` on the editor turns a portrait into a talking splat head, with every check and score kept in `<assets>/.guided/<id>/build.json`. Open it from the editor (or `http://127.0.0.1:8111/guided.html`). You need darkroom (source), curator and retina OCR (portrait checks), a LAM checkout with FLAME 2023 Open and the `argus-mask-lam` image ([lam/README.md](lam/README.md)), and a running mask server for the turn / speech / rest jobs that draw through the viewer. Settings are in [Configuration](#configuration) and `.env.example`.
+
+A step runs only when the steps it needs have settled (passed, or an advisory you overruled). A refusal, a failed check, a required check that could not run (`not_checked`), or a stale result blocks later steps. Re-run an earlier step and find something different, and everything after it goes stale until you run it again.
+
+| Step | What it does | Checks and refusals |
+|---|---|---|
+| **Source** | Portrait + provenance: generate a batch through darkroom, pick a passed darkroom record, upload with declared provenance, or restyle a settled source into a style template (`character` by default). | Kind is computed (a LoRA record is never `synthetic`; a restyle never raises the kind). Under-size portraits refused. |
+| **Portrait** | Before any GPU: curator `face_source`, retina OCR, framing / expression / lighting / temples / photograph advisory. | Required check missing → `not_checked` (blocks build). Temple-bare or text refused. Photograph is an advisory with a restyle offer. |
+| **Build** | LAM head from the portrait (`lam/make_heads.sh` in the image). | Needs FLAME 2023 Open, 12 GB+ host memory free, `lam-head` lease. One head at a time; stopped if memory runs low. |
+| **Likeness** | Scores the head against the portrait (colour, DINOv2 identity if available, lids, lips, landmarks). | Scores flag and rank; they do not refuse. |
+| **Rest** | Fits a rest set to the portrait (`lam/fit_rest.py`). | Needs MediaPipe landmarker; writes weights chosen on save. |
+| **Turns** | Contact-sheet poses with limits off; measures yaw / pitch before hairline or temples give out. | Writes measured `limits` onto the face on save. |
+| **Speech** | Fixed `talk.json` take (no TTS) vs `splat-01`; MediaPipe lip gap. | Stutter or oversized mouth → advisory. |
+| **Age** | Curator MiVOLO on portrait-crop and head render. | Head much older than portrait (default ≥ 7 years) → advisory. Not the 18-or-over gate. |
+| **Pick** | Choose one settled candidate (side-by-side on the page). | Needs likeness, rest, turns, speech and age settled. |
+| **Scene** | Backdrop and splat shot (`close` / `wide`). | Bright floor behind the bust → advisory (e.g. garden's pale path). |
+| **Save** | Writes `<assets>/<id>/` with the zip, manifest (limits, framing, provenance), rest, scene, and `build.json`. | Refuses unsettled pick/scene. Optional look-alike check (`who` / `at` / `how` / `found`); a cleared face without one is not `demo_ready`. |
+
+Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For a LAM head](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md#for-a-lam-head). Gaussian refinement against the portrait (#173) is not in this flow yet.
 
 ## Configuration
 
