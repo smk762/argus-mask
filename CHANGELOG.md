@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guided must-never rows** (#178): CLAUDE.md names a check for each guided rule (save
+  without `build.json`, refusal bypass, LoRA→`synthetic` / restyle raising kind,
+  `not_checked` counting as passed, `lam-head` around darkroom). Extra tests pin
+  ownership, save-after-refusal, required `not_checked`, and that source imports no
+  GPU lease; the existing write/consent sweeps already cover the new routes.
+
 - **Guided head builder docs** (#177): README step-by-step for `/guided.html` (what each
   step checks and refuses), `docs/synthetic-faces.md` points at the guided flow first
   (by-hand CLI kept), `lam/README.md` lists what the editor runs, `.env.example` names

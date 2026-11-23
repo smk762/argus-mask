@@ -318,6 +318,21 @@ def test_an_optional_check_that_could_not_run_stands_as_an_advisory_never_a_pass
     record.put(result("build"), at=T0)
 
 
+def test_a_required_check_that_could_not_run_never_counts_as_passed() -> None:
+    """Must never: a check that could not run counts as passed (#178 / #168)."""
+    record = new_record()
+    record.put(result("source"), at=T0)
+    down = check("text", "not_checked", "the OCR server is down")
+    record.put(result("portrait", "c1", down), at=T0)
+    kept = record.get("portrait", "c1")
+    assert kept is not None and kept.standing == "not_checked"
+    assert record.status("portrait", "c1") == "not_checked"
+    with pytest.raises(NotReady, match="could not check"):
+        record.put(result("build"), at=T0)
+    with pytest.raises(CannotOverrule, match="only an advisory"):
+        record.overrule("portrait", "text", "skip it", at=T0, candidate="c1")
+
+
 def test_running_a_step_again_drops_what_was_overruled() -> None:
     record = new_record()
     record.put(result("source"), at=T0)
