@@ -232,6 +232,35 @@ class PortraitSettings:
         )
 
 
+TURNS_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "measure_turns.py"
+
+
+@dataclass(frozen=True)
+class TurnsSettings:
+    """What a guided face's turns step needs (``editor/turns.py``, ``lam/measure_turns.py``, #170)."""
+
+    script: Path | None = None
+    size: int = 512
+    threshold: float = 0.18
+    timeout_s: float = 600.0
+    uv: str = "uv"
+
+    @classmethod
+    def from_env(cls) -> TurnsSettings:
+        script = _env("TURNS_SCRIPT")
+        if script:
+            found: Path | None = Path(script).expanduser()
+        else:
+            found = TURNS_SCRIPT_IN_CHECKOUT if TURNS_SCRIPT_IN_CHECKOUT.is_file() else None
+        return cls(
+            script=found,
+            size=int(_number("TURNS_SIZE", "512", 128, 2048)),
+            threshold=_number("TURNS_GAP", "0.18", 0.01, 1.0),
+            timeout_s=_number("TURNS_TIMEOUT_S", "600", 30, 3600),
+            uv=_env("UV") or "uv",
+        )
+
+
 @dataclass(frozen=True)
 class RestSettings:
     """What a guided face's rest fit needs (``editor/rest_fit.py``, ``lam/fit_rest.py``)."""
