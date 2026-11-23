@@ -94,7 +94,12 @@ async function check(clip, blob) {
   let sha, report, error = null;
   try {
     if (!blob && !clip.url && !clip.sha) throw new Error('This clip could not be read: remove it and add the file again.');
-    const body = blob ?? await (await fetch(clip.url || `/voice/clip/${clip.sha}`)).blob();
+    let body = blob;
+    if (!body) {
+      const reply = await fetch(clip.url || `/voice/clip/${clip.sha}`);
+      if (!reply.ok) throw new Error('This clip could not be read: remove it and add the file again.');
+      body = await reply.blob();
+    }
     const q = new URLSearchParams({ name: clip.name, transcript: clip.transcript });
     const done = await json(`/voice/check?${q}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body });
     sha = done.sha; report = done.report;
@@ -222,7 +227,7 @@ function paintMake() {
   $('v-origin-wrap').hidden = kind !== 'personal';
   $('v-confirm-wrap').hidden = kind === 'personal';
   const used = clips.filter((c) => c.use && c.report);
-  const why = !state.can_make ? state.reason
+  const why = !state.can_make ? (state.reason || 'Voices cannot be made right now.')
     : clips.some((c) => c.use && (c.checking || c.error)) ? 'A chosen clip is not checked yet: wait for it, or fix or drop it.'
       : !used.length ? 'Choose at least one checked clip.'
         : used.some((c) => !c.transcript) ? 'Every clip needs its transcript.'

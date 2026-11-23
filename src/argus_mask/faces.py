@@ -725,7 +725,19 @@ class FaceStore:
         """A mesh model's splats, checked once per version of the three files; :class:`FaceError` if refused."""
         if model.splats is None:
             return
-        files = [path] + [directory / n for n in (model.splats.file, model.splats.binding)]
+        # The same confinement as _model, before these files are stat'd: a pattern-checked name can still be a
+        # symlink out of the face's directory. A file that is simply absent stays a "missing a file" below.
+        companions = []
+        for name in (model.splats.file, model.splats.binding):
+            companion = directory / name
+            # A missing file is left for the stat below ("missing a file"). A symlink is followed only to see
+            # whether it stays in this directory, the same rule _model applies to the mesh.
+            if (companion.is_symlink() or companion.is_file()) and (
+                not companion.is_file() or companion.resolve().parent != directory.resolve()
+            ):
+                raise FaceError(f"the splats' {name} is not in the face's directory")
+            companions.append(companion)
+        files = [path, *companions]
         try:
             # Each file's version as _sha256 takes it: a same-size copy with its mtime kept is still checked again.
             versions = []

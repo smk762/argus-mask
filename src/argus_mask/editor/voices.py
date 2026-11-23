@@ -175,14 +175,20 @@ class VoiceStore:
         tmp.replace(folder / "voice.json")
 
     def trash(self, voice_id: str) -> bool:
-        folder = self.root / voice_id
-        if not re.fullmatch(VOICE_ID, voice_id) or not (folder / "voice.json").is_file():
+        if not re.fullmatch(VOICE_ID, voice_id):
             return False
-        bin_ = self.root / ".trash"
-        bin_.mkdir(parents=True, exist_ok=True)
-        # unique: the same id made and deleted again within a second must not land on the first one's folder
-        folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}")
-        return True
+        # The same lock write() holds: a delete and a save of this voice happen one at a time.
+        with self._guard:
+            lock = self._locks.setdefault(voice_id, threading.Lock())
+        with lock:
+            folder = self.root / voice_id
+            if not (folder / "voice.json").is_file():
+                return False
+            bin_ = self.root / ".trash"
+            bin_.mkdir(parents=True, exist_ok=True)
+            # unique: the same id made and deleted again within a second must not land on the first one's folder
+            folder.replace(bin_ / f"{voice_id}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}")
+            return True
 
 
 def provenance(source: dict) -> dict:

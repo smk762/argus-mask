@@ -150,6 +150,19 @@ def test_a_missing_splat_file_refuses_the_face(tmp_path) -> None:
         FaceStore(tmp_path).load("test-head")
 
 
+@pytest.mark.parametrize("name", ["head.splats.spz", "head.binding.bin"])
+def test_a_splat_link_out_is_refused_before_it_is_inspected(tmp_path, monkeypatch, name: str) -> None:
+    """The confinement is the store's, not only inspect_bound_splats': a link out is refused before that runs."""
+    directory = bound_face(tmp_path)
+    outside = tmp_path / "elsewhere"
+    outside.write_bytes((directory / name).read_bytes())
+    (directory / name).unlink()
+    (directory / name).symlink_to(outside)
+    monkeypatch.setattr(faces, "inspect_bound_splats", lambda *_a, **_k: None)
+    with pytest.raises(FaceError, match="not in the face's directory"):
+        FaceStore(tmp_path).load("test-head")
+
+
 def test_a_splat_file_linking_out_is_refused(tmp_path) -> None:
     directory = bound_face(tmp_path)
     outside = tmp_path / "elsewhere.spz"

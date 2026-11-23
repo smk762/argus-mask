@@ -63,7 +63,7 @@ def portrait_view(shape_param, tracked, save_root):
     """The portrait's own camera, pose and expression (the tracker's), for a head of this shape."""
     return prepare_motion_seqs(
         os.path.join(tracked, "flame_param"), None, save_root=str(save_root), fps=30, bg_color=1.0,
-        aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0], render_image_res=cfg.render_size, multiply=16,
+        aspect_standard=1.0, enlarge_ratio=[1.0, 1.0], render_image_res=cfg.render_size, multiply=16,
         need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False, cross_id=False,
         src_driven=["", ""],
     )  # fmt: skip
@@ -144,7 +144,7 @@ def fit_portrait_shape(image, shape_param, tracked):
     for path in fit_dir.glob("try-*.png"):
         path.unlink()
     print("FIT", json.dumps({k: report[k] for k in ("start", "best")}))
-    return torch.as_tensor(best, dtype=shape_param.dtype)
+    return torch.as_tensor(best, dtype=shape_param.dtype, device=shape_param.device)
 
 
 # The checkpoint carries the whole DINOv2 encoder, so skip the ImageNet download (its server's certificate expired).
@@ -203,7 +203,7 @@ seq = prepare_motion_seqs(
     fps=30,
     bg_color=1.0,
     aspect_standard=1.0,
-    enlarge_ratio=[1.0, 1, 0],
+    enlarge_ratio=[1.0, 1.0],
     render_image_res=cfg.render_size,
     multiply=16,
     need_mask=False,

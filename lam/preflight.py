@@ -52,15 +52,25 @@ class _ArraysOnly(pickle.Unpickler):
 
 
 def _load_embedding(path: Path) -> object:
-    """A `.npy` as LAM loads it (`np.load(allow_pickle=True)[()]`), but unpickling nothing beyond numpy arrays."""
+    """A `.npy` as LAM loads it (`np.load(allow_pickle=True)[()]`), but unpickling nothing beyond numpy arrays.
+
+    Versions 1.0, 2.0 and 3.0 are read as numpy reads them (3.0 is 2.0's layout with a UTF-8 header). A
+    Fortran-ordered file is transposed back, as ``np.load`` does; any other version is refused.
+    """
+    # 3.0's UTF-8 header lives on numpy's private reader; the public ones stop at 2.0 (latin1).
+    from numpy.lib._format_impl import _read_array_header  # noqa: PLC0415
+
     with path.open("rb") as f:
         version = np.lib.format.read_magic(f)
-        read_header = np.lib.format.read_array_header_1_0 if version == (1, 0) else np.lib.format.read_array_header_2_0
-        shape, _, dtype = read_header(f)
+        if version not in ((1, 0), (2, 0), (3, 0)):
+            raise ValueError(f"{path.name}: .npy format {version[0]}.{version[1]} is not supported")
+        shape, fortran_order, dtype = _read_array_header(f, version)
         if dtype.hasobject:
             array = _ArraysOnly(f, encoding="latin1").load()
         else:
-            array = np.fromfile(f, dtype, int(np.prod(shape))).reshape(shape)
+            count = 1 if len(shape) == 0 else int(np.multiply.reduce(shape, dtype=np.int64))
+            array = np.fromfile(f, dtype, count)
+            array = array.reshape(shape[::-1]).transpose() if fortran_order else array.reshape(shape)
     return array[()]
 
 

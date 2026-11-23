@@ -107,6 +107,42 @@ VOICES_HELPERS = (
 )
 
 
+def test_a_missing_clip_is_not_posted_as_audio() -> None:
+    """Re-checking a clip that is gone (404) says it could not be read, and does not send the error page on."""
+    out = _node(f"""
+const $ = (id) => document.getElementById(id);
+let setReport = null;
+const clips = [];
+const paintClips = () => {{}}; const paintMake = () => {{}}; const assessSet = () => {{}};
+let posted = 0;
+const json = async () => {{ posted += 1; return {{ sha: 'abc', report: {{}} }}; }};
+globalThis.fetch = async () => ({{ ok: false, status: 404, blob: async () => '<html>missing</html>' }});
+{_function(VOICES, "async function check(")}
+const clip = {{ name: 'a.wav', transcript: 'Hello.', sha: 'dead', url: '/voice/clip/dead' }};
+await check(clip);
+console.log(JSON.stringify({{ error: clip.error, posted, checking: clip.checking }}));
+""")
+    assert out["posted"] == 0 and out["checking"] is False
+    assert "could not be read" in out["error"]
+
+
+def test_make_stays_disabled_when_voices_cannot_be_made_and_no_reason_is_given() -> None:
+    out = _node(f"""
+const $ = (id) => document.getElementById(id);
+let state = {{ can_make: false }};
+let setReport = null;
+const clips = [];
+{_function(VOICES, "function paintMake(")}
+paintMake();
+const blocked = {{ disabled: $('v-make').disabled, note: $('v-note').textContent }};
+state = {{ can_make: false, reason: 'The TTS service is down.' }};
+paintMake();
+console.log(JSON.stringify({{ blocked, reason: $('v-note').textContent, disabled: $('v-make').disabled }}));
+""")
+    assert out["blocked"] == {"disabled": True, "note": "Voices cannot be made right now."}
+    assert out["disabled"] is True and out["reason"] == "The TTS service is down."
+
+
 def test_only_the_latest_set_verdict_gates_make() -> None:
     """Two assessments in flight: the one for the set chosen last stands, however the replies arrive."""
     out = _node(f"""
