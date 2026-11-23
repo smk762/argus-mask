@@ -407,6 +407,30 @@ export class SplatHead {
     }
   }
 
+  // A named bone from the skin (LAM: neckLower, neckUpper, head), or null.
+  bone(name) {
+    for (const [bone] of this.bones) {
+      if (bone.name === name) return bone;
+    }
+    return null;
+  }
+
+  // Code-only accessory overlay (#67): drawn after the splats so it is not buried under the Gaussians.
+  // *overlay* is a BoneOverlay from accessories.js (or any { draw(renderer, camera), dispose() }).
+  setAccessoryOverlay(overlay) {
+    this.accessoryOverlay?.dispose?.();
+    this.accessoryOverlay = overlay || null;
+  }
+
+  _drawAccessories() {
+    const overlay = this.accessoryOverlay;
+    if (!overlay) return;
+    const v = this.r.viewer;
+    // Bones were posed just before the splat draw; refresh world matrices for the follow holders.
+    v.boneRoot?.updateMatrixWorld(true);
+    overlay.draw(v.renderer, v.camera);
+  }
+
   // One frame, now: pose, skin, start a depth sort, draw (with the last finished sort: fine while live).
   // t: seconds on the backdrop's clock (the page's own, live).
   step(t = 0) {
@@ -415,6 +439,7 @@ export class SplatHead {
     this.r.render();
     cancelAnimationFrame(this.r.viewer.requestFrameId);
     this.veil();
+    this._drawAccessories();
   }
 
   // Record mode: resolves once exactly the pose last set() is on the canvas, drawn with the depth sort for it and
@@ -430,9 +455,12 @@ export class SplatHead {
     this.backdrop?.update(t, { exact: true });
     v.render();
     this.veil();
+    this._drawAccessories();
   }
 
   dispose() {
+    this.accessoryOverlay?.dispose?.();
+    this.accessoryOverlay = null;
     this.backdrop?.dispose();
     if (this.fade) { this.fade.mesh.geometry.dispose(); this.fade.mesh.material.dispose(); }
     // The renderer takes its canvas off the page, then starts its viewer's async dispose, which removes the same
