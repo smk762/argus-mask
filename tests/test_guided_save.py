@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -93,7 +92,7 @@ def _ready_with_head(store: GuidedStore, assets: Path, build_id: str = "guide") 
 
 
 def test_lookalike_sets_demo_ready() -> None:
-    bare = LookAlike(who="me", at=date(2026, 11, 16), how="search", found="none")
+    bare = LookAlike(who="me", at="2026-11-16", how="search", found="none")
     p = Provenance(kind="synthetic", source="flux", license="Apache-2.0", lookalike=bare)
     assert p.demo_ready is True
     assert Provenance(kind="synthetic", source="flux", license="Apache-2.0").demo_ready is False

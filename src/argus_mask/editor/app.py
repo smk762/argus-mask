@@ -803,7 +803,7 @@ def create_editor_app(
     def guided_save(build_id: str, req: GuidedSave | None = None) -> dict:
         """Write the picked head into the assets root (#176). Needs settled pick and scene."""
         req = req or GuidedSave()
-        lookalike = LookAlike.model_validate(req.lookalike.model_dump()) if req.lookalike else None
+        lookalike = LookAlike.model_validate(req.lookalike.model_dump(mode="json")) if req.lookalike else None
         try:
             kept = save_guided(
                 guided,

@@ -12,7 +12,6 @@ mono ``f32le`` PCM at ``StreamHeader.audio.sample_rate``.
 from __future__ import annotations
 
 import re
-from datetime import date
 from typing import Annotated, Literal
 
 from argus_cortex.fs import PathRefused, safe_name
@@ -172,12 +171,15 @@ class LookAlike(BaseModel):
 
     Cleared faces may be served without one; the hosted demo needs one (``demo_ready``). Until this field
     existed the same facts lived in ``notes`` (splat-01 … splat-03). Kept in step with cortex's ``LookAlike``.
+
+    ``at`` is a UTC calendar day as ``YYYY-MM-DD`` (a string, not ``datetime.date``: this module is in the
+    take engine and must not import the clock).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     who: str = Field(..., min_length=1, max_length=200)
-    at: date
+    at: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$", min_length=10, max_length=10)
     how: str = Field(..., min_length=1, max_length=500)
     found: str = Field(..., min_length=1, max_length=2000)
 

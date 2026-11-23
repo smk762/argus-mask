@@ -831,10 +831,12 @@
     },
     "LookAlike": {
       "additionalProperties": false,
-      "description": "A look-alike check for a face shown publicly (#176): who looked, when, how, and what they found.\n\nCleared faces may be served without one; the hosted demo needs one (``demo_ready``). Until this field\nexisted the same facts lived in ``notes`` (splat-01 \u2026 splat-03). Kept in step with cortex's ``LookAlike``.",
+      "description": "A look-alike check for a face shown publicly (#176): who looked, when, how, and what they found.\n\nCleared faces may be served without one; the hosted demo needs one (``demo_ready``). Until this field\nexisted the same facts lived in ``notes`` (splat-01 \u2026 splat-03). Kept in step with cortex's ``LookAlike``.\n\n``at`` is a UTC calendar day as ``YYYY-MM-DD`` (a string, not ``datetime.date``: this module is in the\ntake engine and must not import the clock).",
       "properties": {
         "at": {
-          "format": "date",
+          "maxLength": 10,
+          "minLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
           "title": "At",
           "type": "string"
         },
