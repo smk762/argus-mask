@@ -19,7 +19,14 @@ services:
     restart: unless-stopped
     ports:
       - "${MASK_PUBLISH:-127.0.0.1:8109}:8109"
+    # How argus-iris's node agent finds this service for the suite directory (argus-cortex's service labels).
+    labels:
+      argus.peer: mask
+      argus.service: argus-mask
+      argus.health: /health
+      argus.port: "8109"
     environment:
+      ARGUS_PEER: mask  # the argus.peer label, for /health: a process cannot read its own labels
       ARGUS_MASK_DRIVER: ${DRIVER:-energy}
       ARGUS_MASK_A2F_URL: ${A2F_URL:-}
       ARGUS_MASK_FPS: ${FPS:-30}
@@ -30,12 +37,18 @@ services:
       ARGUS_MASK_TTS_VOICE: ${TTS_VOICE:-}
       # argus-iris, the suite's GPU broker (see .env.example): the URL and token are all it takes, and mask
       # registers /app/gpu-tenant.yaml at startup. The token stays in the host's .env.
+      # A blank value here falls through to the suite file, when one is mounted below.
       ARGUS_GPU_COORDINATOR: ${ARGUS_GPU_COORDINATOR:-}
       ARGUS_GPU_BROKER_URL: ${ARGUS_GPU_BROKER_URL:-}
       ARGUS_GPU_BROKER_TOKEN: ${ARGUS_GPU_BROKER_TOKEN:-}
       ARGUS_GPU_BROKER_FALLBACK: ${ARGUS_GPU_BROKER_FALLBACK:-lease}
     volumes:
       - ${ASSETS_DIR:-./assets}:/assets:ro
+      # The suite file: settings every Argus service on this host shares (the broker URL and token, peer URLs).
+      # Commented out because compose cannot skip a bind mount whose file is missing (Docker would create a
+      # directory in its place). Uncomment on a host that has one; it must belong to root, or to the user the
+      # container runs as, and be mode 600 (root-owned may be 444).
+      # - ${ARGUS_SUITE_ENV:-${HOME}/.config/argus/suite.env}:/etc/argus/suite.env:ro
     extra_hosts:
       # Reach services on the host the same way on Linux as on Docker Desktop.
       - "host.docker.internal:host-gateway"

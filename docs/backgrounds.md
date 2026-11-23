@@ -70,8 +70,8 @@ parallax, given a depth map), leaves sway, light dapples, lights pulse. It needs
 picture comes from argus-darkroom, which checks the prompt and the image and keeps a record of both, and
 `viewer/scenes/plate.js` animates it.
 
-**1. Generate it.** With darkroom running (`--darkroom`, or `ARGUS_MASK_DARKROOM_URL`, default
-`http://localhost:8106`):
+**1. Generate it.** With darkroom running (`--darkroom`, or `ARGUS_MASK_DARKROOM_URL`, then the suite's
+`ARGUS_DARKROOM_URL`, default `http://localhost:8106`):
 
 ```bash
 argus-mask plate generate src/argus_mask/viewer/scenes/<name> \

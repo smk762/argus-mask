@@ -304,7 +304,7 @@ Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For
 | `ARGUS_MASK_ASSETS_DIR` | `assets` | Root of the faces |
 | `ARGUS_MASK_DRIVER` | `energy` | `energy` or `a2f` |
 | `ARGUS_MASK_A2F_URL` | empty | The Audio2Face server, for the `a2f` driver |
-| `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say`, the editor and the server's `POST /speak` |
+| `ARGUS_MASK_TTS_URL` | empty | The TTS stream endpoint, used by `say`, the editor and the server's `POST /speak`. Unset, the suite's XTTS engine if `ARGUS_XTTS_URL` names one (its `/synthesise/stream`); `off` for none |
 | `ARGUS_MASK_TTS_VOICE` | empty | The TTS voice `say` and `/speak` ask for: a stored clone's name, a speaker number, or `speaker:<name>` |
 | `ARGUS_MASK_FPS` | `30` | Animation frames per second |
 | `ARGUS_MASK_CORS_ORIGINS` | empty | Browser origins allowed to open the sockets, comma-separated |
@@ -315,12 +315,12 @@ Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For
 | `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
 | `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
 | `ARGUS_MASK_BUILD_CACHE` | `40` | Builds the editor keeps (about 6 MB each), so undo and repeats skip Blender; `0` keeps none |
-| `ARGUS_MASK_DARKROOM_URL` | `http://localhost:8106` | argus-darkroom, for a guided source generate/pick/restyle (#167) and for `argus-mask plate` |
+| `ARGUS_MASK_DARKROOM_URL` | `ARGUS_DARKROOM_URL`, else `http://localhost:8106` | argus-darkroom, for a guided source generate/pick/restyle (#167) and for `argus-mask plate` |
 | `ARGUS_MASK_DARKROOM_POLICY` | `default` | Enforcing policy a source portrait's darkroom record must carry |
 | `ARGUS_MASK_PORTRAIT_WIDTH` / `_HEIGHT` | `1024` / `1280` | Size asked of darkroom for a guided source generate or restyle |
 | `ARGUS_MASK_RESTYLE_DENOISE` | `0.7` | Image-to-image denoise when restyling a source into a style template |
-| `ARGUS_MASK_CURATOR_URL` | unset | argus-curator for guided portrait `face_source` (#168). Unset, those checks are `not_checked` and block the build |
-| `ARGUS_MASK_OCR_URL` | unset | argus-retina-ocr for guided portrait text/signature checks (#168). Unset, text is `not_checked` and blocks |
+| `ARGUS_MASK_CURATOR_URL` | `ARGUS_CURATOR_URL`, else unset | argus-curator for guided portrait `face_source` (#168). Unset, those checks are `not_checked` and block the build |
+| `ARGUS_MASK_OCR_URL` | `ARGUS_OCR_URL`, else unset | argus-retina-ocr for guided portrait text/signature checks (#168). Unset, text is `not_checked` and blocks |
 | `ARGUS_MASK_PORTRAIT_MIN_SIDE_PX` | `512` | Refuse a guided source portrait shorter than this on either side |
 | `ARGUS_MASK_LAM_DIR` | unset | The LAM checkout with its `model_zoo`, for a guided face's LAM build ([lam/README.md](lam/README.md)). Unset, no LAM head is built |
 | `ARGUS_MASK_FLAME_OPEN` | unset | `flame2023_Open.pkl`. The pipeline refuses any other FLAME |
@@ -352,6 +352,23 @@ Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For
 | `ARGUS_MASK_RECORDINGS_DIR` | `recordings` | Where the Broadcast page's recordings go (an MP4, its WAV and take) |
 | `ARGUS_MASK_VOICES_DIR` | `voices` | The Voices page's checked clips, and each voice's record and clips. The server and `say` read it too, to refuse a consenting speaker's voice that their record no longer covers |
 
+### Suite settings, peers and health
+
+Mask needs argus-cortex 0.16, and takes three things from it.
+
+- **Other services' URLs** are found with cortex's `peers`: mask's own variable first, then the suite-wide one, then the default.
+
+  | Service | Mask's variable | Suite-wide |
+  |---|---|---|
+  | argus-darkroom | `ARGUS_MASK_DARKROOM_URL` | `ARGUS_DARKROOM_URL` |
+  | argus-curator | `ARGUS_MASK_CURATOR_URL` | `ARGUS_CURATOR_URL` |
+  | argus-retina-ocr | `ARGUS_MASK_OCR_URL` | `ARGUS_OCR_URL` |
+  | TTS (argus-echo's XTTS) | `ARGUS_MASK_TTS_URL` | `ARGUS_XTTS_URL` |
+
+  `off` in mask's variable turns that service off for mask whatever the suite says. A value that is not an `http(s)` URL is a configuration error at startup that names the variable; it is never read as "not set", so a typo cannot quietly skip a portrait check. `ARGUS_MASK_TTS_URL` is the exception in shape: it is a stream endpoint with its path, or `wyoming://host:port`, and is used as written. Only when it is unset does mask use `ARGUS_XTTS_URL`, a base URL, at `/synthesise/stream`.
+- **The suite file.** Values several services share (the broker URL and token, the URLs above) can live once in `$XDG_CONFIG_HOME/argus/suite.env` (`.config/argus/suite.env` in your home directory; mode 600; `python -m argus_cortex.settings --init` makes one) instead of in each repo's `.env`. Mask reads the broker settings and the peer URLs from it; anything set in mask's own environment wins. In a container the file is read at `/etc/argus/suite.env`: `compose.yaml` has the mount as a commented-out line, because compose cannot skip a bind mount whose file is missing. The file must belong to the user the container runs as, or to root.
+- **`GET /health`** on the server and the editor is cortex's `ServiceHealth`: `service` (`argus-mask`), `version`, `status`, `started_at`, `wire` (`mask_version`), `checks`, `read_only`, and `build` and `peer` when `ARGUS_BUILD` and `ARGUS_PEER` are set. Mask's own fields are beside it as before (the server's `driver`, `fps`, `free_vram_mb`, `faces`, `live`, `screens`, `aliases`; the editor's `ready`, `reason`, `building`, and `capabilities: ["editor"]`). It answers 200 whenever the process does: a driver that is down gives `status: "degraded"` and the `driver` check `ok: false`. `GET /health?checks=0` skips the check, for probes. `compose.yaml` labels the container (`argus.peer: mask`, `argus.service`, `argus.health`, `argus.port`) so argus-iris can list it.
+
 ### GPU leases (argus-iris)
 
 Mask's own process uses no GPU, but it asks others for GPU work, and tells [argus-iris](https://github.com/smk762/argus-iris), the suite's GPU broker, through argus-cortex's lease client. `gpu-tenant.yaml` declares the two kinds:
@@ -359,7 +376,7 @@ Mask's own process uses no GPU, but it asks others for GPU work, and tells [argu
 - `a2f-live`: the Audio2Face server while a face speaks (the source socket, `/push`, `/speak`, a broadcast). `realtime`, never preempted, from the stream's first audio to its end. Mask asks without waiting, so a slow or absent broker never delays a mouth, and asks the broker alone: when it can't be reached there is no fallback, because the local lease is a host-wide lock that a broadcast would hold for hours.
 - `voice-make`: a TTS service (Miso) making a voice on the Voices page. `interactive`, and waited for; a refusal fails the job with the reason.
 
-It is off until `ARGUS_GPU_BROKER_URL` is set; with it and `ARGUS_GPU_BROKER_TOKEN` (secret, the host's `.env`) nothing else is needed. `argus-mask serve` then registers `gpu-tenant.yaml` with iris at startup (the image has it at `/app/gpu-tenant.yaml`, where argus-cortex looks), keeps it registered and signs off on shutdown, so iris knows the Audio2Face resident before the first stream; a down broker never delays startup. Iris finds the `a2f` container through its node agent and calls the port it publishes, so publish a2f where the broker can reach it. `ARGUS_GPU_BROKER_FALLBACK` (`lease` or `none`) and `ARGUS_GPU_COORDINATOR` (to override the URL: `none` or `lease`) are cortex's; see `.env.example`.
+It is off until `ARGUS_GPU_BROKER_URL` is set; with it and `ARGUS_GPU_BROKER_TOKEN` (secret: the host's `.env`, or the suite file) nothing else is needed. `argus-mask serve` then registers `gpu-tenant.yaml` with iris at startup (the image has it at `/app/gpu-tenant.yaml`, where argus-cortex looks), keeps it registered and signs off on shutdown, so iris knows the Audio2Face resident before the first stream; a down broker never delays startup. Iris finds the `a2f` container through its node agent and calls the port it publishes, so publish a2f where the broker can reach it. `ARGUS_GPU_BROKER_FALLBACK` (`lease` or `none`) and `ARGUS_GPU_COORDINATOR` (to override the URL: `none` or `lease`) are cortex's, for the rare host that needs them.
 
 With `DRIVER=a2f` and no server answering, mask starts, `/health` reports the driver down, and a source is refused with the reason. It never falls back to `energy` on its own.
 
