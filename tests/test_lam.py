@@ -19,7 +19,8 @@ import pytest
 LAM = Path(__file__).resolve().parent.parent / "lam"
 # lam/'s modules, imported at top level as make_head.py does from /argus, and the LAM and VHAP modules the tests
 # register: taken out again after each test. Nothing else is: torch, for one, can be imported only once.
-LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "fit_shape", "fit_rest", "portraits", "lam", "vhap"}
+LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "fit_shape", "fit_rest", "likeness", "portraits", "lam",
+             "vhap"}  # fmt: skip
 
 
 @pytest.fixture
@@ -475,3 +476,177 @@ def test_a_rest_fit_gives_a_symmetric_rest_set_inside_the_wire_limits(lam) -> No
     warm = BUILTIN["warm"].weights
     start = fit_rest.weights(np.array(list(fit_rest.PARAMS.values())))
     assert {k: v for k, v in start.items() if v} == warm
+
+
+# -- how like its portrait a head looks (#169): pure numpy, the pictures and landmarks handed in --------------------
+
+SKIN, LIPS, IRIS, HAIR = (0.86, 0.66, 0.56), (0.70, 0.27, 0.27), (0.30, 0.45, 0.32), (0.27, 0.16, 0.10)
+
+
+def _ring(centre, radii, count: int, start: float, turn: int) -> np.ndarray:
+    """*count* points round an ellipse, from *start* degrees (y down: 90 is the bottom), clockwise for turn 1."""
+    angles = np.radians(start + turn * 360 * np.arange(count) / count)
+    return np.asarray(centre) + np.asarray(radii) * np.stack([np.cos(angles), np.sin(angles)], axis=1)
+
+
+def _drawn_face(
+    lk,  # noqa: ANN001 - lam/likeness.py
+    size: int = 512,
+    eye: float = 120.0,
+    at: tuple[float, float] = (256, 250),
+    turned: float = 0.0,
+    lips: tuple[float, float, float] = LIPS,
+    lids: float = 1.0,
+    grain: float = 0.0,
+    soft: float = 0.0,
+    seed: int = 3,
+) -> tuple[np.ndarray, np.ndarray]:
+    """A face as a child draws one, on white, with MediaPipe's landmarks where it was drawn: (picture, points).
+
+    *eye* is the outer eye corners' spacing; *lids* how far the eyes are open (1 open, 0 shut); *grain* fine
+    texture on the skin, the same for the same *seed*; *soft* a blur over the whole picture.
+    """
+    points = np.tile(np.array([0.0, 0.1 * eye]), (478, 1))
+    points[lk.OVAL] = _ring((0, 0.15 * eye), (0.78 * eye, 1.05 * eye), 36, -90, 1)
+    points[lk.EYE_RINGS[0]] = _ring((-0.28 * eye, -0.2 * eye), (0.22 * eye, 0.09 * eye * lids), 16, 180, -1)
+    points[lk.EYE_RINGS[1]] = _ring((0.28 * eye, -0.2 * eye), (0.22 * eye, 0.09 * eye * lids), 16, 0, 1)
+    for (centre, rim), x in zip(lk.IRISES, (-0.28 * eye, 0.28 * eye), strict=True):
+        points[centre] = (x, -0.2 * eye)
+        points[rim] = _ring((x, -0.2 * eye), (0.1 * eye, 0.1 * eye), 4, 0, -1)
+    points[lk.LIPS_OUTER] = _ring((0, 0.62 * eye), (0.3 * eye, 0.1 * eye), 20, 180, -1)
+    points[lk.LIPS_INNER] = _ring((0, 0.62 * eye), (0.24 * eye, 0.012 * eye), 20, 180, -1)
+    points[lk.fit_shape.BROWS] = _ring((0, -0.42 * eye), (0.5 * eye, 0.03 * eye), 20, 180, 1)
+    points[lk.fit_shape.NOSE] = _ring((0, 0.2 * eye), (0.14 * eye, 0.2 * eye), 14, -90, 1)
+    angle = np.radians(turned)
+    points = points @ np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]).T + at
+
+    picture = np.ones((size, size, 3))
+    picture[lk.inside(lk.grown(points[lk.OVAL], 1.25), size)] = HAIR
+    face = lk.inside(points[lk.OVAL], size)
+    picture[face] = SKIN
+    if grain:
+        noise = np.random.default_rng(seed).normal(0, grain, (size, size, 1))
+        picture[face] = np.clip(picture + noise, 0, 1)[face]
+    ys, xs = np.mgrid[0:size, 0:size]
+    for (centre, rim), ring in zip(lk.IRISES, lk.EYE_RINGS, strict=True):
+        opening = lk.inside(points[ring], size)
+        picture[opening] = (0.95, 0.95, 0.95)
+        away = np.hypot(xs + 0.5 - points[centre, 0], ys + 0.5 - points[centre, 1])
+        radius = np.linalg.norm(points[rim[0]] - points[centre])
+        picture[opening & (away < radius)] = IRIS
+        picture[opening & (away < 0.4 * radius)] = (0.05, 0.05, 0.05)
+    picture[lk.inside(points[lk.LIPS_OUTER], size)] = lips
+    return (lk.blur(picture, soft) if soft else picture), points
+
+
+def test_a_head_that_is_its_portrait_scores_no_difference(lam) -> None:
+    import likeness as lk  # noqa: PLC0415
+
+    picture, points = _drawn_face(lk, grain=0.05)
+    found = lk.compare(picture, points, picture, points)
+    assert found["geometry"]["total"] == pytest.approx(0, abs=1e-9)
+    assert found["geometry"]["aperture"] == pytest.approx(0, abs=1e-12)
+    assert found["geometry"]["lip_ratio"] == pytest.approx(0, abs=1e-12)
+    assert set(found["colour"]) == {"skin", "lips", "iris", "hair", "mean"}
+    assert all(value == pytest.approx(0, abs=1e-9) for value in found["colour"].values())
+    assert found["detail"]["kept"] == pytest.approx(1.0) and found["detail"]["same"] == pytest.approx(1.0)
+    assert found["frames"]["portrait"].shape == (lk.FRAME, lk.FRAME, 3)
+
+
+def test_the_two_pictures_need_not_share_a_camera(lam) -> None:
+    """The head's picture is the viewer's and the portrait's is LAM's crop: another size, another place in the
+    frame, a head a little tipped. Laid over by its outline, the same face scores as the same face."""
+    import likeness as lk  # noqa: PLC0415
+
+    portrait, at = _drawn_face(lk, size=512, eye=120)
+    head, seen = _drawn_face(lk, size=720, eye=170, at=(380, 330), turned=6)
+    found = lk.compare(portrait, at, head, seen)
+    assert found["geometry"]["total"] < 1e-6 and abs(found["geometry"]["aperture"]) < 1e-6
+    assert found["colour"]["mean"] < 0.5  # CIELAB: far under what an eye sees
+    assert found["detail"]["same"] > 0.95
+    # In the frame they are compared in, both faces' eyes are level and the same way apart.
+    for frame in found["frames"].values():
+        skin = np.abs(frame - SKIN).sum(axis=-1) < 0.05
+        assert skin[int(lk.FRAME * 0.62), lk.FRAME // 2] and not skin[5, 5]
+
+
+def test_each_colour_is_read_where_it_is(lam) -> None:
+    import likeness as lk  # noqa: PLC0415
+
+    portrait, points = _drawn_face(lk)
+    paler, _ = _drawn_face(lk, lips=(0.80, 0.55, 0.52))
+    found = lk.compare(portrait, points, paler, points)["colour"]
+    assert found["lips"] > 20 and found["skin"] == found["iris"] == found["hair"] == 0
+    assert found["mean"] == pytest.approx(found["lips"] / 4)
+    # A region a picture does not show has no colour and no score: shut eyes show no iris.
+    shut, shut_points = _drawn_face(lk, lids=0.0)
+    assert "iris" not in lk.compare(portrait, points, shut, shut_points)["colour"]
+    # The backdrop is never read as hair.
+    bald = portrait.copy()
+    bald[lk.inside(lk.grown(points[lk.OVAL], 1.25), 512) & ~lk.inside(points[lk.OVAL], 512)] = 1.0
+    assert "hair" not in lk.compare(portrait, points, bald, points)["colour"]
+
+
+def test_detail_is_what_the_head_keeps_of_the_portraits_fine_structure(lam) -> None:
+    import likeness as lk  # noqa: PLC0415
+
+    portrait, points = _drawn_face(lk, grain=0.06)
+    kept = {soft: lk.compare(portrait, points, _drawn_face(lk, grain=0.06, soft=soft)[0], points)["detail"]["kept"]
+            for soft in (0.0, 0.8, 2.0)}  # fmt: skip
+    assert kept[0.0] == pytest.approx(1.0)
+    assert kept[0.0] > kept[0.8] > kept[2.0] > 0
+    # A head sharper than its portrait keeps all of it: never more than 1.
+    smooth, _ = _drawn_face(lk)
+    assert lk.compare(smooth, points, portrait, points)["detail"]["kept"] == 1.0
+
+
+def test_the_same_features_in_the_same_places_read_as_the_same(lam) -> None:
+    import likeness as lk  # noqa: PLC0415
+
+    portrait, points = _drawn_face(lk)
+    softened, _ = _drawn_face(lk, soft=1.5)
+    # Softening keeps the features where they were; shifting them on the face does not.
+    shifted = np.roll(portrait, 40, axis=0)
+    same = lk.compare(portrait, points, softened, points)["detail"]["same"]
+    other = lk.compare(portrait, points, shifted, points)["detail"]["same"]
+    assert same > 0.95 > other
+    # The lids show less of the iris: the aperture reads it.
+    hooded, hooded_points = _drawn_face(lk, lids=0.45)
+    assert lk.compare(portrait, points, hooded, hooded_points)["geometry"]["aperture"] == pytest.approx(-0.55, abs=0.01)
+
+
+def test_the_rasteriser_and_cielab_are_right(lam) -> None:
+    import likeness as lk  # noqa: PLC0415
+
+    square = lk.inside(np.array([(2, 2), (6, 2), (6, 5), (2, 5)], dtype=float), 8)
+    assert square.sum() == 12 and square[2:5, 2:6].all()
+    assert lk.lab(np.array([1.0, 1.0, 1.0])) == pytest.approx([100, 0, 0], abs=0.01)
+    assert lk.lab(np.array([1.0, 0.0, 0.0])) == pytest.approx([53.24, 80.09, 67.20], abs=0.02)  # sRGB red
+    flat = np.full((16, 16, 3), 0.4)
+    assert lk.blur(flat, 2.0) == pytest.approx(flat)
+
+
+def test_the_calibrated_scores_are_the_ones_the_record_keeps(lam) -> None:
+    """Colour, identity, lids, lips and the camera misfit; detail is left out (#169)."""
+    import likeness as lk  # noqa: PLC0415
+
+    found = lk.scores_for_record(
+        {
+            "colour": {"skin": 1.0, "lips": 2.0, "iris": 3.0, "hair": 1.5, "mean": 1.875},
+            "shape": {"total": 0.03, "aperture": -0.1, "lip_ratio": 0.2, "oval": 0.02},
+            "identity": 0.94,
+            "detail": {"kept": 0.8, "same": 0.7},
+        }
+    )
+    assert found == {
+        "colour_skin": 1.0,
+        "colour_lips": 2.0,
+        "colour_iris": 3.0,
+        "colour_hair": 1.5,
+        "colour_mean": 1.875,
+        "aperture": -0.1,
+        "lip_ratio": 0.2,
+        "shape_misfit": 0.03,
+        "identity": 0.94,
+    }
+    assert "kept" not in found and "same" not in found and "oval" not in found

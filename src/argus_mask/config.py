@@ -136,6 +136,76 @@ class LamSettings:
         )
 
 
+# DINOv2-base (Apache-2.0), what argus-proof scores likeness with: optional identity score for a guided head (#169).
+DINOV2_IN_CACHE = Path.home() / ".cache" / "argus-mask" / "dinov2-base"
+# lam/likeness.py lives beside make_heads.sh; the likeness job runs it in the LAM image (MediaPipe + torch).
+LIKENESS_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "likeness.py"
+
+
+@dataclass(frozen=True)
+class LikenessSettings:
+    """What a guided face's likeness step needs (``editor/likeness.py``, ``lam/likeness.py``)."""
+
+    script: Path | None = None  # lam/likeness.py
+    image: str = "argus-mask-lam"  # MediaPipe and DINOv2 run in here
+    docker: str = "docker"
+    dinov2: Path | None = None  # a DINOv2 checkpoint folder (model.safetensors); unset: identity is skipped
+    timeout_s: float = 300.0
+
+    @classmethod
+    def from_env(cls) -> LikenessSettings:
+        script, dinov2 = _env("LIKENESS_SCRIPT"), _env("DINOV2")
+        if script:
+            found: Path | None = Path(script).expanduser()
+        else:
+            found = LIKENESS_SCRIPT_IN_CHECKOUT if LIKENESS_SCRIPT_IN_CHECKOUT.is_file() else None
+        if dinov2:
+            weights: Path | None = Path(dinov2).expanduser()
+        else:
+            weights = DINOV2_IN_CACHE if (DINOV2_IN_CACHE / "model.safetensors").is_file() else None
+        return cls(
+            script=found,
+            image=_env("LIKENESS_IMAGE") or _env("LAM_IMAGE") or "argus-mask-lam",
+            dinov2=weights,
+            timeout_s=_number("LIKENESS_TIMEOUT_S", "300", 30, 3600),
+        )
+
+
+REST_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "fit_rest.py"
+LANDMARKER_IN_CACHE = Path.home() / ".cache" / "argus-mask" / "face_landmarker.task"
+
+
+@dataclass(frozen=True)
+class RestSettings:
+    """What a guided face's rest fit needs (``editor/rest_fit.py``, ``lam/fit_rest.py``)."""
+
+    script: Path | None = None  # lam/fit_rest.py
+    landmarker: Path | None = None  # MediaPipe face_landmarker.task
+    timeout_s: float = 600.0  # about 3½ minutes a head on CPU
+    generations: int = 20
+    # uv installs pillow and mediapipe for the script when the editor's env has neither (#169).
+    uv: str = "uv"
+
+    @classmethod
+    def from_env(cls) -> RestSettings:
+        script, model = _env("REST_SCRIPT"), _env("LANDMARKER")
+        if script:
+            found: Path | None = Path(script).expanduser()
+        else:
+            found = REST_SCRIPT_IN_CHECKOUT if REST_SCRIPT_IN_CHECKOUT.is_file() else None
+        if model:
+            landmarker: Path | None = Path(model).expanduser()
+        else:
+            landmarker = LANDMARKER_IN_CACHE if LANDMARKER_IN_CACHE.is_file() else None
+        return cls(
+            script=found,
+            landmarker=landmarker,
+            timeout_s=_number("REST_TIMEOUT_S", "600", 60, 7200),
+            generations=int(_number("REST_GENERATIONS", "20", 1, 200)),
+            uv=_env("UV") or "uv",
+        )
+
+
 MPFB_DATA_UNDER_USER = Path("extensions/.user/user_default/mpfb/data")
 
 

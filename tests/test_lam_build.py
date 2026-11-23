@@ -46,6 +46,8 @@ rmdir "$FAKE/lock"
 BUILDS = r"""
 printf '%s\n' "$checked" "DONE (519, 512, 512, 3) peak VRAM GB 8.68" "EXPORTED /work/out-$name/oac" > "$WORK/$name.log"
 cp "$FAKE/ready.zip" "$HEADS/$name/$name.zip"
+mkdir -p "$WORK/out-$name/likeness"
+for picture in ${PICTURES-portrait render}; do printf '\x89PNG\r\n\x1a\n%s' "$picture" > "$WORK/out-$name/likeness/$picture.png"; done
 echo "$name: $HEADS/$name/$name.zip"
 """
 # LAM loading until its container is killed; then, as the real script, no EXPORTED in the log: status 1.
@@ -173,13 +175,20 @@ async def test_a_portrait_becomes_a_head_in_the_record(rig: Rig) -> None:
         ("pipeline", "passed"),
         ("lam", "passed"),
         ("head", "passed"),
+        ("pictures", "passed"),
     ]
     # The portrait in, by the sha256 the source recorded; the head out, kept in the build and as it was packed.
     assert [(a.name, a.sha256) for a in found.inputs] == [("portrait", hashlib.sha256(b"a portrait").hexdigest())]
     head = found.outputs[0]
     assert (head.name, head.file) == ("head", "candidates/c1/head.zip")
     assert sha256_file(rig.store.path("guide", head.file)) == head.sha256 == sha256_file(rig.fake / "ready.zip")
-    assert found.checks[-1].measure == {"splats": 3.0, "shapes": 6.0}
+    assert found.checks[3].measure == {"splats": 3.0, "shapes": 6.0}
+    # And the two pictures its likeness is scored on: the portrait as LAM was given it, the head at its camera.
+    assert [(a.name, a.file) for a in found.outputs[1:]] == [
+        ("portrait-crop", "candidates/c1/likeness/portrait.png"),
+        ("render", "candidates/c1/likeness/render.png"),
+    ]
+    assert rig.store.path("guide", "candidates/c1/likeness/render.png").read_bytes() == lam_build.PNG + b"render"
     # How it went is beside what it found: the log, its tail, the time, the memory free, LAM's peak VRAM.
     assert found.run["peak_vram_gb"] == 8.7 and found.run["free_gb"] == 16.0 and found.run["job"] == job.id
     assert found.run["log_tail"][-1] == "EXPORTED /work/out-head/oac"
@@ -225,7 +234,7 @@ echo 'FIT {"start": {"total": 0.0334, "eyes": 0.02}, "best": {"total": 0.0261, "
     _, fitted = await build(rig, fit_shape=True)
     assert rig.said("runs")[1].split("|")[1] == "1"
     assert fitted.scores == {"shape_misfit_start": 0.0334, "shape_misfit": 0.0261}
-    assert [a.name for a in fitted.outputs] == ["head", "shape-fit", "shape-fit-best"]
+    assert [a.name for a in fitted.outputs] == ["head", "portrait-crop", "render", "shape-fit", "shape-fit-best"]
     assert fitted.data["fit_shape"] is True and fitted.data["key"] != plain.data["key"]
 
 
@@ -415,8 +424,9 @@ async def test_the_same_portrait_through_the_same_pipeline_is_not_built_twice(ri
     job, again = await build(rig, "c2")
     assert job.cached and again.run == {"job": job.id, "cached": True}
     assert len(rig.said("runs")) == 1
-    assert again.outputs[0].sha256 == first.outputs[0].sha256
+    assert [(a.name, a.sha256) for a in again.outputs] == [(a.name, a.sha256) for a in first.outputs]
     assert rig.store.path("guide", "candidates/c2/head.zip").read_bytes() == (rig.fake / "ready.zip").read_bytes()
+    assert rig.store.path("guide", "candidates/c2/likeness/portrait.png").read_bytes() == lam_build.PNG + b"portrait"
     assert [c.model_dump() for c in again.checks] == [c.model_dump() for c in first.checks]
     # What the build found is the same, so nothing that ran on it goes stale when it is built again.
     _, rebuilt = await build(rig, "c1")
@@ -505,6 +515,28 @@ async def test_a_packed_head_the_server_would_not_serve_is_refused(rig: Rig) -> 
     _, found = await build(rig)
     assert found.standing == "refused"
     assert found.named("refused").startswith("head: head.zip: missing offset.ply")
+    assert found.outputs == []
+
+
+@pytest.mark.parametrize(("left", "missing"), [("portrait", "render.png"), ("", "portrait.png")])
+async def test_a_head_with_no_picture_to_score_it_by_is_a_failure(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, left: str, missing: str
+) -> None:
+    """The likeness is scored on two pictures the pipeline leaves beside the head (#169). A head without them
+    could never be scored, so the build says so, and keeps nothing."""
+    monkeypatch.setenv("PICTURES", left)
+    rig.candidate()
+    job, found = await build(rig)
+    assert (job.state, found.standing) == ("failed", "failed")
+    assert found.named("failed") == f"pictures: the pipeline left no picture to score the head by (likeness/{missing})"
+    assert found.outputs == [] and not (rig.store.root / ".cache").exists()
+
+
+async def test_a_picture_that_is_not_one_is_a_failure(rig: Rig) -> None:
+    rig.script(BUILDS + 'echo "not a picture" > "$WORK/out-$name/likeness/render.png"\n')
+    rig.candidate()
+    _, found = await build(rig)
+    assert found.standing == "failed" and "likeness/render.png" in found.named("failed")
     assert found.outputs == []
 
 

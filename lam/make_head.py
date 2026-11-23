@@ -59,10 +59,36 @@ out_dir = os.environ.get("OUT", "/work/out")
 os.makedirs(out_dir, exist_ok=True)
 
 
+def portrait_view(shape_param, tracked, save_root):
+    """The portrait's own camera, pose and expression (the tracker's), for a head of this shape."""
+    return prepare_motion_seqs(
+        os.path.join(tracked, "flame_param"), None, save_root=str(save_root), fps=30, bg_color=1.0,
+        aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0], render_image_res=cfg.render_size, multiply=16,
+        need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False, cross_id=False,
+        src_driven=["", ""],
+    )  # fmt: skip
+
+
+def render_at(view, image, shape, path):
+    """The head of this shape as *view* sees it, on white."""
+    import copy
+
+    params = copy.deepcopy(dict(view["flame_params"]))
+    params["betas"] = torch.as_tensor(shape, dtype=torch.float32)[None]
+    with torch.no_grad():
+        res = lam.infer_single_view(
+            image.unsqueeze(0).to("cuda"), None, None,
+            render_c2ws=view["render_c2ws"].to("cuda"), render_intrs=view["render_intrs"].to("cuda"),
+            render_bg_colors=view["render_bg_colors"].to("cuda"),
+            flame_params={k: v.to("cuda") for k, v in params.items()},
+        )  # fmt: skip
+    rgb, mask = res["comp_rgb"][0].cpu().numpy(), res["comp_mask"][0].cpu().numpy()
+    Image.fromarray((np.clip(rgb * mask + (1 - mask), 0, 1) * 255).astype(np.uint8)).save(path)
+
+
 def fit_portrait_shape(image, shape_param, tracked):
     """FIT_SHAPE=1: search the shape for the head that looks most like its portrait (fit_shape.py). Writes
     ``fit/`` beside the head: the start's and the best's renders at the portrait's camera, and fit.json."""
-    import copy
     import json
     import subprocess
     import tempfile
@@ -71,12 +97,7 @@ def fit_portrait_shape(image, shape_param, tracked):
 
     fit_dir = Path(out_dir) / "fit"
     fit_dir.mkdir(exist_ok=True)
-    source = prepare_motion_seqs(
-        os.path.join(tracked, "flame_param"), None, save_root=str(fit_dir), fps=30, bg_color=1.0,
-        aspect_standard=1.0, enlarge_ratio=[1.0, 1, 0], render_image_res=cfg.render_size, multiply=16,
-        need_mask=False, vis_motion=False, shape_param=shape_param, test_sample=False, cross_id=False,
-        src_driven=["", ""],
-    )  # fmt: skip
+    source = portrait_view(shape_param, tracked, fit_dir)
     detector = Path(frontend.__file__).parent / "landmarks" / "detect.py"
 
     def detect(paths):
@@ -89,17 +110,7 @@ def fit_portrait_shape(image, shape_param, tracked):
             return np.load(out)["points"]
 
     def render(shape, path):
-        params = copy.deepcopy(dict(source["flame_params"]))
-        params["betas"] = torch.as_tensor(shape, dtype=torch.float32)[None]
-        with torch.no_grad():
-            res = lam.infer_single_view(
-                image.unsqueeze(0).to("cuda"), None, None,
-                render_c2ws=source["render_c2ws"].to("cuda"), render_intrs=source["render_intrs"].to("cuda"),
-                render_bg_colors=source["render_bg_colors"].to("cuda"),
-                flame_params={k: v.to("cuda") for k, v in params.items()},
-            )  # fmt: skip
-        rgb, mask = res["comp_rgb"][0].cpu().numpy(), res["comp_mask"][0].cpu().numpy()
-        Image.fromarray((np.clip(rgb * mask + (1 - mask), 0, 1) * 255).astype(np.uint8)).save(path)
+        render_at(source, image, shape, path)
 
     reference = detect([os.path.join(tracked, "images/00000_00.png")])[0]
     if np.isnan(reference[0, 0]):
@@ -172,6 +183,19 @@ image, _, _, shape_param = preprocess_image(
 )
 if os.environ.get("FIT_SHAPE"):
     shape_param = fit_portrait_shape(image, shape_param, tracked)
+
+# What the likeness is scored on (likeness.py, #169): the portrait as LAM was given it (the tracker's crop, matted
+# on white) and the head as the portrait's own camera sees it, in the portrait's pose and expression.
+like_dir = Path(out_dir) / "likeness"
+like_dir.mkdir(exist_ok=True)
+crop = np.asarray(Image.open(os.path.join(tracked, "images/00000_00.png")).convert("RGB"), dtype=np.float32) / 255
+matte = np.asarray(Image.open(os.path.join(tracked, "fg_masks/00000_00.png")).convert("L"), dtype=np.float32) / 255
+Image.fromarray(((crop * matte[..., None] + (1 - matte[..., None])) * 255).round().astype(np.uint8)).save(
+    like_dir / "portrait.png"
+)
+render_at(portrait_view(shape_param, tracked, like_dir), image, shape_param.cpu().numpy(), like_dir / "render.png")
+print("LIKENESS", like_dir)
+
 seq = prepare_motion_seqs(
     os.path.join("./assets/sample_motion/export", motion, "flame_param"),
     None,
