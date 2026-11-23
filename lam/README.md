@@ -74,7 +74,7 @@ Prefer the [guided head builder](../README.md#guided-head-builder) (`argus-mask 
 3. Scores likeness (`likeness.py`), fits rest (`fit_rest.py`), measures turn limits (`measure_turns.py`), scores speech (`measure_speech.py`), and reads apparent age (curator).
 4. Lets you pick, choose a scene/shot, and save the face with `build.json` as the ownership mark.
 
-Point the editor at this checkout with `ARGUS_MASK_LAM_DIR`, `ARGUS_MASK_FLAME_OPEN` and `ARGUS_MASK_LAM_IMAGE` (README § Configuration). Refining the Gaussians against the portrait (#173) is not in the guided flow yet; `FIT_SHAPE=1` below stays the by-hand shape search.
+Point the editor at this checkout with `ARGUS_MASK_LAM_DIR`, `ARGUS_MASK_FLAME_OPEN` and `ARGUS_MASK_LAM_IMAGE` (README § Configuration). Refining the Gaussians against the portrait (#173) is a spike only: [`refine_gaussians.py`](refine_gaussians.py) / [`refine-spike.md`](refine-spike.md). Frontal photo error drops, but turns/speech were not cleared, so it is **not** a guided step and not a default `FIT_REFINE`. `FIT_SHAPE=1` below stays the by-hand shape search.
 
 ## Run it by hand
 

@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gaussian refine spike** (#173): `lam/refine_gaussians.py` optimises a packed head's
+  `offset.ply` (colour → opacity/scale → small xyz, pull to LAM) in the LAM image;
+  `lam/run_refine_spike.sh` and `lam/refine-spike.md` record photo L1 before/after on
+  `splat-01`, `lam-s622` and `lam-c1022`. Frontal error drops; turns/speech not cleared,
+  so no guided step and no default `FIT_REFINE` yet.
+
 - **Guided must-never rows** (#178): CLAUDE.md names a check for each guided rule (save
   without `build.json`, refusal bypass, LoRA→`synthetic` / restyle raising kind,
   `not_checked` counting as passed, `lam-head` around darkroom). Extra tests pin

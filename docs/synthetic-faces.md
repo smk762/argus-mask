@@ -176,6 +176,8 @@ It writes a rest set (`fit-<face>`) to define in `expressions.json` and choose f
 
 `FIT_SHAPE=1 lam/make_heads.sh ...` also searches the head's FLAME shape against the portrait at its own camera (about 10 minutes more per head). It helped `lam-s622` a little (misfit 0.033 to 0.026); it is off by default.
 
+Gaussian colour refine against the portrait (#173) is a measured spike only (`lam/refine_gaussians.py`, numbers in `lam/refine-spike.md`): frontal photo error drops, but likeness/turns/speech were not cleared for a default path, so there is no guided step and no `FIT_REFINE` yet.
+
 ## More than one view
 
 One-shot routes need only the single frontal portrait. Prefer them.
