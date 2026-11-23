@@ -20,7 +20,9 @@
                                         and what stands in the way of the next (``editor/guided.py``)
 ``POST /guided``                        create an empty guided build (``{"id", "name?"}``)
 ``POST /guided/{id}/pick``              choose a candidate (step 5; ``{"candidate"}``)
-``POST /guided/{id}/candidates/{c}/overrule``  overrule an advisory (``{"step", "check", "reason"}``)
+``POST /guided/{id}/scene``             background and shot (step 6; ``{"scene", "shot"}``; bright-floor advisory)
+``POST /guided/{id}/overrule``          overrule an advisory on a face step (``{"step", "check", "reason"}``)
+``POST /guided/{id}/candidates/{c}/overrule``  overrule an advisory on a candidate step
 ``GET  /guided/{id}/file/{path}``       a file a step kept (portrait, render, …)
 ``GET  /guided/{id}/candidates/{c}/head.zip``  the built head, for the page's preview
 ``GET  /guided/darkroom/records``       passed darkroom records to pick as a source (#167)
@@ -123,6 +125,8 @@ from argus_mask.editor.portrait import PortraitError, PortraitJobs
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
 from argus_mask.editor.rest_fit import Busy as FittingRest
 from argus_mask.editor.rest_fit import RestError, RestFits
+from argus_mask.editor.scene import SceneError
+from argus_mask.editor.scene import choose as choose_scene
 from argus_mask.editor.source import Busy as Sourcing
 from argus_mask.editor.source import SourceError, SourceJobs, read_portrait_upload
 from argus_mask.editor.speech import Busy as MeasuringSpeech
@@ -348,6 +352,13 @@ class GuidedPick(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate: str = Field(..., pattern=FACE_ID_PATTERN)
+
+
+class GuidedScene(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scene: str | None = Field(None, max_length=64, description="a scene's name (GET /scenes); null: a plain background")
+    shot: Literal["close", "wide"] | None = Field(None, description="a splat head's shot; null: the background's")
 
 
 class GuidedOverrule(BaseModel):
@@ -749,6 +760,35 @@ def create_editor_app(
         except GuidedError as exc:
             raise HTTPException(422, str(exc)) from exc
         log.info("guided_pick", build=build_id, candidate=req.candidate)
+        return kept.model_dump(mode="json")
+
+    @app.post("/guided/{build_id}/scene")
+    def guided_scene(build_id: str, req: GuidedScene) -> dict:
+        """Background and shot for the picked head (#175). Bright floor on a plate is an advisory."""
+        try:
+            kept = choose_scene(guided, plates, build_id, scene=req.scene, shot=req.shot)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NotReady as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except SceneError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return kept.model_dump(mode="json")
+
+    @app.post("/guided/{build_id}/overrule")
+    def guided_overrule_face(build_id: str, req: GuidedOverrule) -> dict:
+        """Overrule an advisory on a face step (scene, …). Only advisories; reason required."""
+        try:
+            kept = guided.overrule(build_id, req.step, req.check, req.reason, candidate=None)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except CannotOverrule as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("guided_overrule", build=build_id, step=req.step, check=req.check)
         return kept.model_dump(mode="json")
 
     @app.post("/guided/{build_id}/candidates/{candidate}/overrule")
