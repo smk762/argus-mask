@@ -69,7 +69,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - `server/app.py`: `perform()` is the one source path (the source socket, `POST /push`, `POST /speak`).
 - `performance.py` joins resampler, driver, prosody and idle layer; `demo/docs_page.py`'s `ENGINE` lists the modules a take depends on.
 - `drivers/a2f.py`'s docstring is the Audio2Face protocol; `a2f/check.py` checks a running server against it.
-- `gpu.py`: the leases mask takes for GPU work it asks of others (#125); `gpu-tenant.yaml` declares them for argus-iris.
+- `gpu.py`: the leases mask takes for GPU work it asks of others (#125); `gpu-tenant.yaml` declares them for argus-iris. The server registers it with the broker at startup (`registered`, its lifespan); the editor never registers, or its shutdown would sign the server off.
 - `consent.py`: the record and its checks are cortex's (`argus_cortex.consent`); mask owns what the fields mean, so change them in cortex together with #26.
 - `viewer/`: static, no build step. three.js r187, the splat renderer and JSZip are vendored unchanged with their licences. The editor's previews import `look.js`, `motion.js` and `splat.js`.
 - `editor/`: a separate optional process. `build_head.py` runs inside Blender, handed over by path, never imported.

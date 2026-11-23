@@ -54,7 +54,7 @@ from argus_mask.consent import CONSENT_USES, ConsentVerdict, voice_disclosed, vo
 from argus_mask.drivers import Driver, DriverError, build_driver
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions
 from argus_mask.faces import MEDIA_TYPES, SPLAT_MEDIA_TYPE, Aliases, FaceError, FaceStore
-from argus_mask.gpu import A2F_LIVE, hold, live_coordinator
+from argus_mask.gpu import A2F_LIVE, hold, live_coordinator, registered
 from argus_mask.models import (
     FACE_ID_PATTERN,
     FRAMINGS,
@@ -324,7 +324,8 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     """The app. With no arguments it reads ``ARGUS_MASK_*`` from the environment.
 
     *gpu* is the coordinator a live Audio2Face stream's lease goes to (:mod:`argus_mask.gpu`); by default the
-    broker when ``ARGUS_GPU_COORDINATOR=broker``, else none.
+    broker when ``ARGUS_GPU_BROKER_URL`` selects it, else none. The app keeps it registered with the broker while it
+    serves (``gpu-tenant.yaml``, at startup rather than at the first stream).
     """
     cfg = settings or Settings.from_env()
     driver = driver or build_driver(cfg.driver, a2f_url=cfg.a2f_url)
@@ -335,8 +336,17 @@ def create_app(settings: Settings | None = None, *, driver: Driver | None = None
     aliases = Aliases(store)
     expressions = Expressions(cfg.assets_dir)
     stages: dict[str, Stage] = {}  # by the name sources and viewers use: a face id, or an alias
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        async with registered(gpu):
+            yield
+
     app = FastAPI(
-        title="Argus Mask", description="A talking face: audio in, animation frames out.", version=__version__
+        title="Argus Mask",
+        description="A talking face: audio in, animation frames out.",
+        version=__version__,
+        lifespan=lifespan,
     )
     app.state.settings = cfg
     app.state.driver = driver

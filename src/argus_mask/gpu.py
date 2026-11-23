@@ -14,8 +14,10 @@ them through cortex's lease client, under the kinds in ``gpu-tenant.yaml``:
   pipeline runs. Never held while argus-darkroom makes the portraits: darkroom leases for itself, and a lease
   held around it starves it.
 
-Nothing here runs unless ``ARGUS_GPU_COORDINATOR`` says so (``none`` by default). The env is cortex's
-(``ARGUS_GPU_BROKER_URL``, ``_TOKEN``, ``ARGUS_GPU_TENANT_MANIFEST``...): see ``.env.example``.
+Nothing here runs without a broker: ``ARGUS_GPU_BROKER_URL`` (and ``ARGUS_GPU_BROKER_TOKEN``) selects it, as cortex
+reads them, and ``ARGUS_GPU_COORDINATOR`` (``none`` by default without a URL) can name another; see ``.env.example``.
+The server registers ``gpu-tenant.yaml`` with the broker at startup (:func:`registered`), so the broker knows the
+Audio2Face resident before the first stream.
 """
 
 from __future__ import annotations
@@ -74,20 +76,33 @@ def coordinator() -> Any:  # noqa: ANN401 - a cortex GpuCoordinator; cortex.gpu 
 
 
 def live_coordinator() -> Any:  # noqa: ANN401
-    """The broker, with no fallback, when ``ARGUS_GPU_COORDINATOR=broker``; otherwise one that does nothing."""
-    from argus_cortex.gpu import NullCoordinator, build_coordinator  # noqa: PLC0415
+    """The broker, with no fallback, when the environment selects it as cortex does (``ARGUS_GPU_BROKER_URL`` with
+    ``ARGUS_GPU_COORDINATOR`` unset, or ``ARGUS_GPU_COORDINATOR=broker``); otherwise one that does nothing."""
+    from argus_cortex.gpu import NullCoordinator, build_coordinator, find_tenant_manifest  # noqa: PLC0415
 
-    if os.environ.get("ARGUS_GPU_COORDINATOR", "").strip().lower() != "broker":
-        return NullCoordinator()
     env = os.environ.get
+    url = env("ARGUS_GPU_BROKER_URL", "").strip() or None
+    if (env("ARGUS_GPU_COORDINATOR", "").strip().lower() or ("broker" if url else "none")) != "broker":
+        return NullCoordinator()
     return build_coordinator(
         "broker",
-        broker_url=env("ARGUS_GPU_BROKER_URL", "").strip() or None,
+        broker_url=url,
         broker_token=env("ARGUS_GPU_BROKER_TOKEN", "").strip() or None,
         tenant=env("ARGUS_GPU_TENANT", "").strip() or None,
-        manifest_path=env("ARGUS_GPU_TENANT_MANIFEST", "").strip() or None,
+        manifest_path=env("ARGUS_GPU_TENANT_MANIFEST", "").strip() or find_tenant_manifest(),
         fallback="none",
     )
+
+
+@contextlib.asynccontextmanager
+async def registered(gpu: Any) -> AsyncIterator[None]:  # noqa: ANN401
+    """Keep mask's tenant registered with the broker for the block (cortex's ``gpu.aregistered``): at once, again
+    every few minutes, and signed off at the end. Nothing for a coordinator that is not the broker, and never
+    blocking or raising on the broker's account, so the server starts whether or not iris is up."""
+    from argus_cortex.gpu import aregistered  # noqa: PLC0415
+
+    async with aregistered(gpu):
+        yield
 
 
 @contextlib.asynccontextmanager

@@ -24,7 +24,7 @@ dependencies = [
     # record and its checks (argus_cortex.consent, 0.5.0); the GPU broker client (argus_cortex.gpu_broker, 0.6.0)
     # and the tenant manifest's resident replies (0.7.0).
     # Capped below the next minor: argus-cortex is pre-1.0, where a minor bump may break.
-    "argus-cortex>=0.14,<0.15",
+    "argus-cortex>=0.15,<0.16",
     "pydantic>=2.0",
     "numpy>=1.26",
     # Streaming resampler: whatever rate the source sends, the driver gets 16 kHz.
@@ -45,7 +45,7 @@ server = [
     "uvicorn>=0.27",
     "websockets>=15.0",
     "python-multipart>=0.0.9",
-    "argus-cortex[server,gpu,remote,yaml,images]>=0.14,<0.15",
+    "argus-cortex[server,gpu,remote,yaml,images]>=0.15,<0.16",
 ]
 # websockets: `push` and `say` are clients of a running server's source socket.
 cli = ["typer>=0.12", "rich>=13.0", "websockets>=15.0"]
