@@ -19,7 +19,9 @@
                                         and what stands in the way of the next (``editor/guided.py``)
 ``POST /guided/{id}/candidates/{candidate}/build``  build a candidate's LAM head from its portrait (a job, queued:
                                         one head at a time); ``{"fit_shape": true}`` also fits its FLAME shape
-``GET  /guided/{id}/jobs/{job}``, ``POST /guided/{id}/jobs/{job}/stop``  a build job's progress; stop it
+``POST /guided/{id}/candidates/{candidate}/likeness``  score the head against its portrait (#169; a job)
+``POST /guided/{id}/candidates/{candidate}/rest``  fit the head's rest set to its portrait (#169; a job)
+``GET  /guided/{id}/jobs/{job}``, ``POST /guided/{id}/jobs/{job}/stop``  a guided job's progress; stop it
 ``GET  /broadcast/state``               the server's faces, who watches them, the TTS defaults, running broadcasts
 ``GET  /voices``                        the voices a (Wyoming) TTS service lists: ``?tts=`` its URL
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
@@ -65,7 +67,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from argus_mask import __version__, client
 from argus_mask.audio import AudioError, decode_wav, read_wav
 from argus_mask.backgrounds import PlateError, PlateStore, SceneChoices
-from argus_mask.config import EditorSettings, LamSettings, Settings
+from argus_mask.config import EditorSettings, LamSettings, LikenessSettings, RestSettings, Settings
 from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of, voice_refusal
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
@@ -75,9 +77,13 @@ from argus_mask.editor.guided import steps as guided_steps
 from argus_mask.editor.lam_build import Busy as BuildingHead
 from argus_mask.editor.lam_build import LamBuilds, LamError
 from argus_mask.editor.library import CLOTHES, AssetLibrary, LibraryError
+from argus_mask.editor.likeness import Busy as ScoringLikeness
+from argus_mask.editor.likeness import LikenessError, LikenessJobs
 from argus_mask.editor.packs import Busy as Installing
 from argus_mask.editor.packs import Installs, PackError, load_catalogue
 from argus_mask.editor.preset import MODIFIER_GROUPS, MODIFIERS, PART_DIRS, Preset, one_way
+from argus_mask.editor.rest_fit import Busy as FittingRest
+from argus_mask.editor.rest_fit import RestError, RestFits
 from argus_mask.editor.voices import (
     DELIVERIES,
     SOURCES,
@@ -275,6 +281,8 @@ def create_editor_app(
     packs: Installs | None = None,
     gpu: Any = None,  # noqa: ANN401 - a cortex GpuCoordinator; by default the one ARGUS_GPU_COORDINATOR names
     lam: LamBuilds | None = None,
+    likeness: LikenessJobs | None = None,
+    rest: RestFits | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -300,6 +308,8 @@ def create_editor_app(
     gpu = gpu if gpu is not None else gpu_coordinator()
     generations = Generations(voice_store, gpu)
     lam = lam or LamBuilds(guided, LamSettings.from_env(), gpu)
+    likeness = likeness or LikenessJobs(guided, LikenessSettings.from_env())
+    rest = rest or RestFits(guided, RestSettings.from_env())
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
     packs = packs or Installs(ed.data_dir, load_catalogue())
 
@@ -310,6 +320,8 @@ def create_editor_app(
         await generations.stop_all()
         await packs.stop_all()
         await lam.stop_all()
+        await likeness.stop_all()
+        await rest.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -564,6 +576,8 @@ def create_editor_app(
             "refused": unreadable,
             "steps": guided_steps(),
             "lam": lam.state(),  # whether a head can be built here, why not, and the builds running or queued
+            "likeness": likeness.state(),
+            "rest": rest.state(),
         }
 
     @app.get("/guided/{build_id}")
@@ -591,20 +605,58 @@ def create_editor_app(
         log.info("lam_build_asked", build=build_id, candidate=candidate, fit_shape=job.fit_shape)
         return job.public()
 
-    def lam_job(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - a LamJob
-        job = lam.jobs.get(job_id)
-        if job is None or job.build_id != build_id:
-            raise HTTPException(404, "no such build job")
-        return job
+    @app.post("/guided/{build_id}/candidates/{candidate}/likeness")
+    async def guided_likeness(build_id: str, candidate: str) -> dict:
+        """Score a candidate's head against its portrait (#169). Answers at once, with the job."""
+        try:
+            job = likeness.start(build_id, candidate)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (NotReady, ScoringLikeness) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except LikenessError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("likeness_asked", build=build_id, candidate=candidate)
+        return job.public()
+
+    @app.post("/guided/{build_id}/candidates/{candidate}/rest")
+    async def guided_rest(build_id: str, candidate: str) -> dict:
+        """Fit a candidate's rest set to its portrait (#169). Answers at once, with the job."""
+        try:
+            job = rest.start(build_id, candidate)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (NotReady, FittingRest) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except RestError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("rest_fit_asked", build=build_id, candidate=candidate)
+        return job.public()
+
+    def guided_job_of(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - a LamJob, LikenessJob or RestJob
+        for pool in (lam.jobs, likeness.jobs, rest.jobs):
+            job = pool.get(job_id)
+            if job is not None and job.build_id == build_id:
+                return job
+        raise HTTPException(404, "no such guided job")
 
     @app.get("/guided/{build_id}/jobs/{job_id}")
     def guided_job(build_id: str, job_id: str) -> dict:
-        return lam_job(build_id, job_id).public()
+        return guided_job_of(build_id, job_id).public()
 
     @app.post("/guided/{build_id}/jobs/{job_id}/stop")
     async def guided_job_stop(build_id: str, job_id: str) -> dict:
-        job = lam_job(build_id, job_id)
-        await lam.stop(job_id)  # its container is killed; nothing is written to the record
+        job = guided_job_of(build_id, job_id)
+        if job_id in lam.jobs:
+            await lam.stop(job_id)
+        elif job_id in likeness.jobs:
+            await likeness.stop(job_id)
+        else:
+            await rest.stop(job_id)
         return job.public()
 
     # ---- backdrops: the scene each face shows by default, kept in the assets' scenes.json ----------------

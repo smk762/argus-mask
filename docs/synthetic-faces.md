@@ -124,6 +124,10 @@ LAM keeps a face's outline (rendered at the portrait's own camera, the landmarks
 
 Every style is a text prompt only, so the face stays `synthetic`. Say "late twenties" or older in the subject: a painted style pulls a face younger. Reject a portrait with a signature or text in it (FLUX paints one now and then), however clean its face.
 
+### Score likeness, then fit its rest set
+
+After the head is built, `lam/likeness.py` scores it against the portrait at the portrait's own camera (colour per region, DINOv2 identity, lid aperture, lip fullness, landmark misfit). The scores that ranked character heads above photo heads on #151's set are kept; detail did not separate them and is not. The guided editor runs this as a job after the build.
+
 ### Fit its rest set to its portrait
 
 The viewer's default rest set (`warm`) closes the lids a little, which on a LAM head's already low lids reads as hooded. `lam/fit_rest.py` searches a rest set for each head instead: the viewer draws the head with each candidate, and MediaPipe scores it against the portrait (eyes, lips and brows placed against the outline; how much iris the lids show; how full the lips are; MediaPipe's own ARKit scores). About 3½ minutes per head on the CPU, against a running server:

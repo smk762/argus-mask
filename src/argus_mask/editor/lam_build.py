@@ -19,7 +19,8 @@ is imported here, and no other way of making a head exists in the package. This 
   key (``lam/``'s scripts, the image, FLAME 2023 Open, the LAM checkout's commit, Blender) and is not built twice.
 
 What it finds goes in the record as the ``build`` step's result: the portrait in, the head out (checked as the
-server checks a splat face), every part the head depends on with its licence, and how the run went.
+server checks a splat face) with the two pictures its likeness is scored on (the portrait as LAM was given it, the
+head at the portrait's camera), every part the head depends on with its licence, and how the run went.
 """
 
 from __future__ import annotations
@@ -61,6 +62,11 @@ CLEAR_TIMEOUT_S = 60.0
 LOG_TAIL = 30
 JOBS_KEEP = 20
 CLEANER_IMAGE = "alpine:3.21"  # as make_heads.sh: the container writes as root, so a container clears after it
+# What a head's likeness is scored on (lam/likeness.py, #169), left by make_head.py beside the head: the portrait as
+# LAM was given it (the tracker's crop, matted on white) and the head as the portrait's own camera sees it.
+PICTURES = (("portrait-crop", "portrait.png"), ("render", "render.png"))
+PNG = b"\x89PNG\r\n\x1a\n"
+PICTURE_MAX_BYTES = 16 << 20
 
 # make_head.py prints this once its own checks have passed (FLAME 2023 Open, our embedding, no LAM FLAME code, our
 # front end), and one of these when the preflight refuses.
@@ -530,6 +536,20 @@ class LamBuilds:
         measure = {"splats": float(report.splats or 0), "shapes": float(len(report.present))}
         checks.append(Check(name="head", verdict="passed", measure=measure))
         files = {"head": (packed, f"{HEAD}.zip")}
+        pictures = work / f"out-{HEAD}" / "likeness"
+        for name, file in PICTURES:
+            path = pictures / file
+            try:
+                sound = path.stat().st_size <= PICTURE_MAX_BYTES and path.open("rb").read(len(PNG)) == PNG
+            except OSError:
+                sound = False
+            if not sound:
+                # A head nothing can be scored against is no use to the steps after: say so here, not there.
+                why = f"the pipeline left no picture to score the head by (likeness/{file})"
+                checks.append(Check(name="pictures", verdict="failed", reason=why))
+                return {"checks": checks, "run": run}
+            files[name] = (path, f"likeness/{file}")
+        checks.append(Check(name="pictures", verdict="passed"))
         fit = work / f"out-{HEAD}" / "fit"
         for name, file in (("shape-fit", "fit.json"), ("shape-fit-start", "start.png"), ("shape-fit-best", "best.png")):
             if (fit / file).is_file():

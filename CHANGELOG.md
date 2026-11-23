@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's likeness and rest set** (#169, step 4–5 of #163): after a LAM build, the editor scores the
+  head against its portrait (`POST /guided/{id}/candidates/{candidate}/likeness`) and fits a rest set
+  (`POST .../rest`), each as a job. Likeness runs `lam/likeness.py` in the LAM image on the two pictures the build
+  keeps (portrait crop and head at the portrait's camera): colour per region, DINOv2 identity (Apache-2.0), lid
+  aperture, lip fullness and landmark misfit — the scores that ranked character heads above photo heads on #151's
+  set; detail did not and is not kept. Scores flag and rank; they do not refuse. Rest fit runs `lam/fit_rest.py`
+  against a short-lived server serving the head, with smile ≥ 0.15 and lip-parting shapes capped. Settings:
+  `ARGUS_MASK_DINOV2`, `ARGUS_MASK_LANDMARKER`, `ARGUS_MASK_LIKENESS_*`, `ARGUS_MASK_REST_*`.
+
 - **A build record for a guided face** (#166, the first part of the guided head builder, #163):
   `<assets>/.guided/<id>/build.json` keeps each step's result (inputs and outputs by sha256, the models used, its
   checks with their reasons, its scores), and the editor serves it at `GET /guided` and `GET /guided/{id}` with
