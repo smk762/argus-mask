@@ -13,7 +13,7 @@ from argus_mask.editor.guided import Check, GuidedStore, StepResult, Tool
 from argus_mask.editor.save import editor_owned, owned_guided
 from argus_mask.faces import FaceStore, sha256_file
 from argus_mask.models import LookAlike, Provenance
-from tests.helpers import make_splat_zip
+from tests.helpers import make_face, make_splat_zip
 from tests.test_guided import ticking
 
 
@@ -147,3 +147,41 @@ def test_save_without_lookalike_is_not_demo_ready(editor) -> None:
     manifest, _model = FaceStore(assets).load("plain")
     assert manifest.provenance.cleared is True
     assert manifest.provenance.demo_ready is False
+
+
+def test_a_guided_face_is_never_owned_without_its_build_json(editor) -> None:
+    """Must never: a guided face is saved without its build record (#178 / #176)."""
+    client, store, assets = editor
+    _ready_with_head(store, assets)
+    assert client.post("/guided/guide/save", json={"name": "Guide"}).status_code == 200
+    assert owned_guided(assets, "guide")
+    (assets / "guide" / "build.json").unlink()
+    assert not owned_guided(assets, "guide") and not editor_owned(assets, "guide")
+
+
+def test_save_never_replaces_a_face_without_build_or_preset(editor) -> None:
+    """Must never: save overwrites a stock/hand-added face that has no ownership mark (#178)."""
+    client, store, assets = editor
+    make_face(assets, "guide")
+    assert not editor_owned(assets, "guide")
+    _ready_with_head(store, assets)
+    reply = client.post("/guided/guide/save", json={"name": "Guide"})
+    assert reply.status_code == 409 and "did not make" in reply.json()["detail"]
+    assert not (assets / "guide" / "build.json").is_file()
+
+
+def test_save_cannot_skip_a_refused_portrait(editor) -> None:
+    """Must never: a later step's route runs after a refusal (#178 / #166)."""
+    client, store, assets = editor
+    _ready_with_head(store, assets)
+    store.put(
+        "guide",
+        StepResult(
+            step="portrait",
+            candidate="c1",
+            checks=[Check(name="adult", verdict="refused", reason="reads as under 18")],
+        ),
+    )
+    reply = client.post("/guided/guide/save", json={})
+    assert reply.status_code == 409
+    assert client.get("/guided/guide").json()["face"]["save"]["status"] != "passed"

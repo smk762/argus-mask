@@ -400,6 +400,21 @@ def test_editor_routes(tmp_path: Path) -> None:
             assert kinds["c2"] == "personal"  # restyle did not raise
 
 
+def test_source_never_imports_a_gpu_lease() -> None:
+    """Must never: a LAM lease is held around darkroom (#178 / #155). Darkroom leases for itself."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "src/argus_mask/editor/source.py").read_text())
+    imported = {
+        f"{node.module}.{name.name}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+        for name in node.names
+    }
+    assert not any("gpu" in m or m.endswith(".lease") or "LAM_HEAD" in m for m in imported), imported
+
+
 async def asyncio_sleep() -> None:
     import asyncio
 
