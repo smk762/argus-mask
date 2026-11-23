@@ -132,6 +132,16 @@ The guided editor's portrait step (#168) runs before LAM: curator `face_source` 
 
 After the head is built, `lam/likeness.py` scores it against the portrait at the portrait's own camera (colour per region, DINOv2 identity, lid aperture, lip fullness, landmark misfit). The scores that ranked character heads above photo heads on #151's set are kept; detail did not separate them and is not. The guided editor runs this as a job after the build.
 
+### Measure how far it turns
+
+LAM invents the sides of the head. Where the hairline or temples were bare in the portrait, a gap opens as the head turns or tips back — each head at its own angle (`splat-01` ~12° yaw / ~7° back; `syn-w101` holds ~20° / 8°). The guided turns step (#170) draws the contact-sheet poses with limits off, scores the skin-share rise at the outer temple (yaw) and top hairline (tip back), and writes measured `limits` into the build record (copied onto the face manifest on save, #176):
+
+```bash
+python lam/measure_turns.py --url http://127.0.0.1:8109 --face splat-01 --out work/splat-01.turns.json
+```
+
+Needs playwright and pillow. The editor runs it as a job (`POST /guided/{id}/candidates/{candidate}/turns`).
+
 ### Fit its rest set to its portrait
 
 The viewer's default rest set (`warm`) closes the lids a little, which on a LAM head's already low lids reads as hooded. `lam/fit_rest.py` searches a rest set for each head instead: the viewer draws the head with each candidate, and MediaPipe scores it against the portrait (eyes, lips and brows placed against the outline; how much iris the lids show; how full the lips are; MediaPipe's own ARKit scores). About 3½ minutes per head on the CPU, against a running server:

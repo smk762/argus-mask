@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's turn checks and measured limits** (#170, step 4 of #163): after a LAM build,
+  `POST /guided/{id}/candidates/{candidate}/turns` draws the contact-sheet poses (limits off), scores
+  hairline/temple gaps, and writes measured `limits` (`yaw`, `pitch_up`, `pitch_down`) into the build
+  record. Save (#176) copies them onto the face manifest. Calibrated so a weak head (like `splat-01`)
+  gives out near 12° yaw / 7° back and a strong one (like `syn-w101`) holds ~20° / 8°. Scoring lives in
+  `argus_mask.turns`; the editor job runs `lam/measure_turns.py` (playwright) or an injectable analyzer
+  in tests. Settings: `ARGUS_MASK_TURNS_*`.
+
 - **A guided face's portrait checks before any GPU time** (#168, step 2 of #163): `POST /guided/{id}/portrait`
   runs curator `face_source`, retina OCR (cortex `OcrClient`), and mask's own checks (framing, expression,
   lighting, temples, photograph advisory with a restyle hint). A required check that could not run is
