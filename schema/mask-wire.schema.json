@@ -467,7 +467,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.8",
+          "default": "1.9",
           "title": "Mask Version",
           "type": "string"
         },
@@ -829,6 +829,43 @@
       "title": "Limits",
       "type": "object"
     },
+    "LookAlike": {
+      "additionalProperties": false,
+      "description": "A look-alike check for a face shown publicly (#176): who looked, when, how, and what they found.\n\nCleared faces may be served without one; the hosted demo needs one (``demo_ready``). Until this field\nexisted the same facts lived in ``notes`` (splat-01 \u2026 splat-03). Kept in step with cortex's ``LookAlike``.",
+      "properties": {
+        "at": {
+          "format": "date",
+          "title": "At",
+          "type": "string"
+        },
+        "found": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Found",
+          "type": "string"
+        },
+        "how": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "How",
+          "type": "string"
+        },
+        "who": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Who",
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "at",
+        "how",
+        "found"
+      ],
+      "title": "LookAlike",
+      "type": "object"
+    },
     "ModelFile": {
       "description": "A face's model, in its directory: its file name, sha256 and format.\n\n- ``gltf``: a glTF 2.0 binary (``.glb``), morph targets named for the ARKit shapes. The default, so a\n  manifest from before 1.2 reads as it did.\n- ``lam-splat``: a LAM Gaussian-splat head (``.zip``): one folder holding ``skin.glb`` (the FLAME mesh and\n  its ARKit shapes), ``offset.ply`` (the splats), ``animation.glb``, ``vertex_order.json`` and optionally\n  ``iris_occlusion.json``.\n\nA ``gltf`` model may carry ``splats`` (:class:`BoundSplats`): files beside it that a screen able to draw\nthem shows riding the mesh; one that is not shows the mesh.",
       "properties": {
@@ -1003,7 +1040,7 @@
           "default": null
         },
         "mask_version": {
-          "default": "1.8",
+          "default": "1.9",
           "title": "Mask Version",
           "type": "string"
         },
@@ -1054,12 +1091,18 @@
     },
     "Provenance": {
       "additionalProperties": false,
-      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nA ``synthetic`` (or ``personal``) face may say how it was generated (``generator``). A ``consented`` face is\nserved only with a valid consent record for its release (:mod:`argus_mask.consent`), and carries the\ndisclosure label.\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared`` and ``disclosure`` a dumped record carries are recomputed, never read.",
+      "description": "Where a face came from. Required: a face without it is not served.\n\n- ``personal``: the user's own use, anything they may lawfully use privately. Needs only ``source``; not\n  cleared to show or share.\n- ``stock``: a published asset under its licence. ``synthetic``: generated, with no real person or\n  owned character going in.\n- ``consented``: a real person's likeness (or an owned character) under a signed release, bound by the\n  release's sha256 (never the document) and the subject as the release names them.\n- ``curated``: refused until 0.3 defines what a curated face must prove.\n\nA ``synthetic`` (or ``personal``) face may say how it was generated (``generator``). A ``consented`` face is\nserved only with a valid consent record for its release (:mod:`argus_mask.consent`), and carries the\ndisclosure label. A public look-alike check is ``lookalike`` (#176).\n\nUnknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for\n``license``, and the derived ``cleared``, ``disclosure`` and ``demo_ready`` a dumped record carries are\nrecomputed, never read.",
       "properties": {
         "cleared": {
           "description": "Whether the face may be shown beyond the user's own screens: in a demo, a release, anything public.",
           "readOnly": true,
           "title": "Cleared",
+          "type": "boolean"
+        },
+        "demo_ready": {
+          "description": "Whether a cleared face may go in the hosted demo: needs a recorded look-alike check (#176).",
+          "readOnly": true,
+          "title": "Demo Ready",
           "type": "boolean"
         },
         "disclosure": {
@@ -1102,6 +1145,17 @@
           "title": "License",
           "type": "string"
         },
+        "lookalike": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LookAlike"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "notes": {
           "default": "",
           "title": "Notes",
@@ -1135,7 +1189,8 @@
         "kind",
         "source",
         "cleared",
-        "disclosure"
+        "disclosure",
+        "demo_ready"
       ],
       "title": "Provenance",
       "type": "object"
@@ -1417,7 +1472,7 @@
           "type": "integer"
         },
         "mask_version": {
-          "default": "1.8",
+          "default": "1.9",
           "title": "Mask Version",
           "type": "string"
         },

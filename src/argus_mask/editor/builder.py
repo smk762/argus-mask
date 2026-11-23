@@ -265,8 +265,11 @@ class Builder:
         return None
 
     def owned(self, face_id: str) -> bool:
-        """Whether ``<assets>/<id>`` is a face the editor exported (so it may replace it)."""
-        return is_face_id(face_id) and (self.assets_dir / face_id / PRESET_NAME).is_file()
+        """Whether ``<assets>/<id>`` is a face the editor made (``preset.json`` or a guided ``build.json``)."""
+        if not is_face_id(face_id):
+            return False
+        root = self.assets_dir / face_id
+        return (root / PRESET_NAME).is_file() or (root / "build.json").is_file()
 
     def previewed(self, face_id: str) -> bool:
         return is_face_id(face_id) and (self.preview_dir / face_id / PRESET_NAME).is_file()

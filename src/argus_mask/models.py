@@ -12,6 +12,7 @@ mono ``f32le`` PCM at ``StreamHeader.audio.sample_rate``.
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Annotated, Literal
 
 from argus_cortex.fs import PathRefused, safe_name
@@ -30,7 +31,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 #      every input that went into them.
 # 1.7: ``FaceManifest.limits``: how far a screen lets a head turn and open its jaw (#152, #154).
 # 1.8: ``FaceScene.shot``: a splat head's shot, close or wide, chosen with its backdrop (#151).
-MASK_VERSION = "1.8"
+# 1.9: ``Provenance.lookalike`` and derived ``demo_ready`` (#176): a public look-alike check.
+MASK_VERSION = "1.9"
 SUPPORTED_MASK_MAJORS: tuple[str, ...] = ("1",)
 WIRE_TITLE = "argus-mask wire contract"
 
@@ -165,6 +167,21 @@ class Generator(BaseModel):
     prompt: str = Field("", max_length=4000)
 
 
+class LookAlike(BaseModel):
+    """A look-alike check for a face shown publicly (#176): who looked, when, how, and what they found.
+
+    Cleared faces may be served without one; the hosted demo needs one (``demo_ready``). Until this field
+    existed the same facts lived in ``notes`` (splat-01 … splat-03). Kept in step with cortex's ``LookAlike``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    who: str = Field(..., min_length=1, max_length=200)
+    at: date
+    how: str = Field(..., min_length=1, max_length=500)
+    found: str = Field(..., min_length=1, max_length=2000)
+
+
 class Provenance(BaseModel):
     """Where a face came from. Required: a face without it is not served.
 
@@ -178,10 +195,11 @@ class Provenance(BaseModel):
 
     A ``synthetic`` (or ``personal``) face may say how it was generated (``generator``). A ``consented`` face is
     served only with a valid consent record for its release (:mod:`argus_mask.consent`), and carries the
-    disclosure label.
+    disclosure label. A public look-alike check is ``lookalike`` (#176).
 
     Unknown fields are refused, so a misspelt field cannot be dropped in silence; ``licence`` is accepted for
-    ``license``, and the derived ``cleared`` and ``disclosure`` a dumped record carries are recomputed, never read.
+    ``license``, and the derived ``cleared``, ``disclosure`` and ``demo_ready`` a dumped record carries are
+    recomputed, never read.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -193,13 +211,14 @@ class Provenance(BaseModel):
     subject: str = ""
     release_sha256: str | None = Field(None, pattern=SHA256_PATTERN)
     generator: Generator | None = None
+    lookalike: LookAlike | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _read(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        data = {k: v for k, v in data.items() if k not in ("cleared", "disclosure")}
+        data = {k: v for k, v in data.items() if k not in ("cleared", "disclosure", "demo_ready")}
         if "licence" in data:
             licence = data.pop("licence")
             if "license" in data and data["license"] != licence:
@@ -232,6 +251,12 @@ class Provenance(BaseModel):
     def disclosure(self) -> str | None:
         """The label shown with the face: set for a real person's likeness, which is never shown unlabelled."""
         return FACE_DISCLOSURE if self.kind == "consented" else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def demo_ready(self) -> bool:
+        """Whether a cleared face may go in the hosted demo: needs a recorded look-alike check (#176)."""
+        return self.cleared and self.lookalike is not None
 
 
 ModelFormat = Literal["gltf", "lam-splat"]
