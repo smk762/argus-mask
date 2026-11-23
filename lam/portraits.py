@@ -20,15 +20,21 @@ import urllib.request
 from pathlib import Path
 
 from argus_mask.portraits import (
+    CHARACTER,
     CHECKPOINT,
     DEFAULT_HEIGHT,
     DEFAULT_WIDTH,
+    SEMIREAL,
+    STYLISED,
+    TEMPLATE,
     TEMPLATES,
     generate_body,
     prompt_for,
     refusal,
     seeds,
 )
+
+# Re-exported so tests/test_lam.py and callers that import lam/portraits keep the same names.
 
 
 def last_event(reply) -> dict:
