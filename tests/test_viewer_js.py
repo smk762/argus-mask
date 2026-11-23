@@ -183,10 +183,15 @@ def test_the_jaw_cap_sits_where_asked_then_where_the_face_says() -> None:
 
 
 def test_every_frame_a_splat_head_draws_ends_with_its_soft_edge() -> None:
-    """The fade under the bust (#153) is drawn after the splats, live and in a recording alike, and reads no clock."""
+    """The fade under the bust (#153) is drawn after the splats, live and in a recording alike, and reads no clock.
+
+    Accessories (#67) may draw after the veil; the soft edge must still run every frame.
+    """
     source = (VIEWER / "splat.js").read_text(encoding="utf-8")
     for method in ("step(t = 0)", "async exact(t = 0)"):
         body = _block(source, source.index(f"  {method} "))
-        assert body.rstrip("} \n").endswith("this.veil();"), method
+        assert "this.veil();" in body, method
+        assert body.index("this.veil();") < body.index("this._drawAccessories();"), method
+        assert body.rstrip("} \n").endswith("this._drawAccessories();"), method
     veil = _block(source, source.index("  veil() "))
     assert not any(word in veil for word in ("performance.now", "Date", "Math.random"))
