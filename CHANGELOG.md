@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The guided head builder page and pick** (#174, step 5 of #163): `GET /guided.html`
+  reads the build record only (every check, score, refusal and blocker), with panels
+  for source / portrait / build / evals and a side-by-side pick. `POST /guided/{id}/pick`
+  chooses a settled candidate; `POST .../candidates/{c}/overrule` overrules an advisory;
+  `GET .../file/{path}` and `GET .../candidates/{c}/head.zip` serve artifacts the record
+  names (for the page's Stage preview through look / motion / splat).
+
 - **A guided face's age read** (#172, step 4 of #163): after a LAM build,
   `POST /guided/{id}/candidates/{candidate}/age` asks argus-curator `POST /faces` (MiVOLO) for the
   apparent age of the portrait-crop and of the head render, writes both and their difference, and

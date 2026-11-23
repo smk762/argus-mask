@@ -58,6 +58,7 @@ NOT_A_FACE = {
     "build_id",
     "candidate",
     "record_id",  # darkroom generation id (#167), not a face
+    "file_path",  # a guided build's work file (#174), not a face
 }
 
 

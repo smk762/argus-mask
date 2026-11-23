@@ -15,9 +15,14 @@
 ``POST /saved/{id}/rename``             ``{"id": new id, "name": new name}``: the export and the preview together
 ``DELETE /saved/{id}``                  move a face the editor made to ``.trash/`` (``?from=preview|export``, default both)
 ``GET  /faces.html``                    the saved-faces page
+``GET  /guided.html``                   the guided head builder page (#174)
 ``GET  /guided``, ``/guided/{id}``      the guided builds, and one's record: every step's result, each with its status
                                         and what stands in the way of the next (``editor/guided.py``)
 ``POST /guided``                        create an empty guided build (``{"id", "name?"}``)
+``POST /guided/{id}/pick``              choose a candidate (step 5; ``{"candidate"}``)
+``POST /guided/{id}/candidates/{c}/overrule``  overrule an advisory (``{"step", "check", "reason"}``)
+``GET  /guided/{id}/file/{path}``       a file a step kept (portrait, render, …)
+``GET  /guided/{id}/candidates/{c}/head.zip``  the built head, for the page's preview
 ``GET  /guided/darkroom/records``       passed darkroom records to pick as a source (#167)
 ``POST /guided/{id}/source/generate``   generate a batch of source portraits through darkroom (a job; #167)
 ``POST /guided/{id}/candidates/{c}/source/pick``  take a darkroom record as the candidate's portrait
@@ -96,7 +101,15 @@ from argus_mask.editor.age import Busy as ReadingAge
 from argus_mask.editor.broadcast import Broadcasts, RecordOptions, recording_ready
 from argus_mask.editor.broadcast import Busy as Broadcasting
 from argus_mask.editor.builder import PLACES, Builder, BuildError, Busy, NoPreview, NotOwned, Refused, Taken
-from argus_mask.editor.guided import GuidedError, GuidedStore, NoSuchBuild, NotReady
+from argus_mask.editor.guided import (
+    CannotOverrule,
+    Check,
+    GuidedError,
+    GuidedStore,
+    NoSuchBuild,
+    NotReady,
+    StepResult,
+)
 from argus_mask.editor.guided import steps as guided_steps
 from argus_mask.editor.lam_build import Busy as BuildingHead
 from argus_mask.editor.lam_build import LamBuilds, LamError
@@ -329,6 +342,20 @@ class PortraitRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidates: list[str] | None = Field(None, description="subset to check; default: every candidate with a source")
+
+
+class GuidedPick(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate: str = Field(..., pattern=FACE_ID_PATTERN)
+
+
+class GuidedOverrule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step: str = Field(..., min_length=1, max_length=64)
+    check: str = Field(..., min_length=1, max_length=64)
+    reason: str = Field(..., min_length=1, max_length=2000)
 
 
 class AliasTarget(BaseModel):
@@ -702,6 +729,89 @@ def create_editor_app(
             raise HTTPException(404, str(exc)) from exc
         except GuidedError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/guided/{build_id}/pick")
+    def guided_pick(build_id: str, req: GuidedPick) -> dict:
+        """Choose a candidate (step 5 of #163). Needs every eval settled for that candidate."""
+        try:
+            kept = guided.put(
+                build_id,
+                StepResult(
+                    step="pick",
+                    candidate=req.candidate,
+                    checks=[Check(name="pick", verdict="passed")],
+                ),
+            )
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NotReady as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("guided_pick", build=build_id, candidate=req.candidate)
+        return kept.model_dump(mode="json")
+
+    @app.post("/guided/{build_id}/candidates/{candidate}/overrule")
+    def guided_overrule(build_id: str, candidate: str, req: GuidedOverrule) -> dict:
+        """Overrule an advisory on a candidate step (#166). Only advisories; reason required."""
+        try:
+            kept = guided.overrule(build_id, req.step, req.check, req.reason, candidate=candidate)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except CannotOverrule as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("guided_overrule", build=build_id, candidate=candidate, step=req.step, check=req.check)
+        return kept.model_dump(mode="json")
+
+    def _guided_known_files(build_id: str) -> set[str]:
+        record = guided.load(build_id)
+        known: set[str] = set()
+        for result in record.results:
+            for art in [*result.inputs, *result.outputs]:
+                if art.file:
+                    known.add(art.file)
+        return known
+
+    @app.get("/guided/{build_id}/file/{file_path:path}")
+    def guided_file(build_id: str, file_path: str) -> FileResponse:
+        """A file a step kept under this build (portrait, render, rest shot, …)."""
+        try:
+            if file_path not in _guided_known_files(build_id):
+                raise HTTPException(404, "no such guided file")
+            path = guided.path(build_id, file_path)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not path.is_file():
+            raise HTTPException(404, "file missing on disk")
+        media = "image/png" if path.suffix.lower() == ".png" else "application/octet-stream"
+        return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+    @app.get("/guided/{build_id}/candidates/{candidate}/head.zip")
+    def guided_head_zip(build_id: str, candidate: str) -> FileResponse:
+        """The built LAM head, for the guided page's Stage preview (#174)."""
+        try:
+            record = guided.load(build_id)
+            build = record.get("build", candidate)
+            head = next((a for a in (build.outputs if build else []) if a.name == "head" and a.file), None)
+            if head is None:
+                raise HTTPException(404, f"{candidate} has no head")
+            path = guided.path(build_id, head.file)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not path.is_file():
+            raise HTTPException(404, "head missing on disk")
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename=f"{candidate}.zip",
+            headers={"Cache-Control": "private, max-age=60"},
+        )
 
     @app.post("/guided/{build_id}/source/generate")
     async def guided_source_generate(build_id: str, req: SourceGenerate) -> dict:
