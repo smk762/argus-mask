@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zero-config argus-iris registration** (argus-cortex 0.15). `argus-mask serve` registers `gpu-tenant.yaml` with
+  the GPU broker at startup (its lifespan, `argus_cortex.gpu.aregistered` around the live coordinator), keeps it
+  registered, and sends `DELETE /tenants/argus-mask` on shutdown, so iris knows the `a2f` resident before the first
+  stream. It never blocks startup and does nothing without a broker URL. The editor does not register.
+
 ### Changed
+
+- **argus-cortex `>=0.15,<0.16`** (was `>=0.14,<0.15`). `ARGUS_GPU_BROKER_URL` and `ARGUS_GPU_BROKER_TOKEN` are all
+  the broker needs: the URL alone selects it (`live_coordinator()` follows cortex here), and the manifest is found at
+  `/app/gpu-tenant.yaml`. `compose.yaml` no longer defaults `ARGUS_GPU_COORDINATOR` to `none` and drops
+  `ARGUS_GPU_TENANT_MANIFEST`; `.env.example` likewise. Set `ARGUS_GPU_COORDINATOR=none` to ignore a broker URL.
+- `gpu-tenant.yaml`: the `a2f` resident drops `base_url: http://morpheus:8110`. The broker places it on the node
+  whose agent reports the `a2f` container (by name, else compose service) at the port it publishes.
 
 - **A splat head's shot is chosen with its backdrop** (#151, wire 1.8: `FaceScene.shot`): close (head and
   shoulders) or wide (a floating head with room around it), in the editor's Saved faces beside the backdrop, kept in

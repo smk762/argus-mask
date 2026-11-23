@@ -112,6 +112,70 @@ def test_the_live_lease_goes_only_to_the_broker_with_no_fallback(monkeypatch) ->
     assert gpu.coordinator().fallback.name == "lease"  # voice making falls back as any job does
 
 
+def test_a_broker_url_alone_selects_the_broker_and_finds_the_manifest(monkeypatch) -> None:
+    """cortex 0.15: the URL is enough, and ./gpu-tenant.yaml (/app in the image) is the manifest."""
+    monkeypatch.chdir(MANIFEST.parent)
+    monkeypatch.setenv("ARGUS_GPU_BROKER_URL", "http://127.0.0.1:9")
+    live = gpu.live_coordinator()
+    assert live.name == "broker" and isinstance(live.fallback, NullCoordinator)
+    assert live.manifest is not None and live.manifest.tenant == "argus-mask"
+    monkeypatch.setenv("ARGUS_GPU_COORDINATOR", "none")  # an explicit coordinator still wins
+    assert isinstance(gpu.live_coordinator(), NullCoordinator)
+
+
+def test_the_a2f_resident_names_no_host() -> None:
+    """The broker places a2f by its container and the node it runs on, never a host the manifest names."""
+    (a2f,) = load_tenant_manifest(MANIFEST).residents
+    assert (a2f.name, a2f.container, a2f.base_url) == ("a2f", "a2f", None)
+
+
+@pytest.fixture
+def broker(monkeypatch):
+    """Point live_coordinator() at an in-memory broker; return the requests it saw."""
+    httpx = pytest.importorskip("httpx")
+    seen: list = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200 if request.method == "POST" else 204, json={})
+
+    real = gpu.live_coordinator
+
+    def with_transport():
+        coord = real()
+        if coord.name == "broker":
+            coord._async_transport = httpx.MockTransport(handler)
+        return coord
+
+    monkeypatch.setattr("argus_mask.server.app.live_coordinator", with_transport)
+    monkeypatch.chdir(MANIFEST.parent)  # ./gpu-tenant.yaml, as /app/gpu-tenant.yaml is in the image
+    return seen
+
+
+def test_the_server_registers_at_startup_and_signs_off(broker, monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ARGUS_GPU_BROKER_URL", "http://broker.invalid:8120")
+    monkeypatch.setenv("ARGUS_GPU_BROKER_TOKEN", "caller-secret")
+    with TestClient(create_app(Settings(assets_dir=tmp_path))):
+        end = time.monotonic() + 5
+        while not broker and time.monotonic() < end:
+            time.sleep(0.01)
+        assert broker, "no registration at startup"
+        post = broker[0]
+        assert (post.method, post.url.path) == ("POST", "/tenants")
+        assert post.headers["authorization"] == "Bearer caller-secret"
+        body = json.loads(post.content)
+        assert body["tenant"] == "argus-mask"
+        assert [r["name"] for r in body["residents"]] == ["a2f"]
+    assert (broker[-1].method, broker[-1].url.path) == ("DELETE", "/tenants/argus-mask")
+
+
+def test_the_server_registers_nothing_without_a_broker_url(broker, tmp_path) -> None:
+    with TestClient(create_app(Settings(assets_dir=tmp_path))) as client:
+        assert client.get("/health").status_code == 200
+        time.sleep(0.05)
+    assert broker == []
+
+
 def test_a_live_a2f_stream_holds_a_realtime_lease_for_its_length(tmp_path) -> None:
     make_face(tmp_path)
     rec = Recording()
