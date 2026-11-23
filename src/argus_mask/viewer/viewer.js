@@ -30,6 +30,7 @@
 //   ?turn=0          splat heads: no limit on the head turn (to see where a head gives out)
 //   ?shot=close      splat heads: close (head and shoulders) or wide (the floating head); default: the face's own,
 //                    else close over a scene and wide on a plain background
+//   ?accessory=earpiece  spike (#67): layer a committed procedural accessory on the head bone (local / record)
 //
 // Socket URLs come from the page's own origin, so the same page works behind a TLS proxy.
 
@@ -39,6 +40,7 @@ import { Look, lookOptions } from './look.js';
 import { ARKIT, AXES, Motion, interpolate, lipBudget } from './motion.js';
 import { Backdrop } from './backdrop.js';
 import { ARMS_DOWN, BodyLife, Gestures, HeadTurn, STANDING, contactShadow, setPose } from './rig.js';
+import { BoneOverlay, EARPIECE_ON_HEAD, attach as attachAccessory, create as createAccessory, findBone } from './accessories.js';
 
 const params = new URLSearchParams(location.search);
 const DISPLAY = params.get('display') || 'flat';
@@ -254,6 +256,7 @@ async function loadFace() {
     if (asked === 'full') state.shadow = contactShadow(THREE, gltf.scene, scene);
   }
   headTurn = new HeadTurn(THREE, gltf.scene);
+  mountAccessory(gltf.scene, 'mesh');
 
   motion = new Motion({ budget: lipBudget(gltf.scene), seed: faceSeed(manifest.id), life: LIFE ?? 1 });
   state.lips = motion.budget;
@@ -268,6 +271,39 @@ async function loadFace() {
   state.faceShown = manifest.id;   // the face itself: faceId may be an alias for it
   state.ready = true;
   return faceId;
+}
+
+// Spike (#67): ?accessory=<name> layers a committed factory on the head bone. Mesh: parented.
+// Splat: BoneOverlay drawn after the Gaussians (threeScene alone would sit under them).
+function mountAccessory(rootOrNull, kind) {
+  const name = params.get('accessory');
+  if (!name) return;
+  const group = createAccessory(name);
+  if (!group) {
+    state.accessory = { name, error: `unknown accessory ${name}` };
+    return;
+  }
+  const pose = name === 'earpiece' ? EARPIECE_ON_HEAD : { offset: [0, 0, 0], rotation: [0, 0, 0], scale: 1 };
+  if (kind === 'mesh') {
+    const bone = findBone(rootOrNull, 'head') || findBone(rootOrNull, 'neck_01');
+    if (!bone) {
+      state.accessory = { name, error: 'no head bone on this mesh' };
+      return;
+    }
+    attachAccessory(bone, group, pose);
+    state.accessory = { name, kind: 'mesh', bone: bone.name };
+    return;
+  }
+  // splat
+  const bone = splat.bone('head') || splat.bone('neckUpper');
+  if (!bone) {
+    state.accessory = { name, error: 'no head bone on this splat' };
+    return;
+  }
+  const overlay = new BoneOverlay();
+  overlay.follow(bone, group, pose);
+  splat.setAccessoryOverlay(overlay);
+  state.accessory = { name, kind: 'splat', bone: bone.name, overlay: true };
 }
 
 // Each face idles its own way: the idle seed, from its id.
@@ -320,6 +356,7 @@ async function loadSplat(faceId, manifest) {
   state.jaw = knee;
   state.look = null;
   await loadRest(faceId);
+  mountAccessory(null, 'splat');
   // The face at rest, drawn once before anyone is told it is ready.
   const order = ARKIT;
   const shown = motion.present(new Float32Array(order.length), order, { live: true, t: 0, dt: 0 });

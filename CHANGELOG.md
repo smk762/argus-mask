@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Accessories spike** (#67): a committed procedural earpiece (`viewer/accessories/`) layers on a
+  splat or mesh head bone via `?accessory=earpiece`. Splat heads use a post-Gaussian overlay (the
+  vendored scene draws under the splats). Record poses match; img2threejs stays an optional authoring
+  aid, not a runtime dependency — see `docs/accessories-spike.md`. No wire / manifest field yet.
+
 - **Gaussian refine spike** (#173): `lam/refine_gaussians.py` optimises a packed head's
   `offset.ply` (colour → opacity/scale → small xyz, pull to LAM) in the LAM image;
   `lam/run_refine_spike.sh` and `lam/refine-spike.md` record photo L1 before/after on

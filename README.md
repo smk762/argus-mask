@@ -295,7 +295,7 @@ A step runs only when the steps it needs have settled (passed, or an advisory yo
 | **Scene** | Backdrop and splat shot (`close` / `wide`). | Bright floor behind the bust → advisory (e.g. garden's pale path). |
 | **Save** | Writes `<assets>/<id>/` with the zip, manifest (limits, framing, provenance), rest, scene, and `build.json`. | Refuses unsettled pick/scene. Optional look-alike check (`who` / `at` / `how` / `found`); a cleared face without one is not `demo_ready`. |
 
-Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For a LAM head](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md#for-a-lam-head). Gaussian refinement against the portrait (#173) is a measured spike only ([`lam/refine-spike.md`](lam/refine-spike.md)): not a guided step until turns and speech clear it.
+Portrait tips and the by-hand CLI recipe stay in [docs/synthetic-faces.md § For a LAM head](https://github.com/smk762/argus-mask/blob/main/docs/synthetic-faces.md#for-a-lam-head). Gaussian refinement against the portrait (#173) is a measured spike only ([`lam/refine-spike.md`](lam/refine-spike.md)): not a guided step until turns and speech clear it. Procedural accessories on a head bone (#67) are a spike too ([`docs/accessories-spike.md`](docs/accessories-spike.md): `?accessory=earpiece`); no manifest field until a follow-up for the avatar epic.
 
 ## Configuration
 

@@ -78,12 +78,15 @@ def coordinator() -> Any:  # noqa: ANN401 - a cortex GpuCoordinator; cortex.gpu 
 def live_coordinator() -> Any:  # noqa: ANN401
     """The broker, with no fallback, when the environment selects it as cortex does (``ARGUS_GPU_BROKER_URL`` with
     ``ARGUS_GPU_COORDINATOR`` unset, or ``ARGUS_GPU_COORDINATOR=broker``); otherwise one that does nothing."""
-    from argus_cortex.gpu import NullCoordinator, build_coordinator, find_tenant_manifest  # noqa: PLC0415
+    from argus_cortex.gpu import NullCoordinator, build_coordinator  # noqa: PLC0415
 
     env = os.environ.get
     url = env("ARGUS_GPU_BROKER_URL", "").strip() or None
     if (env("ARGUS_GPU_COORDINATOR", "").strip().lower() or ("broker" if url else "none")) != "broker":
         return NullCoordinator()
+    # find_tenant_manifest is only on newer cortex; import it only on the broker path.
+    from argus_cortex.gpu import find_tenant_manifest  # noqa: PLC0415
+
     return build_coordinator(
         "broker",
         broker_url=url,
