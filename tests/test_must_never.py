@@ -47,7 +47,18 @@ def apps(tmp_path):
 # Every path parameter the apps use, by name. A face is only ever ``face_id`` (and its model ``file``); the rest
 # address other things. A new parameter must be added here, so a face route under another name cannot be filled
 # with a placeholder and pass without the face ever being asked about.
-NOT_A_FACE = {"name", "part", "pack_id", "job_id", "key", "sha", "voice_id", "build_id", "candidate"}
+NOT_A_FACE = {
+    "name",
+    "part",
+    "pack_id",
+    "job_id",
+    "key",
+    "sha",
+    "voice_id",
+    "build_id",
+    "candidate",
+    "record_id",  # darkroom generation id (#167), not a face
+}
 
 
 def _path(route: Route, face: str = "agreed") -> str:

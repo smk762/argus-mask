@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's source portrait and provenance** (#167, step 1 of #163): four ways into the build record —
+  generate a batch of seeds through darkroom (`POST /guided/{id}/source/generate`), pick a passed darkroom record
+  (`POST .../source/pick`), upload with declared provenance (`POST .../source/upload`), or restyle a settled source
+  image-to-image into a style template (`POST .../source/restyle`). Kind is computed from what was checked (a LoRA
+  record is never `synthetic`; a restyle never raises the kind). Style templates and record checks live in
+  `argus_mask.portraits` (what `lam/portraits.py` uses). No GPU lease around darkroom. Settings:
+  `ARGUS_MASK_DARKROOM_URL`, `ARGUS_MASK_DARKROOM_POLICY`, `ARGUS_MASK_PORTRAIT_*`, `ARGUS_MASK_RESTYLE_DENOISE`.
+  Create a build with `POST /guided`.
+
 - **A guided face's likeness and rest set** (#169, step 4–5 of #163): after a LAM build, the editor scores the
   head against its portrait (`POST /guided/{id}/candidates/{candidate}/likeness`) and fits a rest set
   (`POST .../rest`), each as a job. Likeness runs `lam/likeness.py` in the LAM image on the two pictures the build

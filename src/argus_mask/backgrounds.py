@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -237,6 +238,15 @@ class Darkroom:
 
     def image(self, record_id: str) -> bytes:
         return self._call("GET", f"/image/{record_id}")
+
+    def record(self, record_id: str) -> dict:
+        """One generation record by id (``GET /record/{id}``)."""
+        return json.loads(self._call("GET", f"/record/{record_id}"))
+
+    def records(self, *, outcome: str = "passed", page: int = 1, page_size: int = 50) -> dict:
+        """Darkroom's record list (``GET /records``): ``records``, ``total``, ``page``, ``page_size``."""
+        query = urllib.parse.urlencode({"outcome": outcome, "page": page, "page_size": page_size})
+        return json.loads(self._call("GET", f"/records?{query}"))
 
     def make_depth(self, record_id: str) -> dict:
         return json.loads(self._call("POST", f"/depth/{record_id}"))

@@ -38,7 +38,15 @@ dependencies = [
 # argus-cortex[gpu]: NVML, for the free-VRAM figure on /health. Mask's own process uses no GPU.
 # argus-cortex[remote,yaml]: the argus-iris GPU broker client (httpx) and gpu-tenant.yaml, for the leases mask takes
 # on others' GPU work (mask/gpu.py): Audio2Face while a source is live, a TTS service making a voice.
-server = ["fastapi>=0.110", "uvicorn>=0.27", "websockets>=15.0", "argus-cortex[server,gpu,remote,yaml]>=0.14,<0.15"]
+# argus-cortex[images]: Pillow, for cortex's open_image on a guided source upload (#167).
+# python-multipart: FastAPI Form/File uploads (guided source upload).
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "websockets>=15.0",
+    "python-multipart>=0.0.9",
+    "argus-cortex[server,gpu,remote,yaml,images]>=0.14,<0.15",
+]
 # websockets: `push` and `say` are clients of a running server's source socket.
 cli = ["typer>=0.12", "rich>=13.0", "websockets>=15.0"]
 # The client of the Audio2Face server (a2f/), which is reached over a WebSocket.

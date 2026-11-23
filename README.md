@@ -293,6 +293,10 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_MPFB_DATA` | under the user directory | MPFB's data directory, if it is somewhere else |
 | `ARGUS_MASK_BUILD_TIMEOUT_S` | `300` | The editor stops a build that takes longer |
 | `ARGUS_MASK_BUILD_CACHE` | `40` | Builds the editor keeps (about 6 MB each), so undo and repeats skip Blender; `0` keeps none |
+| `ARGUS_MASK_DARKROOM_URL` | `http://localhost:8106` | argus-darkroom, for a guided source generate/pick/restyle (#167) and for `argus-mask plate` |
+| `ARGUS_MASK_DARKROOM_POLICY` | `default` | Enforcing policy a source portrait's darkroom record must carry |
+| `ARGUS_MASK_PORTRAIT_WIDTH` / `_HEIGHT` | `1024` / `1280` | Size asked of darkroom for a guided source generate or restyle |
+| `ARGUS_MASK_RESTYLE_DENOISE` | `0.7` | Image-to-image denoise when restyling a source into a style template |
 | `ARGUS_MASK_LAM_DIR` | unset | The LAM checkout with its `model_zoo`, for a guided face's LAM build ([lam/README.md](lam/README.md)). Unset, no LAM head is built |
 | `ARGUS_MASK_FLAME_OPEN` | unset | `flame2023_Open.pkl`. The pipeline refuses any other FLAME |
 | `ARGUS_MASK_LAM_IMAGE` | `argus-mask-lam` | The image the pipeline runs in |
