@@ -302,10 +302,10 @@ argus-mask editor --assets-dir assets \
 | `ARGUS_MASK_LAM_STOP_FREE_GB` | `2` | A running LAM build is stopped when free host memory falls under this |
 | `ARGUS_MASK_LAM_TIMEOUT_S` | `1800` | The editor stops a LAM build that takes longer |
 | `ARGUS_MASK_LAM_CACHE` | `20` | LAM heads kept (about 4 MB each) by portrait and pipeline, so the same portrait is not built twice; `0` keeps none |
-| `ARGUS_MASK_DINOV2` | `~/.cache/argus-mask/dinov2-base` if present | DINOv2-base checkpoint folder for a guided likeness identity score (#169). Unset, identity is skipped |
+| `ARGUS_MASK_DINOV2` | unset | DINOv2-base checkpoint folder for a guided likeness identity score (#169). Unset, a cached copy is used if one is there; otherwise identity is skipped |
 | `ARGUS_MASK_LIKENESS_IMAGE` | `ARGUS_MASK_LAM_IMAGE` | Image that runs `lam/likeness.py` (MediaPipe + torch) |
 | `ARGUS_MASK_LIKENESS_TIMEOUT_S` | `300` | The editor stops a likeness job that takes longer |
-| `ARGUS_MASK_LANDMARKER` | `~/.cache/argus-mask/face_landmarker.task` if present | MediaPipe Face Landmarker for a guided rest fit |
+| `ARGUS_MASK_LANDMARKER` | unset | MediaPipe Face Landmarker task file for a guided rest fit. Unset, a cached copy is used if one is there |
 | `ARGUS_MASK_REST_TIMEOUT_S` | `600` | The editor stops a rest fit that takes longer |
 | `ARGUS_MASK_REST_GENERATIONS` | `20` | Evolution generations for `lam/fit_rest.py` |
 | `ARGUS_MASK_SERVER_URL` | `http://127.0.0.1:8109` | How the editor reaches the server, to check a face and send a test |

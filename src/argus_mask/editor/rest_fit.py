@@ -99,7 +99,7 @@ class RestFits:
         if s.landmarker is None or not s.landmarker.is_file():
             return (
                 "MediaPipe's face_landmarker.task was not found "
-                "(set ARGUS_MASK_LANDMARKER, or copy it to ~/.cache/argus-mask/ from the LAM image)"
+                "(set ARGUS_MASK_LANDMARKER, or copy face_landmarker.task from the LAM image into the argus-mask cache)"
             )
         if shutil.which(s.uv) is None:
             return f"uv not found: {s.uv!r} (rest fit needs pillow and mediapipe for the script)"
