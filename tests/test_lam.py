@@ -19,8 +19,8 @@ import pytest
 LAM = Path(__file__).resolve().parent.parent / "lam"
 # lam/'s modules, imported at top level as make_head.py does from /argus, and the LAM and VHAP modules the tests
 # register: taken out again after each test. Nothing else is: torch, for one, can be imported only once.
-LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "fit_shape", "fit_rest", "likeness", "portraits", "lam",
-             "vhap"}  # fmt: skip
+LAM_NAMES = {"flame_core", "overrides", "preflight", "landmarks", "fit_shape", "fit_rest", "likeness", "portraits",
+             "refine_gaussians", "lam", "vhap"}  # fmt: skip
 
 
 @pytest.fixture
@@ -682,3 +682,29 @@ def test_the_calibrated_scores_are_the_ones_the_record_keeps(lam) -> None:
         "identity": 0.94,
     }
     assert "kept" not in found and "same" not in found and "oval" not in found
+
+
+def test_refine_ply_round_trip_keeps_count_order_and_floats(lam) -> None:
+    """#173: offset.ply layout is fixed; read→write must not reorder or requantise."""
+    import refine_gaussians as rg  # noqa: PLC0415
+
+    from tests.helpers import make_ply  # noqa: PLC0415
+
+    names, attrs = rg.read_ply(make_ply(5))
+    out = rg.write_ply(names, attrs)
+    names2, attrs2 = rg.read_ply(out)
+    assert names2 == names and len(attrs2[names2[0]]) == 5
+    assert all(np.array_equal(attrs[n], attrs2[n]) for n in names)
+    again = rg.ply_round_trip(out)
+    assert all(np.array_equal(rg.read_ply(again)[1][n], attrs2[n]) for n in names2)
+
+
+def test_refine_pull_and_zero_steps_leave_attrs_alone(lam) -> None:
+    """#173: infinite pull / zero motion keeps LAM's attributes (numpy helpers, no CUDA)."""
+    import refine_gaussians as rg  # noqa: PLC0415
+
+    start = {k: np.arange(4, dtype=np.float32) * (i + 1) for i, k in enumerate(("f_dc_0", "f_dc_1", "opacity"))}
+    same = {k: v.copy() for k, v in start.items()}
+    assert rg.pull_loss(same, start, ("f_dc_0", "f_dc_1", "opacity")) == 0.0
+    moved = {k: v + 1.0 for k, v in start.items()}
+    assert rg.pull_loss(moved, start, ("f_dc_0",)) > 0.0
