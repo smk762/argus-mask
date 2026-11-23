@@ -163,10 +163,25 @@ def test_a_late_cleanup_never_frees_a_source_that_claimed_the_face_since(assets)
 
 def until_frame(viewer, seq: int) -> None:
     """Read a viewer socket until it has had frame *seq*: the server has made every frame up to it."""
+    last = -1
     while True:
         message = viewer.receive()
-        if message.get("text") is not None and json.loads(message["text"]).get("seq", -1) >= seq:
-            return
+        if message.get("type") in ("websocket.close", "websocket.disconnect"):
+            raise AssertionError(f"viewer socket closed before frame {seq} (last seq {last})")
+        if message.get("text") is not None:
+            got = json.loads(message["text"]).get("seq", -1)
+            if got >= seq:
+                return
+            last = got
+
+
+def test_until_frame_fails_when_the_socket_closes_first() -> None:
+    class Closed:
+        def receive(self) -> dict:
+            return {"type": "websocket.close", "code": 1000}
+
+    with pytest.raises(AssertionError, match="closed before frame 4"):
+        until_frame(Closed(), 4)
 
 
 def test_a_viewer_that_joins_mid_stream_gets_the_header_then_live_frames(client) -> None:

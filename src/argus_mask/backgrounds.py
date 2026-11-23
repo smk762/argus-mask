@@ -623,16 +623,19 @@ class SceneChoices:
             return
         key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)  # every write replaces the file: a new inode
         if key != self._seen:
-            self._faces, self._shots = {}, {}
+            # Parsed aside, then published together: a reader never sees the cache cleared mid-reload.
+            faces: dict[str, str] = {}
+            shots: dict[str, str] = {}
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 data = None
             if isinstance(data, dict):
-                for attr, field in (("_faces", "faces"), ("_shots", "shots")):
+                for dest, field in ((faces, "faces"), (shots, "shots")):
                     got = data.get(field)
-                    setattr(self, attr, {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {})
-            self._seen = key
+                    if isinstance(got, dict):
+                        dest.update({str(k): str(v) for k, v in got.items()})
+            self._faces, self._shots, self._seen = faces, shots, key
 
     def available(self) -> set[str]:
         return {s.name for s in self.plates.scenes()}

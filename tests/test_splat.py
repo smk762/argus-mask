@@ -327,8 +327,11 @@ def test_a_same_size_archive_with_its_mtime_kept_is_checked_again(tmp_path) -> N
     manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
     manifest["model"]["sha256"] = faces.sha256_file(model)
     (directory / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
-    with pytest.raises(FaceError):
+    # The skin's CRC, not a sha256 mismatch: a cache keyed only on size and mtime would still be holding the
+    # archive this one replaced, and the rewritten manifest would then fail the hash check instead.
+    with pytest.raises(FaceError, match="skin.glb does not unpack") as raised:
         store.load("splat-head")
+    assert "sha256" not in str(raised.value)
 
 
 def test_a_vertex_count_too_long_to_be_one_is_no_count_not_a_crash(tmp_path) -> None:

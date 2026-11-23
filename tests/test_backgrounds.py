@@ -524,6 +524,26 @@ def test_record_accepts_a_plate_the_server_serves(assets: Path) -> None:
 # ---- each face's backdrop ------------------------------------------------------------------------
 
 
+def test_a_reload_keeps_the_previous_choices_until_the_new_file_is_parsed(tmp_path, monkeypatch) -> None:
+    """Readers share the cache unlocked. A reload must not publish an empty one while the new file is parsed."""
+    path = tmp_path / "scenes.json"
+    path.write_text(json.dumps({"faces": {"test-head": "garden"}, "shots": {"test-head": "wide"}}))
+    choices = backgrounds.SceneChoices(tmp_path, backgrounds.PlateStore(tmp_path))
+    assert choices.raw() == {"test-head": "garden"}
+    path.write_text(json.dumps({"faces": {"test-head": "lake"}, "shots": {"test-head": "close"}}))
+    seen: dict[str, dict[str, str]] = {}
+    real = backgrounds.json.loads
+
+    def spy(text: str, *args, **kwargs):
+        seen["faces"] = dict(choices._faces)
+        seen["shots"] = dict(choices._shots)
+        return real(text, *args, **kwargs)
+
+    monkeypatch.setattr(backgrounds.json, "loads", spy)
+    assert choices.raw() == {"test-head": "lake"} and choices.raw_shots() == {"test-head": "close"}
+    assert seen == {"faces": {"test-head": "garden"}, "shots": {"test-head": "wide"}}
+
+
 def test_a_face_shows_its_chosen_backdrop_until_a_screen_asks_for_another(assets: Path) -> None:
     choices = backgrounds.SceneChoices(assets, backgrounds.PlateStore(assets))
     with client(assets) as c:

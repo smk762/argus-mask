@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from pathlib import Path
 
@@ -104,6 +105,39 @@ def test_staging_writes_through_a_temp_name_of_its_own(tmp_path: Path) -> None:
     store.staged.mkdir(parents=True)
     (store.staged / f"{sha}.part").mkdir()  # another writer's temp, mid-write
     assert store.stage(data) == sha and store.clip(sha).read_bytes() == data
+
+
+def test_trashing_a_voice_waits_for_its_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """trash() takes the same per-voice lock as write(), so it cannot move the folder mid-save."""
+    store = VoiceStore(tmp_path / "voices")
+    store.write({"id": "holly"}, clips(tmp_path, 1))
+    writing = threading.Event()
+    release = threading.Event()
+    original = VoiceStore._write
+
+    def slow(folder: Path, record: dict, saved: list[Path]) -> None:
+        writing.set()
+        assert release.wait(5)
+        original(folder, record, saved)
+
+    monkeypatch.setattr(VoiceStore, "_write", staticmethod(slow))
+    saver = threading.Thread(target=lambda: store.write({"id": "holly", "n": 2}, clips(tmp_path, 2)))
+    saver.start()
+    assert writing.wait(2)
+    done: list[bool] = []
+    trasher = threading.Thread(target=lambda: done.append(store.trash("holly")))
+    trasher.start()
+    try:
+        trasher.join(0.2)
+        assert trasher.is_alive()
+    finally:
+        release.set()
+        trasher.join(2)
+        saver.join(2)
+    assert done == [True]
+    assert not (tmp_path / "voices" / "holly").exists()
+    kept = list((tmp_path / "voices" / ".trash").iterdir())
+    assert len(kept) == 1 and json.loads((kept[0] / "voice.json").read_text())["n"] == 2
 
 
 def test_a_voice_deleted_twice_in_one_second_is_kept_both_times(

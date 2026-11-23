@@ -132,6 +132,38 @@ def test_the_preflight_refuses_an_embedding_that_is_not_ours(lam, tmp_path, embe
     assert len(refused) == 2 and all("not argus-mask's landmark embedding" in r for r in refused), refused
 
 
+def test_a_format_3_npy_keeps_unicode_field_names(lam, tmp_path) -> None:
+    """Format 3.0 encodes the header as UTF-8. The 2.0 reader would latin1-decode a non-ASCII field name."""
+    import preflight  # noqa: PLC0415
+
+    values = np.zeros(1, dtype=np.dtype([("café", "<f8")]))
+    values["café"] = 1.25
+    path = tmp_path / "embedding.npy"
+    with path.open("wb") as handle:
+        np.lib.format.write_array(handle, values, version=(3, 0))
+    loaded = preflight._load_embedding(path)
+    assert loaded.dtype.names == ("café",) and loaded["café"][0] == 1.25
+
+
+def test_a_fortran_ordered_npy_loads_unscrambled(lam, tmp_path) -> None:
+    import preflight  # noqa: PLC0415
+
+    values = np.asfortranarray(np.arange(6).reshape(2, 3))
+    path = tmp_path / "embedding.npy"
+    np.save(path, values)
+    loaded = preflight._load_embedding(path)
+    assert loaded.shape == values.shape and np.array_equal(loaded, values)
+
+
+def test_an_unknown_npy_version_is_refused(lam, tmp_path) -> None:
+    import preflight  # noqa: PLC0415
+
+    path = tmp_path / "embedding.npy"
+    path.write_bytes(b"\x93NUMPY\x04\x00" + b"\x00" * 8)
+    with pytest.raises(ValueError, match="not supported"):
+        preflight._load_embedding(path)
+
+
 def test_make_head_refuses_before_any_lam_code_runs() -> None:
     """The preflight sits between overrides.install() and the first import from LAM: nothing of LAM's runs first."""
     lines = (LAM / "make_head.py").read_text(encoding="utf-8").splitlines()

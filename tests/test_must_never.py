@@ -189,9 +189,42 @@ def _hides(declarations: str) -> bool:
     return bool(re.search(r"(?:^|;)(?:display:none|visibility:hidden|opacity:0(?:\.0*)?)(?:;|!|$)", flat))
 
 
+def _unwrap_at_rules(css: str) -> str:
+    """Drop at-rule preludes so a selector nested in ``@media`` or ``@supports`` is matched on its own."""
+    out: list[str] = []
+    i, n = 0, len(css)
+    while i < n:
+        if css[i] != "@":
+            nxt = css.find("@", i)
+            if nxt < 0:
+                out.append(css[i:])
+                break
+            out.append(css[i:nxt])
+            i = nxt
+            continue
+        brace = css.find("{", i)
+        if brace < 0:
+            out.append(css[i:])
+            break
+        depth = 0
+        for j in range(brace, n):
+            if css[j] == "{":
+                depth += 1
+            elif css[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append(_unwrap_at_rules(css[brace + 1 : j]))
+                    i = j + 1
+                    break
+        else:
+            out.append(css[i:])
+            break
+    return "".join(out)
+
+
 def _label_rules(css: str) -> list[tuple[str, str]]:
     """Every CSS rule whose selector names the disclosure label: (selector, declarations)."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = _unwrap_at_rules(re.sub(r"/\*.*?\*/", "", css, flags=re.S))
     return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+){([^}]*)}", css) if "disclosure" in sel]
 
 
@@ -219,6 +252,9 @@ def test_the_label_check_sees_it_anywhere_inside_the_hud(page: str, ok: bool) ->
         ("#disclosure { display : none }", False),
         ("#disclosure { color: red } #disclosure { visibility:hidden }", False),
         ("#disclosure{opacity:0}", False),
+        ("@media (max-width: 600px) { #disclosure { display: none } }", False),
+        ("@supports (display: flex) { .hud-off #disclosure { top: 0 } }", False),
+        ("@media (min-width: 1px) { #disclosure { position: fixed; opacity: 0.9 } }", True),
     ],
 )
 def test_the_label_check_reads_every_rule_and_spelling(css: str, ok: bool) -> None:
@@ -311,6 +347,10 @@ def _engine_problems(source: str, label: str = "<engine>") -> list[str]:
     tree = ast.parse(source, label)
     found: list[str] = []
     names: dict[str, str] = {}  # a local name -> what it is: "random", "numpy.random", "random.choice", ...
+
+    def banned(full: str) -> bool:
+        return full in ("random", "numpy.random", "os.urandom") or full.startswith(("random.", "numpy.random."))
+
     for node in ast.walk(tree):
         where = f"{label}:{getattr(node, 'lineno', 0)}"
         if isinstance(node, ast.Import):
@@ -322,6 +362,10 @@ def _engine_problems(source: str, label: str = "<engine>") -> list[str]:
             if node.module.split(".")[0] in CLOCKS:
                 found.append(f"{where} imports {node.module}")
             for a in node.names:
+                # ``from random import *`` binds nothing we can resolve: the import itself is the call site.
+                if a.name == "*" and (banned(node.module) or node.module.split(".")[0] in CLOCKS):
+                    found.append(f"{where} star-imports {node.module}")
+                    continue
                 names[a.asname or a.name] = f"{node.module}.{a.name}"
 
     def resolve(expr: ast.expr) -> str | None:
@@ -331,9 +375,6 @@ def _engine_problems(source: str, label: str = "<engine>") -> list[str]:
             owner = resolve(expr.value)
             return f"{owner}.{expr.attr}" if owner else None
         return None
-
-    def banned(full: str) -> bool:
-        return full in ("random", "numpy.random", "os.urandom") or full.startswith(("random.", "numpy.random."))
 
     called = set()
     for node in ast.walk(tree):
@@ -376,6 +417,8 @@ def _engine_problems(source: str, label: str = "<engine>") -> list[str]:
         "import os\nos.urandom(4)",
         "from time import monotonic",
         "import datetime as dt",
+        "from random import *\nchoice([1])",
+        "from numpy.random import *\nrand()",
     ],
 )
 def test_the_engine_check_sees_through_names_and_aliases(source: str) -> None:

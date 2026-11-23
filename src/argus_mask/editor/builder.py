@@ -102,6 +102,27 @@ class BuildResult:
     cached: bool = False
 
 
+def _installed_fingerprint(blender_user: Path | None, library: AssetLibrary) -> str:
+    """The MPFB add-on and the asset files, not only the data directory's path.
+
+    An upgrade in place keeps that path. The add-on's manifest and ``__init__`` (under Blender's extension repos)
+    and the library's own scan signature (each pack and asset file, by mtime and size) change the cache key.
+    """
+    lines = [repr(library._signature())]
+    if blender_user is not None:
+        for repo in ("user_default", "blender_org"):
+            root = blender_user / "extensions" / repo / "mpfb"
+            for name in ("blender_manifest.toml", "__init__.py"):
+                path = root / name
+                try:
+                    st = path.stat()
+                except OSError:
+                    lines.append(f"{repo}/{name}:missing")
+                else:
+                    lines.append(f"{repo}/{name}:{st.st_mtime_ns}:{st.st_size}")
+    return "\n".join(lines)
+
+
 def _why(stderr: str, stdout: str) -> str:
     """The recipe's own error line if it printed one, else the end of Blender's output."""
     lines = [ln for ln in stderr.splitlines() if ln.strip()]
@@ -138,13 +159,14 @@ class Builder:
         for part in (SCRIPT, SCRIPT.with_name("modifiers.json"), SCRIPT.with_name("hair_colour.py")):
             recipe.update(part.read_bytes() if part.is_file() else b"")
         # The Blender that runs, not just its name: an upgrade in place is a new binary on the same PATH entry.
-        # And MPFB's data, and this version (it is written into the provenance).
+        # MPFB's add-on and its asset files, not only the data directory's path, and this version (written into
+        # the provenance).
         found = shutil.which(blender)
         try:
             binary = f"{os.path.realpath(found)}:{os.stat(found).st_mtime_ns}" if found else str(blender)
         except OSError:
             binary = str(blender)
-        for part in (binary, str(library.data_dir), __version__):
+        for part in (binary, str(library.data_dir), __version__, _installed_fingerprint(blender_user, library)):
             recipe.update(part.encode() + b"\n")
         self._recipe = recipe.hexdigest()
 

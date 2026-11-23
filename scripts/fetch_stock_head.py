@@ -83,7 +83,7 @@ def read_lock(face_id: str, lock_dir: Path = LOCK_DIR) -> dict:
                 raise FetchError(f"{path}: the {name} framing needs a url and a size between 1 and {MAX_BYTES} bytes")
         if "rest" in lock:
             check_rest(lock["rest"], path)
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise FetchError(f"{path}: not a usable lock file ({exc})") from exc
     return lock
 

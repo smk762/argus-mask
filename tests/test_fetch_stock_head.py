@@ -172,6 +172,24 @@ def test_a_waist_download_that_does_not_match_writes_nothing_of_it(tmp_path, mon
     assert not (tmp_path / "assets" / "stock-test" / "waist.glb").exists()
 
 
+@pytest.mark.parametrize(
+    ("where", "value"),
+    [("manifest", ["waist"]), ("lock", ["waist"])],
+    ids=["manifest-list", "lock-list"],
+)
+def test_a_framing_that_is_not_an_object_is_not_a_usable_lock(tmp_path, monkeypatch, where: str, value: object) -> None:
+    locks = _framed_lock(tmp_path, monkeypatch)
+    path = locks / "stock-test.lock.json"
+    lock = json.loads(path.read_text())
+    if where == "manifest":
+        lock["manifest"]["framings"] = value
+    else:
+        lock["framings"] = value
+    path.write_text(json.dumps(lock))
+    with pytest.raises(fetch_stock_head.FetchError, match="not a usable lock file"):
+        fetch_stock_head.read_lock("stock-test", locks)
+
+
 def test_a_framing_the_lock_cannot_fetch_is_refused(tmp_path, monkeypatch) -> None:
     locks = _framed_lock(tmp_path, monkeypatch)
     path = locks / "stock-test.lock.json"
