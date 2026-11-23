@@ -26,6 +26,7 @@
 ``POST /guided/{id}/portrait``          run portrait checks on every source candidate (a job; #168)
 ``GET  /guided/{id}/portrait``          the batch ranked by how the checks went
 ``POST /guided/{id}/candidates/{candidate}/turns``  measure turn limits / hairline gaps (#170; a job)
+``POST /guided/{id}/candidates/{candidate}/speech``  mouth in speech vs a reference head (#171; a job)
 ``POST /guided/{id}/candidates/{candidate}/build``  build a candidate's LAM head from its portrait (a job, queued:
                                         one head at a time); ``{"fit_shape": true}`` also fits its FLAME shape
 ``POST /guided/{id}/candidates/{candidate}/likeness``  score the head against its portrait (#169; a job)
@@ -84,6 +85,7 @@ from argus_mask.config import (
     RestSettings,
     Settings,
     SourceSettings,
+    SpeechSettings,
     TurnsSettings,
 )
 from argus_mask.consent import ConsentStore, refusal, voice_disclosed, voice_of, voice_refusal
@@ -106,6 +108,8 @@ from argus_mask.editor.rest_fit import Busy as FittingRest
 from argus_mask.editor.rest_fit import RestError, RestFits
 from argus_mask.editor.source import Busy as Sourcing
 from argus_mask.editor.source import SourceError, SourceJobs, read_portrait_upload
+from argus_mask.editor.speech import Busy as MeasuringSpeech
+from argus_mask.editor.speech import SpeechError, SpeechJobs
 from argus_mask.editor.turns import Busy as MeasuringTurns
 from argus_mask.editor.turns import TurnsError, TurnsJobs
 from argus_mask.editor.voices import (
@@ -350,6 +354,7 @@ def create_editor_app(
     source: SourceJobs | None = None,
     portrait: PortraitJobs | None = None,
     turns: TurnsJobs | None = None,
+    speech: SpeechJobs | None = None,
 ) -> FastAPI:
     cfg = settings or Settings.from_env()
     ed = editor or EditorSettings.from_env()
@@ -380,6 +385,7 @@ def create_editor_app(
     source = source or SourceJobs(guided, SourceSettings.from_env(), consents)
     portrait = portrait or PortraitJobs(guided, PortraitSettings.from_env())
     turns = turns or TurnsJobs(guided, TurnsSettings.from_env())
+    speech = speech or SpeechJobs(guided, SpeechSettings.from_env(), assets=cfg.assets_dir)
     making = asyncio.Lock()  # one voice made at a time: two of the same id must not both pass the checks
     packs = packs or Installs(ed.data_dir, load_catalogue())
 
@@ -395,6 +401,7 @@ def create_editor_app(
         await source.stop_all()
         await portrait.stop_all()
         await turns.stop_all()
+        await speech.stop_all()
 
     app = FastAPI(title="Argus Mask face editor", version=__version__, lifespan=lifespan)
     app.state.builder = builder
@@ -654,6 +661,7 @@ def create_editor_app(
             "likeness": likeness.state(),
             "rest": rest.state(),
             "turns": turns.state(),
+            "speech": speech.state(),
             "styles": sorted(TEMPLATES),
         }
 
@@ -856,6 +864,22 @@ def create_editor_app(
         log.info("turns_asked", build=build_id, candidate=candidate)
         return job.public()
 
+    @app.post("/guided/{build_id}/candidates/{candidate}/speech")
+    async def guided_speech(build_id: str, candidate: str) -> dict:
+        """Score the mouth in speech against a reference head (#171)."""
+        try:
+            job = speech.start(build_id, candidate)
+        except NoSuchBuild as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (NotReady, MeasuringSpeech) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except SpeechError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except GuidedError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log.info("speech_asked", build=build_id, candidate=candidate)
+        return job.public()
+
     @app.post("/guided/{build_id}/candidates/{candidate}/rest")
     async def guided_rest(build_id: str, candidate: str) -> dict:
         """Fit a candidate's rest set to its portrait (#169). Answers at once, with the job."""
@@ -873,7 +897,7 @@ def create_editor_app(
         return job.public()
 
     def guided_job_of(build_id: str, job_id: str) -> Any:  # noqa: ANN401 - guided step jobs
-        for pool in (source.jobs, portrait.jobs, lam.jobs, likeness.jobs, turns.jobs, rest.jobs):
+        for pool in (source.jobs, portrait.jobs, lam.jobs, likeness.jobs, turns.jobs, speech.jobs, rest.jobs):
             job = pool.get(job_id)
             if job is not None and job.build_id == build_id:
                 return job
@@ -896,6 +920,8 @@ def create_editor_app(
             await likeness.stop(job_id)
         elif job_id in turns.jobs:
             await turns.stop(job_id)
+        elif job_id in speech.jobs:
+            await speech.stop(job_id)
         else:
             await rest.stop(job_id)
         return job.public()

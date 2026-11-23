@@ -77,5 +77,5 @@ The same portrait gives the same head, byte for byte.
 
 `FIT_SHAPE=1` (with `FIT_DIMS`, default 20, and `FIT_GENERATIONS`, default 20) searches the head's FLAME shape for the
 one whose render, at the portrait's own camera and pose, puts MediaPipe's landmarks where the portrait has them
-(`fit_shape.py`); it writes `fit/` beside the head. Score likeness (`likeness.py`: colour, DINOv2 identity, lids and lips), measure turn limits before the hairline/temples give out (`measure_turns.py`), and fit the head's rest set (`fit_rest.py`): in
+(`fit_shape.py`); it writes `fit/` beside the head. Score likeness (`likeness.py`: colour, DINOv2 identity, lids and lips), measure turn limits before the hairline/temples give out (`measure_turns.py`), score the mouth in speech against a fixed take (`measure_speech.py`), and fit the head's rest set (`fit_rest.py`): in
 [docs/synthetic-faces.md § For a LAM head](../docs/synthetic-faces.md#for-a-lam-head).

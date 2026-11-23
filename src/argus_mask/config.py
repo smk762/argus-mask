@@ -233,6 +233,8 @@ class PortraitSettings:
 
 
 TURNS_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "measure_turns.py"
+SPEECH_SCRIPT_IN_CHECKOUT = Path(__file__).resolve().parents[2] / "lam" / "measure_speech.py"
+SPEECH_TAKE_IN_PACKAGE = Path(__file__).resolve().parent / "editor" / "page" / "talk.json"
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,46 @@ class TurnsSettings:
             size=int(_number("TURNS_SIZE", "512", 128, 2048)),
             threshold=_number("TURNS_GAP", "0.18", 0.01, 1.0),
             timeout_s=_number("TURNS_TIMEOUT_S", "600", 30, 3600),
+            uv=_env("UV") or "uv",
+        )
+
+
+@dataclass(frozen=True)
+class SpeechSettings:
+    """What a guided face's speech eval needs (``editor/speech.py``, ``lam/measure_speech.py``, #171)."""
+
+    script: Path | None = None
+    take: Path | None = None  # talk.json: fixed Audio2Face weights, no TTS
+    landmarker: Path | None = None
+    reference: str = "splat-01"  # face id under assets; absent → #161 after baseline
+    size: int = 512
+    stride: int = 2
+    timeout_s: float = 900.0
+    uv: str = "uv"
+
+    @classmethod
+    def from_env(cls) -> SpeechSettings:
+        script, take, model = _env("SPEECH_SCRIPT"), _env("SPEECH_TAKE"), _env("LANDMARKER")
+        if script:
+            found: Path | None = Path(script).expanduser()
+        else:
+            found = SPEECH_SCRIPT_IN_CHECKOUT if SPEECH_SCRIPT_IN_CHECKOUT.is_file() else None
+        if take:
+            take_path: Path | None = Path(take).expanduser()
+        else:
+            take_path = SPEECH_TAKE_IN_PACKAGE if SPEECH_TAKE_IN_PACKAGE.is_file() else None
+        if model:
+            landmarker: Path | None = Path(model).expanduser()
+        else:
+            landmarker = LANDMARKER_IN_CACHE if LANDMARKER_IN_CACHE.is_file() else None
+        return cls(
+            script=found,
+            take=take_path,
+            landmarker=landmarker,
+            reference=_env("SPEECH_REFERENCE") or "splat-01",
+            size=int(_number("SPEECH_SIZE", "512", 128, 2048)),
+            stride=int(_number("SPEECH_STRIDE", "2", 1, 30)),
+            timeout_s=_number("SPEECH_TIMEOUT_S", "900", 60, 7200),
             uv=_env("UV") or "uv",
         )
 

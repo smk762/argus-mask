@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guided face's speech eval** (#171, step 4 of #163): after build and rest fit,
+  `POST /guided/{id}/candidates/{candidate}/speech` plays the fixed `talk.json` take (no TTS), reads the
+  lip gap per frame (MediaPipe), and scores closed-share / direction reversals / opening p95 against
+  `splat-01` (or #161's after baseline). Flags a stutter or oversized mouth as advisories. Scoring in
+  `argus_mask.speech_eval`; the editor job runs `lam/measure_speech.py`. Settings: `ARGUS_MASK_SPEECH_*`.
+
 - **A guided face's turn checks and measured limits** (#170, step 4 of #163): after a LAM build,
   `POST /guided/{id}/candidates/{candidate}/turns` draws the contact-sheet poses (limits off), scores
   hairline/temple gaps, and writes measured `limits` (`yaw`, `pitch_up`, `pitch_down`) into the build

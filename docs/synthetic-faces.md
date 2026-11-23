@@ -142,6 +142,15 @@ python lam/measure_turns.py --url http://127.0.0.1:8109 --face splat-01 --out wo
 
 Needs playwright and pillow. The editor runs it as a job (`POST /guided/{id}/candidates/{candidate}/turns`).
 
+### Score the mouth in speech
+
+A head can look right at rest and stutter in speech. Lip-parting shapes held under speech fought every closure (#161: lips closed 42% → 62% of frames, direction reversals 52 → 38 once those shapes drop out under speech, in line with `splat-01`). The guided speech step (#171) plays one fixed, cleared take (`talk.json`, no TTS) on the candidate and on `splat-01`, reads the lip gap per frame with MediaPipe, and writes closed-share / reversals / opening p95 into the record (stutter and oversized mouth are advisories):
+
+```bash
+python lam/measure_speech.py --url http://127.0.0.1:8109 --face splat-01 \
+    --take src/argus_mask/editor/page/talk.json --model face_landmarker.task --out work/splat-01.speech.json
+```
+
 ### Fit its rest set to its portrait
 
 The viewer's default rest set (`warm`) closes the lids a little, which on a LAM head's already low lids reads as hooded. `lam/fit_rest.py` searches a rest set for each head instead: the viewer draws the head with each candidate, and MediaPipe scores it against the portrait (eyes, lips and brows placed against the outline; how much iris the lids show; how full the lips are; MediaPipe's own ARKit scores). About 3½ minutes per head on the CPU, against a running server:
