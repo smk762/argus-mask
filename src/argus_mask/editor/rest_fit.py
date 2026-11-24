@@ -14,10 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import shutil
-import socket
-import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -25,13 +22,12 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import uvicorn
 
-from argus_mask.config import RestSettings, Settings
+from argus_mask.config import RestSettings
 from argus_mask.editor.guided import Artifact, Check, GuidedError, GuidedStore, NotReady, StepResult, Tool
+from argus_mask.editor.scripts import HeadServer, browsers_env, run_script
 from argus_mask.faces import MANIFEST_NAME, build_manifest, sha256_file
 from argus_mask.models import Provenance, is_face_id
-from argus_mask.server.app import create_app
 
 log = structlog.get_logger(__name__)
 
@@ -39,6 +35,10 @@ HEAD = "head"
 PORTRAIT = "portrait"  # the source step's portrait
 FACE = "rest-fit"  # the short-lived face id the viewer loads; never a name from a request
 JOBS_KEEP = 20
+
+
+def _finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value)
 
 
 class RestError(GuidedError):
@@ -217,9 +217,11 @@ class RestFits:
             )
             (face_dir / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
             job.stage = "serving the head"
-            url, server = await asyncio.to_thread(self._serve, serve)
+            server = HeadServer(serve)
+            if not await asyncio.to_thread(server.start):
+                raise RestError("the rest-fit server did not start")
             job.stage = "fitting the rest set"
-            ran = await self._script(job, url, portrait_path, out)
+            ran = await self._script(job, server.url, portrait_path, out)
             return await asyncio.to_thread(
                 self._collect,
                 job,
@@ -232,26 +234,8 @@ class RestFits:
             )
         finally:
             if server is not None:
-                server.should_exit = True
+                await asyncio.to_thread(server.stop)
             await asyncio.to_thread(shutil.rmtree, work, True)
-
-    def _serve(self, assets: Path) -> tuple[str, uvicorn.Server]:
-        """A mask server on a free port that serves only the staged head."""
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-        sock.close()
-        app = create_app(Settings(assets_dir=assets, driver="energy"))
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 15
-        while not server.started and time.monotonic() < deadline:
-            time.sleep(0.02)
-        if not server.started:
-            raise RestError("the rest-fit server did not start")
-        return f"http://127.0.0.1:{port}", server
 
     async def _script(self, job: RestJob, url: str, portrait: Path, out: Path) -> dict[str, Any]:
         s = self.settings
@@ -283,34 +267,14 @@ class RestFits:
             "--generations",
             str(s.generations),
         ]
-        env = {
-            **os.environ,
-            "PLAYWRIGHT_BROWSERS_PATH": os.environ.get(
-                "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".cache" / "ms-playwright")
-            ),
-        }
         began = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.DEVNULL,
-            env=env,
-            cwd=str(s.script.parent),
-        )
         try:
-            said, _ = await asyncio.wait_for(proc.communicate(), s.timeout_s)
+            code, said = await run_script(argv, cwd=s.script.parent, timeout_s=s.timeout_s, env=browsers_env())
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
             raise RestError(f"rest fit took more than {s.timeout_s:g} s") from None
-        except asyncio.CancelledError:
-            proc.kill()
-            await proc.wait()
-            raise
         return {
-            "code": proc.returncode,
-            "said": said.decode(errors="replace"),
+            "code": code,
+            "said": said,
             "seconds": round(time.monotonic() - began, 1),
             "out": out if out.is_file() else None,
         }
@@ -365,8 +329,13 @@ class RestFits:
                 finished=self.store.clock(),
             )
         weights = raw.get("weights")
+        # json reads NaN and Infinity as numbers, and NaN is under no floor.
+        unsound = [str(k) for k, v in weights.items() if not _finite(v)] if isinstance(weights, dict) else []
         if not isinstance(weights, dict) or not weights:
             checks.append(Check(name="rest", verdict="failed", reason="rest fit wrote no weights"))
+        elif unsound:
+            why = f"rest fit wrote weights that are not finite numbers: {', '.join(sorted(unsound))}"
+            checks.append(Check(name="rest", verdict="failed", reason=why[:2000]))
         else:
             smile = min(float(weights.get("mouthSmileLeft", 0)), float(weights.get("mouthSmileRight", 0)))
             if smile + 1e-9 < 0.15:
@@ -380,8 +349,8 @@ class RestFits:
                 )
             else:
                 checks.append(Check(name="smile", verdict="passed", measure={"mouthSmile": smile}))
-            data["weights"] = {str(k): float(v) for k, v in weights.items() if isinstance(v, (int, float))}
-            data["life"] = float(raw["life"]) if isinstance(raw.get("life"), (int, float)) else 1.0
+            data["weights"] = {str(k): float(v) for k, v in weights.items()}
+            data["life"] = float(raw["life"]) if _finite(raw.get("life")) else 1.0
             data["name"] = str(raw.get("name") or f"fit-{job.candidate}")
             report = raw.get("score") or {}
             for label in ("warm", "fit"):

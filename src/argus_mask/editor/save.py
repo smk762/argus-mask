@@ -115,6 +115,30 @@ def _rest(rest: StepResult | None, face_id: str) -> RestSet | None:
     return None
 
 
+def _install(assets_dir: Path, face_id: str, staged: Path) -> None:
+    """Put *staged* in the face's place. If it cannot go there, or is not served once there, the face that was there
+    comes back."""
+    target = assets_dir / face_id
+    trash: Path | None = None
+    if target.exists():
+        trash = assets_dir / ".trash" / f"{face_id}-{uuid.uuid4().hex}"
+        trash.parent.mkdir(parents=True, exist_ok=True)
+        target.rename(trash)
+    try:
+        os.replace(staged, target)
+        try:
+            FaceStore(assets_dir).load(face_id)
+        except BaseException:
+            os.replace(target, staged)  # the caller's to remove
+            raise
+    except BaseException as exc:
+        if trash is not None:
+            trash.rename(target)
+        if isinstance(exc, FaceError):
+            raise SaveError(str(exc)) from exc
+        raise
+
+
 def save(
     store: GuidedStore,
     *,
@@ -164,8 +188,8 @@ def save(
     scene_name = scene_data.get("scene") if isinstance(scene_data.get("scene"), str) else None
     shot = scene_data.get("shot") if isinstance(scene_data.get("shot"), str) else None
 
+    assets_dir.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f".save-{face_id}-", dir=assets_dir))
-    installed = False
     try:
         model_name = f"{face_id}.zip"
         shutil.copy2(head_path, work / model_name)
@@ -191,21 +215,12 @@ def save(
         (work / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
         shutil.copy2(store.directory(build_id) / RECORD_NAME, work / BUILD_MARK)
 
-        assets_dir.mkdir(parents=True, exist_ok=True)
         staged = assets_dir / f".install-{face_id}-{uuid.uuid4().hex}"
         work.rename(staged)
         work = staged
-        if target.exists():
-            trash = assets_dir / ".trash" / f"{face_id}-{uuid.uuid4().hex}"
-            trash.parent.mkdir(parents=True, exist_ok=True)
-            target.rename(trash)
-        os.replace(staged, target)
-        installed = True
-        work = Path()
-        FaceStore(assets_dir).load(face_id)
-    except Exception:
-        if not installed and work.exists():
-            shutil.rmtree(work, ignore_errors=True)
+        _install(assets_dir, face_id, staged)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
         raise
 
     if rest is not None:

@@ -160,3 +160,41 @@ def test_editor_age_route(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert job["state"] == "done"
         assert float(job["scores"]["delta_years"]) == 0.5
+
+
+@pytest.mark.asyncio
+async def test_asking_for_an_age_reads_no_picture(tmp_path: Path) -> None:
+    """The request runs on the event loop: a picture that changed is found by the job, off it."""
+    store = GuidedStore(tmp_path / "assets")
+    _seed(store)
+    store.path("guide", "candidates/c1/likeness/render.png").write_bytes(_png((1, 2, 3)))
+    jobs = AgeJobs(store, AgeSettings(), read_age=read_age_synthetic(30.0, 30.0))
+    job = jobs.start("guide", "c1")
+    await asyncio.wait({job.task}, timeout=10)
+    assert job.state == "failed" and "changed" in job.error
+    assert store.load("guide").get("age", "c1") is None
+
+
+@pytest.mark.asyncio
+async def test_the_age_is_of_the_bytes_that_were_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = GuidedStore(tmp_path / "assets")
+    _seed(store)
+    seen: dict[str, bytes] = {}
+
+    def read(label: str, data: bytes) -> AgeReading:
+        seen[label] = data
+        return AgeReading(years=30.0, source="mivolo", faces=1)
+
+    jobs = AgeJobs(store, AgeSettings(), read_age=read)
+    checked = jobs._pictures
+
+    def then_rewritten(*args: object) -> object:
+        found = checked(*args)
+        store.path("guide", "candidates/c1/likeness/render.png").write_bytes(_png((1, 2, 3)))
+        return found
+
+    job = jobs.start("guide", "c1")
+    monkeypatch.setattr(jobs, "_pictures", then_rewritten)
+    await asyncio.wait({job.task}, timeout=10)
+    assert job.state == "done"
+    assert seen == {"portrait": _png((210, 180, 160)), "head": _png((190, 170, 150))}

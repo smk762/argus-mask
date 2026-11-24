@@ -1,7 +1,7 @@
 """The hosted demo's /docs/ (#123): argus-mask's README and docs/*.md, rendered to static pages at build time.
 
-The docs are read from this checkout, so they are the docs of the commit being deployed (the deploy builds
-``dev``'s HEAD). ``build(out, page_frame)`` writes ``docs/index.html`` (the README), ``docs/<name>/index.html`` per
+The docs are read from this checkout's HEAD, not its working tree, so they are the docs of the commit being deployed
+(the deploy builds ``dev``'s HEAD) and an uncommitted edit does not show. ``build(out, page_frame)`` writes ``docs/index.html`` (the README), ``docs/<name>/index.html`` per
 doc, the images they show, and ``docs/sources.json``: the commit, the version at it, and a sha256 per file.
 
 - **Opsec gate, fail closed.** Every imported doc and every published clip's ``clip.json`` is scanned for private
@@ -123,6 +123,18 @@ def git(*args: str) -> str:
         text=True,
         check=True,
     ).stdout.strip()
+
+
+def committed(commit: str, path: str) -> bytes:
+    """*path* as *commit* holds it: what the sync record names, whatever the working tree says now."""
+    try:
+        return subprocess.run(  # noqa: S603 - fixed arguments
+            ["git", "-C", str(ROOT), "cat-file", "blob", f"{commit}:{path}"],  # noqa: S607
+            capture_output=True,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError:
+        raise Refused(f"{path} is not in {commit[:7]}: commit it, the docs are published from the commit") from None
 
 
 def version_from_describe(describe: str) -> str:
@@ -308,7 +320,7 @@ def build(out: Path, frame, clips: list[dict], env: dict[str, str] | None = None
     described = git("describe", "--tags", "--long", "--match", "v[0-9]*", "HEAD")
     version = version_from_describe(described)
     release = described.rsplit("-", 2)[1] == "0"
-    texts = {path: (ROOT / path).read_bytes() for path in DOCS}
+    texts = {path: committed(commit, path) for path in DOCS}
     for path, data in texts.items():
         gate(path, data.decode("utf-8"), deny)
     for clip in clips:
@@ -326,6 +338,7 @@ def build(out: Path, frame, clips: list[dict], env: dict[str, str] | None = None
         f' · <a href="https://github.com/{REPO}/tree/{commit}" target="_blank" rel="noopener noreferrer">GitHub'
         '<span class="sr-only"> (opens in new tab)</span></a></p>'
     )
+    pictures = {path: committed(commit, path) for doc in docs for path in doc.images.values()}
     images: dict[str, str] = {}
     for doc in docs:
         nav = "".join(
@@ -356,7 +369,7 @@ def build(out: Path, frame, clips: list[dict], env: dict[str, str] | None = None
     for site, path in images.items():
         dest = out / site.strip("/")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes((ROOT / path).read_bytes())
+        dest.write_bytes(pictures[path])
 
     record = {
         "repo": REPO,
@@ -365,7 +378,7 @@ def build(out: Path, frame, clips: list[dict], env: dict[str, str] | None = None
         "version": version,
         "pypi": PYPI,
         "docs": {path: sha256_hex(data) for path, data in texts.items()},
-        "images": {path: sha256_hex((ROOT / path).read_bytes()) for path in sorted(images.values())},
+        "images": {path: sha256_hex(data) for path, data in sorted(pictures.items())},
         "clips": {
             clip["id"]: {"made_with": clip["made_with"]["argus_mask"], "commit": made[clip["id"]]} for clip in clips
         },

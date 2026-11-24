@@ -586,3 +586,23 @@ def test_the_editor_says_why_there_is_no_record(editor) -> None:
     (store.root / "broken" / RECORD_NAME).write_text("{")
     reply = client.get("/guided/broken")
     assert reply.status_code == 422 and RECORD_NAME in reply.json()["detail"]
+
+
+def test_made_up_build_ids_leave_nothing_behind(tmp_path: Path) -> None:
+    store = GuidedStore(tmp_path)
+    before = len(store._locks)
+    for build_id in [f"nobody-{i}" for i in range(50)] + ["../x", "Not An Id"]:
+        with pytest.raises(NoSuchBuild):
+            store.change(build_id, lambda record, now: None)
+    assert len(store._locks) == before
+
+
+def test_files_land_with_the_result_that_made_them(tmp_path: Path) -> None:
+    store = GuidedStore(tmp_path)
+    store.create("guide")
+    store.put("guide", StepResult(step="source", candidate="c1"), {"c1/a.png": b"one"})
+    assert store.path("guide", "c1/a.png").read_bytes() == b"one"
+    with pytest.raises(NotReady):
+        store.put("guide", StepResult(step="build", candidate="c1"), {"c1/a.png": b"two"})
+    assert store.path("guide", "c1/a.png").read_bytes() == b"one"
+    assert not list(store.directory("guide").rglob("*.part"))

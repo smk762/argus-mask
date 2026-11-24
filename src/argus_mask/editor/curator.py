@@ -7,10 +7,17 @@ Upload → scan → ``POST /scan/{id}/select`` with ``face_source``. Each image 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
+
+import structlog
+
+log = structlog.get_logger(__name__)
+
+DELETE_BATCH = 200  # curator's own cap on one delete
 
 
 class CuratorError(Exception):
@@ -50,10 +57,7 @@ class CuratorClient:
         if not image:
             raise CuratorError("no image for age")
         payload = self._call("POST", "/faces", image, content_type="image/png")
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise CuratorError("curator /faces returned non-JSON") from exc
+        data = _object(payload, "/faces")
         faces = data.get("faces")
         if not isinstance(faces, list) or not faces:
             raise CuratorError("curator found no face to age")
@@ -86,10 +90,23 @@ class CuratorClient:
             return []
         if not self.url.startswith(("http://", "https://")):
             raise CuratorError(f"ARGUS_MASK_CURATOR_URL {self.url!r}: must be an http(s) URL")
-        folder = folder or f"mask-guided/{uuid.uuid4().hex[:12]}"
+        # Names and the folder go into the upload's headers and curator's paths.
+        for name in images:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+                raise CuratorError(f"{name!r} is not a name to upload an image under")
+        if folder is not None and not re.fullmatch(r"[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*", folder):
+            raise CuratorError(f"{folder!r} is not a folder to upload to")
+        # A folder of this run's own: curator never overwrites, so a name uploaded before would be scored as it was.
+        folder = f"{folder or 'mask-guided'}/{uuid.uuid4().hex[:12]}"
         self._upload(folder, images)
-        scan_id = self._scan(folder)
-        rows = self._select(scan_id)
+        scan_id: str | None = None
+        paths = [f"{name}.png" for name in images]
+        try:
+            scan_id = self._scan(folder)
+            rows = self._select(scan_id)
+            paths = [r["rel_path"] for r in rows if Path_stem(r["rel_path"]) in images] or paths
+        finally:
+            self._remove(scan_id, paths, folder)
         by_stem = {Path_stem(r["rel_path"]): r for r in rows}
         out: list[FaceSourceRow] = []
         for name in images:
@@ -135,10 +152,7 @@ class CuratorClient:
 
     def _scan(self, folder: str) -> str:
         payload = self._call("POST", "/scan/folder", json.dumps({"path": folder}).encode())
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise CuratorError("curator scan returned non-JSON") from exc
+        data = _object(payload, "scan")
         scan_id = data.get("scan_id") or data.get("id")
         if not isinstance(scan_id, str) or not scan_id:
             raise CuratorError("curator scan returned no scan_id")
@@ -147,14 +161,28 @@ class CuratorClient:
     def _select(self, scan_id: str) -> list[dict]:
         body = json.dumps({"face_source": {}, "rank": "identity", "min_score": 0.0}).encode()
         payload = self._call("POST", f"/scan/{parse.quote(scan_id)}/select", body)
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise CuratorError("curator select returned non-JSON") from exc
+        data = _object(payload, "select")
         rows = data.get("rows")
         if not isinstance(rows, list):
             raise CuratorError("curator select returned no rows")
-        return [r for r in rows if isinstance(r, dict)]
+        return [r for r in rows if isinstance(r, dict) and isinstance(r.get("rel_path"), str)]
+
+    def _remove(self, scan_id: str | None, paths: list[str], folder: str) -> None:
+        """Take the uploaded portraits off curator again: the images, then the scan's record. Curator deletes images
+        only where it is allowed to (``CURATOR_ALLOW_DELETE``); what stays is logged, and never fails the check."""
+        if scan_id is None:
+            log.warning(
+                "curator_images_left", folder=folder, reason="the scan did not run, and curator deletes by scan"
+            )
+            return
+        scan = f"/scan/{parse.quote(scan_id, safe='')}"
+        try:
+            for at in range(0, len(paths), DELETE_BATCH):
+                body = json.dumps({"rel_paths": paths[at : at + DELETE_BATCH]}).encode()
+                self._call("POST", f"{scan}/delete", body)
+            self._call("DELETE", scan, b"")
+        except CuratorError as exc:
+            log.warning("curator_images_left", folder=folder, reason=str(exc))
 
     def _call(self, method: str, path: str, body: bytes, *, content_type: str = "application/json") -> bytes:
         req = request.Request(
@@ -171,6 +199,16 @@ class CuratorClient:
             raise CuratorError(f"curator {method} {path}: {exc.code} {detail}") from exc
         except OSError as exc:
             raise CuratorError(f"curator is unreachable at {self.url}: {exc}") from exc
+
+
+def _object(payload: bytes, what: str) -> dict:
+    try:
+        data = json.loads(payload)
+    except ValueError as exc:
+        raise CuratorError(f"curator {what} returned non-JSON") from exc
+    if not isinstance(data, dict):
+        raise CuratorError(f"curator {what} returned {type(data).__name__}, not an object")
+    return data
 
 
 def Path_stem(rel_path: str) -> str:

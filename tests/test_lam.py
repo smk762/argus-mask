@@ -708,3 +708,77 @@ def test_refine_pull_and_zero_steps_leave_attrs_alone(lam) -> None:
     assert rg.pull_loss(same, start, ("f_dc_0", "f_dc_1", "opacity")) == 0.0
     moved = {k: v + 1.0 for k, v in start.items()}
     assert rg.pull_loss(moved, start, ("f_dc_0",)) > 0.0
+
+
+def test_a_render_with_no_face_ranks_last_and_is_null_in_the_report(lam) -> None:
+    """MediaPipe finds no face: NaN points. The search never picks that shape, and fit.json stays JSON."""
+    import json  # noqa: PLC0415
+
+    import fit_shape  # noqa: PLC0415
+
+    reference = np.random.default_rng(0).random((478, 3))
+    lost = fit_shape.misfit(reference, np.full((478, 3), np.nan))
+    assert lost == {"total": float("inf")}
+    start = np.zeros(4)
+    best, value, _ = fit_shape.search(
+        start, lambda shapes: [1.0 if not s.any() else float("inf") for s in shapes], dims=2, generations=2, log=str
+    )
+    assert value == 1.0 and not best.any()
+    report = {"start": lost, "best": {"total": 0.5}, "history": [{"best": float("nan"), "generation": 1}]}
+    assert json.loads(json.dumps(fit_shape.plain(report), allow_nan=False)) == {
+        "start": {"total": None},
+        "best": {"total": 0.5},
+        "history": [{"best": None, "generation": 1}],
+    }
+
+
+def _head_zip(path: Path, member: str = "head/offset.ply") -> Path:
+    import zipfile  # noqa: PLC0415
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(member, b"old")
+        archive.writestr("head/skin.glb", b"skin")
+    return path
+
+
+def test_refine_repack_never_writes_over_the_archive_it_reads(lam, tmp_path: Path) -> None:
+    import refine_gaussians as rg  # noqa: PLC0415
+
+    src = _head_zip(tmp_path / "face.zip")
+    before = src.read_bytes()
+    with pytest.raises(ValueError, match="being refined"):
+        rg.repack_zip(src, "head/offset.ply", b"new", tmp_path / "x" / ".." / "face.zip")
+    assert src.read_bytes() == before
+    with pytest.raises(SystemExit):
+        rg.main(["--zip", str(src), "--portrait", "p.png", "--out", str(tmp_path), "--repack"])
+    assert src.read_bytes() == before
+
+
+def test_refine_repack_refuses_an_archive_without_the_ply(lam, tmp_path: Path) -> None:
+    import zipfile  # noqa: PLC0415
+
+    import refine_gaussians as rg  # noqa: PLC0415
+
+    src, dest = _head_zip(tmp_path / "face.zip"), tmp_path / "out" / "face.zip"
+    with pytest.raises(ValueError, match="no offset.ply"):
+        rg.repack_zip(src, "offset.ply", b"new", dest)
+    assert not list(dest.parent.iterdir())
+    rg.repack_zip(src, "head/offset.ply", b"new", dest)
+    with zipfile.ZipFile(dest) as archive:
+        assert archive.read("head/offset.ply") == b"new" and archive.read("head/skin.glb") == b"skin"
+
+
+def test_refine_records_the_steps_it_runs(lam) -> None:
+    import refine_gaussians as rg  # noqa: PLC0415
+
+    assert [rg.stage_steps(30, scale) for scale in (0.001, 0.5, 1.0)] == [1, 15, 30]
+    text = (LAM / "refine_gaussians.py").read_text(encoding="utf-8")
+    assert text.count("stage_steps(") == 3  # the one rule: defined, run and recorded
+
+
+def test_refine_keeps_the_parameters_a_loss_is_of(lam) -> None:
+    """The snapshot is taken before the optimiser moves them (the refine itself needs a GPU)."""
+    text = (LAM / "refine_gaussians.py").read_text(encoding="utf-8")
+    loop = text[text.index("for step in range(steps)") :]
+    assert loop.index("best_snap = ") < loop.index("optim.step()")
+    assert loop.count("best_snap = ") == 1

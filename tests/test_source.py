@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -16,13 +17,15 @@ from starlette.testclient import TestClient
 
 from argus_mask.backgrounds import Darkroom
 from argus_mask.config import EditorSettings, Settings, SourceSettings
-from argus_mask.consent import ConsentStore
+from argus_mask.consent import ConsentStore, Revocation
 from argus_mask.editor.app import create_editor_app
 from argus_mask.editor.guided import GuidedStore
 from argus_mask.editor.source import SourceError, SourceJobs
 from argus_mask.portraits import CHECKPOINT, prompt_for, subject_line
 from tests.helpers import live_server, write_consent
 from tests.test_backgrounds import png
+
+TODAY = datetime.now(UTC).date()
 
 
 @contextmanager
@@ -406,16 +409,123 @@ def test_source_never_imports_a_gpu_lease() -> None:
     from pathlib import Path
 
     tree = ast.parse((Path(__file__).resolve().parents[1] / "src/argus_mask/editor/source.py").read_text())
-    imported = {
-        f"{node.module}.{name.name}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-        for name in node.names
-    }
-    assert not any("gpu" in m or m.endswith(".lease") or "LAM_HEAD" in m for m in imported), imported
+    assert not _leases(tree), _leases(tree)
+    # Every way of importing one is seen.
+    for line in ("import argus_mask.gpu", "import argus_mask.lam.lease as x", "from . import gpu", "from .. import lease",
+                 "from argus_mask.gpu import lease", "from argus_cortex.gpu import GpuCoordinator"):  # fmt: skip
+        assert _leases(ast.parse(line)), line
+
+
+def _leases(tree) -> set[str]:  # noqa: ANN001
+    """The GPU leases a module imports, by any form of import."""
+    import ast
+
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {name.name for name in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            imported |= {f"{node.module or ''}.{name.name}" for name in node.names}
+    return {m for m in imported if "gpu" in m or m.split(".")[-1] == "lease" or "LAM_HEAD" in m}
 
 
 async def asyncio_sleep() -> None:
     import asyncio
 
     await asyncio.sleep(0.02)
+
+
+# ---- restyle: never on another portrait, over its own input, or without the consent it needs ------------
+
+
+async def _restyled(jobs: SourceJobs):  # noqa: ANN202
+    import asyncio
+
+    job = jobs.start_restyle("guide", "c1", style="character", seed=9)
+    done, _ = await asyncio.wait({job.task}, timeout=30)
+    assert done
+    await asyncio.sleep(0)
+    return job
+
+
+def _portrait_of(result) -> bytes:  # noqa: ANN001
+    return next(a for a in result.outputs if a.name == "portrait")
+
+
+@pytest.mark.asyncio
+async def test_a_restyle_keeps_the_portrait_it_was_made_from(tmp_path: Path) -> None:
+    mine, theirs = png(48, 60), png(40, 50)
+    with fake_portrait_darkroom(image=theirs) as (url, _c, _s):
+        jobs = _jobs(tmp_path / "assets", url)
+        jobs.upload("guide", "c1", mine, kind="personal")
+        job = await _restyled(jobs)
+    assert job.state == "done"
+    source = jobs.store.load("guide").get("source", "c1")
+    (before,) = source.inputs
+    assert jobs.store.path("guide", before.file).read_bytes() == mine
+    assert hashlib.sha256(mine).hexdigest() == before.sha256
+    assert jobs.store.path("guide", _portrait_of(source).file).read_bytes() == theirs
+
+
+@pytest.mark.asyncio
+async def test_a_queued_restyle_never_takes_another_portrait(tmp_path: Path) -> None:
+    import asyncio
+
+    with fake_portrait_darkroom(image=png(48, 60)) as (url, calls, _s):
+        jobs = _jobs(tmp_path / "assets", url)
+        jobs.upload("guide", "c1", png(32, 40), kind="personal", source="first")
+        async with jobs._one:  # a generate job is running
+            job = jobs.start_restyle("guide", "c1", style="character", seed=9)
+            await asyncio.sleep(0.05)
+            jobs.upload("guide", "c1", png(24, 30), kind="personal", source="second")
+        await asyncio.wait({job.task}, timeout=30)
+    assert job.state == "failed" and "changed" in job.error
+    assert "generate" not in calls
+    assert jobs.store.load("guide").get("source", "c1").data["source"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_a_restyle_that_fails_leaves_the_source_as_it_was(tmp_path: Path) -> None:
+    with fake_portrait_darkroom(outcome="blocked", image=png(48, 60)) as (url, _c, _s):
+        jobs = _jobs(tmp_path / "assets", url)
+        before = jobs.upload("guide", "c1", png(32, 40), kind="personal")
+        job = await _restyled(jobs)
+        assert job.state == "failed" and "restyle failed" in job.error
+        assert jobs.store.load("guide").get("source", "c1") == before
+    jobs.darkroom = Darkroom("http://127.0.0.1:9", sleep=lambda _s: None)
+    job = await _restyled(jobs)
+    assert job.state == "failed"
+    assert jobs.store.load("guide").get("source", "c1") == before
+
+
+@pytest.mark.asyncio
+async def test_a_restyle_needs_the_consent_to_cover_it_now(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    with fake_portrait_darkroom(image=png(48, 60)) as (url, calls, _s):
+        jobs = _jobs(assets, url)
+        write_consent(assets)
+        jobs.upload("guide", "c1", png(32, 40), kind="consented", subject="A. Person", release_sha256="ab" * 32)
+        assert (await _restyled(jobs)).state == "done"
+        asked = calls.count("generate")
+        gone = Revocation(requested_on=TODAY, effective_on=TODAY, by="A. Person")
+        jobs.consents.revoke("ab" * 32, gone)
+        job = await _restyled(jobs)
+    assert job.state == "failed" and "may not be used" in job.error
+    assert calls.count("generate") == asked, "the person's picture went to darkroom"
+
+
+def test_a_checkpoint_of_unknown_licence_is_a_source_error(tmp_path: Path) -> None:
+    picture = png(32, 40)
+    record = {
+        "id": "odd",
+        "outcome": "passed",
+        "guard": {"enforcing_policy": "default"},
+        "image": {"sha256": hashlib.sha256(picture).hexdigest()},
+        "request": {"loras": [], "checkpoint": {"name": "nobody-knows.safetensors"}, "final_prompt": "p", "seed": 2},
+    }
+    with fake_portrait_darkroom(image=picture, records=[record]) as (url, _c, _s):
+        jobs = _jobs(tmp_path / "assets", url)
+        with pytest.raises(SourceError, match="licence is not known"):
+            jobs.pick("guide", "c1", "odd")
+        with pytest.raises(SourceError, match="licence is not known"):
+            jobs.upload("guide", "c1", picture, kind="synthetic", record_id="odd")

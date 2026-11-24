@@ -16,8 +16,11 @@ DINOv2 live there, and nothing of ``lam/`` is imported here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import json
 import math
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -36,6 +39,7 @@ log = structlog.get_logger(__name__)
 PORTRAIT = "portrait-crop"  # the build step's name for the portrait as LAM was given it
 RENDER = "render"  # the head at the portrait's own camera
 JOBS_KEEP = 20
+KILL_S = 30.0
 PNG = b"\x89PNG\r\n\x1a\n"
 
 
@@ -95,7 +99,7 @@ class LikenessJobs:
                 "lam/likeness.py was not found: lam/ is not part of the package "
                 "(set ARGUS_MASK_LIKENESS_SCRIPT to a checkout's)"
             )
-        if shutil_which(s.docker) is None:
+        if shutil.which(s.docker) is None:
             return f"docker not found: {s.docker!r}"
         return None
 
@@ -114,7 +118,7 @@ class LikenessJobs:
             raise GuidedError(f"{candidate!r} is not a candidate")
         if blocked := record.blockers("likeness", candidate):
             raise NotReady("likeness cannot run: " + "; ".join(blocked))
-        self._pictures(record.get("build", candidate), build_id, candidate)
+        self._kept(record.get("build", candidate), build_id, candidate)  # hashed when the job runs, off the event loop
         if any(j.live and (j.build_id, j.candidate) == (build_id, candidate) for j in self.jobs.values()):
             raise Busy(f"{candidate}'s likeness is already being scored")
         if (why := self.check()) is not None:
@@ -167,8 +171,8 @@ class LikenessJobs:
             job.ended = time.monotonic()
         log.info("likeness", build=job.build_id, candidate=job.candidate, state=job.state)
 
-    def _pictures(self, build: StepResult | None, build_id: str, candidate: str) -> dict[str, tuple[Artifact, Path]]:
-        """The two pictures the build kept, still where it left them."""
+    def _kept(self, build: StepResult | None, build_id: str, candidate: str) -> dict[str, tuple[Artifact, Path]]:
+        """The two pictures the build kept, still where it left them. Not read: cheap enough for a request."""
         if build is None:
             raise GuidedError(f"{candidate} has no build: likeness scores a head against its portrait")
         found = {}
@@ -179,11 +183,19 @@ class LikenessJobs:
             path = self.store.path(build_id, art.file)
             if not path.is_file():
                 raise GuidedError(f"{candidate}'s {name} is not where its build kept it")
-            if sha256_file(path) != art.sha256:
-                raise GuidedError(f"{candidate}'s {name} changed since its build: run the build again")
-            if path.read_bytes()[:8] != PNG:
-                raise GuidedError(f"{candidate}'s {name} is not a PNG")
             found[name] = (art, path)
+        return found
+
+    def _pictures(self, build: StepResult | None, build_id: str, candidate: str) -> dict[str, tuple[Artifact, bytes]]:
+        """The two pictures' bytes, unchanged since the build: read once, so what is checked is what is scored."""
+        found = {}
+        for name, (art, path) in self._kept(build, build_id, candidate).items():
+            data = path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != art.sha256:
+                raise GuidedError(f"{candidate}'s {name} changed since its build: run the build again")
+            if data[:8] != PNG:
+                raise GuidedError(f"{candidate}'s {name} is not a PNG")
+            found[name] = (art, data)
         return found
 
     async def _score(self, job: LikenessJob) -> StepResult:
@@ -199,17 +211,15 @@ class LikenessJobs:
             portrait = work / "portrait.png"
             render = work / "render.png"
             out = work / "likeness.json"
-            portrait.write_bytes(pictures[PORTRAIT][1].read_bytes())
-            render.write_bytes(pictures[RENDER][1].read_bytes())
+            portrait.write_bytes(pictures[PORTRAIT][1])
+            render.write_bytes(pictures[RENDER][1])
             tools = await asyncio.to_thread(self._tools)
             ran = await self._script(job, work, out)
             return await asyncio.to_thread(
                 self._collect, job, pictures, tools, ran, out, started, time.monotonic() - job.asked
             )
         finally:
-            for path in work.glob("*"):
-                path.unlink(missing_ok=True)
-            work.rmdir()
+            await asyncio.to_thread(shutil.rmtree, work, True)  # never in place of the run's own error
 
     def _tools(self) -> list[Tool]:
         s = self.settings
@@ -234,10 +244,13 @@ class LikenessJobs:
         s = self.settings
         assert s.script is not None  # noqa: S101
         lam = s.script.parent
+        container = f"argus-mask-likeness-{job.id}"
         argv = [
             s.docker,
             "run",
             "--rm",
+            "--name",
+            container,
             "--user",
             f"{_uid()}:{_gid()}",
             "-e",
@@ -273,13 +286,10 @@ class LikenessJobs:
         )
         try:
             said, _ = await asyncio.wait_for(proc.communicate(), s.timeout_s)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise LikenessError(f"likeness took more than {s.timeout_s:g} s") from None
-        except asyncio.CancelledError:
-            proc.kill()
-            await proc.wait()
+        except BaseException as exc:
+            await self._halt(container, proc)
+            if isinstance(exc, TimeoutError):
+                raise LikenessError(f"likeness took more than {s.timeout_s:g} s") from None
             raise
         text = said.decode(errors="replace")
         return {
@@ -289,10 +299,35 @@ class LikenessJobs:
             "out": out if out.is_file() else None,
         }
 
+    async def _halt(self, container: str, proc: asyncio.subprocess.Process) -> None:
+        """Stop the container, then its client: killing the client alone leaves the container running."""
+        await self._kill(container)
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        await self._kill(container)  # the client may have started it after the first kill
+
+    async def _kill(self, container: str) -> None:
+        with contextlib.suppress(OSError, TimeoutError):
+            proc = await asyncio.create_subprocess_exec(
+                self.settings.docker,
+                "kill",
+                container,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), KILL_S)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
+
     def _collect(
         self,
         job: LikenessJob,
-        pictures: dict[str, tuple[Artifact, Path]],
+        pictures: dict[str, tuple[Artifact, bytes]],
         tools: list[Tool],
         ran: dict[str, Any],
         out: Path,
@@ -374,12 +409,6 @@ class LikenessJobs:
             started=started,
             finished=self.store.clock(),
         )
-
-
-def shutil_which(name: str) -> str | None:
-    import shutil  # noqa: PLC0415
-
-    return shutil.which(name)
 
 
 def _uid() -> int:

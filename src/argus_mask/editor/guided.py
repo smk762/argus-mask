@@ -441,6 +441,9 @@ def _why(exc: Exception) -> str:
     return f"{RECORD_NAME}: {exc}"
 
 
+LOCKS = 64
+
+
 class GuidedStore:
     """The guided builds under one assets root: each a directory holding its record and its work files.
 
@@ -452,12 +455,11 @@ class GuidedStore:
     def __init__(self, assets_dir: str | Path, *, clock: Callable[[], datetime] = utc_now) -> None:
         self.root = Path(assets_dir) / GUIDED_DIR
         self.clock = clock
-        self._guard = threading.Lock()
-        self._locks: dict[str, threading.Lock] = {}
+        # A fixed few, shared by id: a lock kept per id asked for would grow with every made-up one.
+        self._locks = tuple(threading.Lock() for _ in range(LOCKS))
 
     def _lock(self, build_id: str) -> threading.Lock:
-        with self._guard:
-            return self._locks.setdefault(build_id, threading.Lock())
+        return self._locks[hash(build_id) % LOCKS]
 
     def directory(self, build_id: str) -> Path:
         if not is_face_id(build_id):
@@ -525,8 +527,38 @@ class GuidedStore:
             self._write(self.directory(build_id), record)
             return out
 
-    def put(self, build_id: str, result: StepResult) -> StepResult:
-        return self.change(build_id, lambda record, now: record.put(result, at=now))
+    def put(self, build_id: str, result: StepResult, files: dict[str, bytes] | None = None) -> StepResult:
+        """Keep a step's result, and with it the work *files* (by path) it made: none replaces what the build keeps
+        until the record has taken the result."""
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for file, data in (files or {}).items():
+                path = self.path(build_id, file)
+                if not self.directory(build_id).is_dir():
+                    raise NoSuchBuild(f"there is no build {build_id!r}")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.part")
+                staged.append((tmp, path))
+                tmp.write_bytes(data)
+
+            def how(record: GuidedBuild, now: datetime) -> StepResult:
+                kept = record.put(result, at=now)
+                for tmp, path in staged:
+                    os.replace(tmp, path)
+                return kept
+
+            return self.change(build_id, how)
+        finally:
+            for tmp, _ in staged:
+                tmp.unlink(missing_ok=True)
+
+    @staticmethod
+    def artifact(name: str, file: str, data: bytes) -> Artifact:
+        """What a work file will be once :meth:`put` keeps it."""
+        try:
+            return Artifact(name=name, sha256=hashlib.sha256(data).hexdigest(), file=file, bytes=len(data))
+        except ValidationError as exc:
+            raise GuidedError(f"{name!r} is not a name for what a step keeps") from exc
 
     def overrule(
         self, build_id: str, step: str, check: str, reason: str, *, candidate: str | None = None
@@ -552,10 +584,7 @@ class GuidedStore:
         path = self.path(build_id, file)
         if not self.directory(build_id).is_dir():
             raise NoSuchBuild(f"there is no build {build_id!r}")
-        try:
-            kept = Artifact(name=name, sha256=hashlib.sha256(data).hexdigest(), file=file, bytes=len(data))
-        except ValidationError as exc:
-            raise GuidedError(f"{name!r} is not a name for what a step keeps") from exc
+        kept = self.artifact(name, file, data)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.part")
         try:

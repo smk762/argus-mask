@@ -201,8 +201,8 @@ async def test_a_build_without_its_pictures_is_refused(rig: Rig) -> None:
 async def test_a_picture_that_changed_is_refused(rig: Rig) -> None:
     rig.built()
     rig.store.path("guide", "candidates/c1/likeness/render.png").write_bytes(RENDER_PNG + b"changed")
-    with pytest.raises(GuidedError, match="changed"):
-        rig.jobs().start("guide", "c1")
+    job, found = await score(rig)
+    assert job.state == "failed" and "changed" in job.error and found is None
 
 
 async def test_scoring_the_same_candidate_twice_at_once_is_busy(rig: Rig) -> None:
@@ -259,3 +259,51 @@ def test_the_settings_find_dinov2_in_the_cache(monkeypatch: pytest.MonkeyPatch, 
     (tmp_path / "likeness.py").write_text("#")
     monkeypatch.delenv("ARGUS_MASK_DINOV2", raising=False)
     assert LikenessSettings.from_env().dinov2 == cache
+
+
+async def test_asking_for_likeness_reads_no_picture(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The request runs on the event loop: the hashing is the job's, off it."""
+    rig.built()
+    read = Path.read_bytes
+    during: list[Path] = []
+    monkeypatch.setattr(Path, "read_bytes", lambda self: (during.append(self), read(self))[1])
+    opened = Path.open
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: (during.append(self), opened(self, *a, **k))[1])
+    job = rig.jobs().start("guide", "c1")
+    asked = [p for p in during if p.suffix == ".png"]
+    await finished(job)
+    assert asked == [] and job.state == "done"
+
+
+HANGING = r"""#!/usr/bin/env bash
+echo "$*" >> "$FAKE/docker"
+if [ "$1" = kill ]; then touch "$FAKE/killed-$2"; exit 0; fi
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "-v" ]; then case "$arg" in *:/work) touch "${arg%%:*}/left-behind"; mkdir "${arg%%:*}/dir";; esac; fi
+  prev=$arg
+done
+exec sleep 60
+"""
+
+
+@pytest.mark.parametrize("ended", ["stopped", "timed out"])
+async def test_a_likeness_that_is_stopped_or_too_long_kills_its_container(rig: Rig, ended: str) -> None:
+    Path(rig.settings.docker).write_text(HANGING)
+    rig.built()
+    jobs = rig.jobs(timeout_s=0.5 if ended == "timed out" else 30)
+    job = jobs.start("guide", "c1")
+    if ended == "stopped":
+        for _ in range(500):
+            if (rig.fake / "docker").exists():
+                break
+            await asyncio.sleep(0.02)
+        await jobs.stop(job.id)
+        assert job.state == "stopped"
+    else:
+        await finished(job)
+        assert "took more than" in job.error
+    name = f"argus-mask-likeness-{job.id}"
+    assert f"--name {name}" in (rig.fake / "docker").read_text()
+    assert (rig.fake / f"killed-{name}").exists()
+    assert not list((rig.store.root / ".work").glob("likeness-*"))

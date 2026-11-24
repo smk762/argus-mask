@@ -285,9 +285,10 @@ class LamBuilds:
         try:
             async with self._one:
                 job.state = "running"
-                result = await self._build(job)
-                # put() holds the record's rule again: a step this ran on that changed meanwhile refuses it.
-                kept = await asyncio.to_thread(self.store.put, job.build_id, result)
+                result, files = await self._build(job)
+                # put() holds the record's rule again: a step this ran on that changed meanwhile refuses it, and then
+                # the head the record already has keeps its files.
+                kept = await asyncio.to_thread(self.store.put, job.build_id, result, files)
             job.status = kept.standing
             if kept.standing == "passed":
                 job.state, job.stage = "done", "done"
@@ -317,7 +318,8 @@ class LamBuilds:
             raise GuidedError(f"{candidate}'s portrait changed since its source was recorded: run the source again")
         return found, path
 
-    async def _build(self, job: LamJob) -> StepResult:
+    async def _build(self, job: LamJob) -> tuple[StepResult, dict[str, bytes]]:
+        """The build step's result, and the files it made, by where the build keeps them: written by put()."""
         started = self.store.clock()
         record = await asyncio.to_thread(self.store.load, job.build_id)
         if blocked := record.blockers("build", job.candidate):
@@ -345,7 +347,8 @@ class LamBuilds:
         hit = await asyncio.to_thread(self._from_cache, key, job)
         if hit is not None:
             job.cached = True
-            return result(hit["checks"], {"cached": True}, outputs=hit["outputs"], scores=hit["scores"])
+            found = result(hit["checks"], {"cached": True}, outputs=hit["outputs"], scores=hit["scores"])
+            return found, hit["files"]
         memory, free = self.memory()  # again: it was asked for when the job was queued, and others ran since
         work = (self.store.root / ".work" / job.id).resolve()
         try:
@@ -355,7 +358,8 @@ class LamBuilds:
         finally:
             await self._clear(work)
         found["run"]["free_gb"] = round(free, 1)
-        return result(found.pop("checks"), found.pop("run"), **found)
+        files = found.pop("files")
+        return result(found.pop("checks"), found.pop("run"), **found), files
 
     def _ask(self, *argv: str) -> str | None:
         """What a short command printed, or None where it failed."""
@@ -499,15 +503,16 @@ class LamBuilds:
             log.warning("lam_scratch_left", path=str(work))
 
     def _collect(self, job: LamJob, ran: Ran, work: Path, memory: Check, key: str) -> dict:
-        """What the run made, as the build step's checks, outputs and scores; and how it went."""
+        """What the run made, as the build step's checks, outputs, scores and files; and how it went."""
         try:
             text = (work / f"{HEAD}.log").read_text(encoding="utf-8", errors="replace")
         except OSError:
             text = ""
         kept = f"candidates/{job.candidate}"
+        blobs: dict[str, bytes] = {}
         run: dict = {"seconds": round(ran.seconds, 1), "log_tail": _lines(text, LOG_TAIL)}
         if text:
-            self.store.keep(job.build_id, "log", f"{kept}/build.log", text.encode())
+            blobs[f"{kept}/build.log"] = text.encode()
             run["log"] = f"{kept}/build.log"
         if peak := re.search(r"^DONE .*peak VRAM GB ([0-9.]+)", text, re.M):
             run["peak_vram_gb"] = round(float(peak.group(1)), 1)
@@ -516,12 +521,12 @@ class LamBuilds:
         refusals = [line.strip()[:300] for line in text.splitlines() if REFUSALS.search(line)]
         if refusals and ran.why is None:
             checks.append(Check(name="pipeline", verdict="refused", reason="; ".join(refusals[:4])))
-            return {"checks": checks, "run": run}
+            return {"checks": checks, "run": run, "files": blobs}
         if ran.why is not None or ran.code != 0 or "EXPORTED" not in text or not packed.is_file():
             last = "; ".join(_lines(ran.said, 2) + _lines(text, 2)) or "it made no head, and said nothing"
             why = ran.why or f"the pipeline ended with status {ran.code}: {last}"
             checks.append(Check(name="lam", verdict="failed", reason=why[:2000]))
-            return {"checks": checks, "run": run}
+            return {"checks": checks, "run": run, "files": blobs}
         if CHECKED in text:
             checks.append(Check(name="pipeline", verdict="passed"))
         else:
@@ -532,7 +537,7 @@ class LamBuilds:
             report = inspect_splat(packed)
         except FaceError as exc:
             checks.append(Check(name="head", verdict="refused", reason=str(exc).replace(str(packed), f"{HEAD}.zip")))
-            return {"checks": checks, "run": run}
+            return {"checks": checks, "run": run, "files": blobs}
         measure = {"splats": float(report.splats or 0), "shapes": float(len(report.present))}
         checks.append(Check(name="head", verdict="passed", measure=measure))
         files = {"head": (packed, f"{HEAD}.zip")}
@@ -547,7 +552,7 @@ class LamBuilds:
                 # A head nothing can be scored against is no use to the steps after: say so here, not there.
                 why = f"the pipeline left no picture to score the head by (likeness/{file})"
                 checks.append(Check(name="pictures", verdict="failed", reason=why))
-                return {"checks": checks, "run": run}
+                return {"checks": checks, "run": run, "files": blobs}
             files[name] = (path, f"likeness/{file}")
         checks.append(Check(name="pictures", verdict="passed"))
         fit = work / f"out-{HEAD}" / "fit"
@@ -564,10 +569,11 @@ class LamBuilds:
             why = "the shape fit gave no score: MediaPipe found no face in the head's render, or the fit did not run"
             checks.append(Check(name="shape-fit", verdict="advisory", reason=why))
         for name, (path, file) in files.items():
-            outputs.append(self.store.keep(job.build_id, name, f"{kept}/{file}", path.read_bytes()))
+            blobs[f"{kept}/{file}"] = data = path.read_bytes()
+            outputs.append(self.store.artifact(name, f"{kept}/{file}", data))
         if all(c.verdict == "passed" for c in checks):
             self._to_cache(key, files, checks, scores)
-        return {"checks": checks, "run": run, "outputs": outputs, "scores": scores}
+        return {"checks": checks, "run": run, "files": blobs, "outputs": outputs, "scores": scores}
 
     # ---- the heads kept: the same portrait through the same pipeline is the same head ---------------
 
@@ -592,14 +598,19 @@ class LamBuilds:
             if target.exists():
                 shutil.rmtree(target, ignore_errors=True)
             new.rename(target)
+            self._evict()
         except OSError as exc:  # a cache that cannot be written costs a rebuild, never the head just made
             log.warning("lam_cache_not_written", reason=str(exc))
         finally:
             shutil.rmtree(new, ignore_errors=True)
-        entries = sorted(
-            (p for p in self.cache_dir.iterdir() if p.is_dir() and not p.name.startswith(".")),
-            key=lambda p: p.stat().st_mtime,
-        )
+
+    def _evict(self) -> None:
+        dated = []
+        for entry in self.cache_dir.iterdir():
+            with contextlib.suppress(OSError):  # gone between listing and stat
+                if entry.is_dir() and not entry.name.startswith("."):
+                    dated.append((entry.stat().st_mtime, entry))
+        entries = [entry for _, entry in sorted(dated)]
         for old in entries[: -self.settings.cache]:
             shutil.rmtree(old, ignore_errors=True)
 
@@ -622,10 +633,9 @@ class LamBuilds:
             log.warning("lam_cache_dropped", key=key, reason=str(exc))
             shutil.rmtree(entry, ignore_errors=True)
             return None
-        outputs = [
-            self.store.keep(job.build_id, name, f"candidates/{job.candidate}/{file}", blob)
-            for name, (file, blob) in data.items()
-        ]
+        kept_at = f"candidates/{job.candidate}"
+        outputs = [self.store.artifact(name, f"{kept_at}/{file}", blob) for name, (file, blob) in data.items()]
         with contextlib.suppress(OSError):
             os.utime(entry)  # read lately: the last to go
-        return {"checks": checks, "outputs": outputs, "scores": scores}
+        files = {f"{kept_at}/{file}": blob for file, blob in data.values()}
+        return {"checks": checks, "files": files, "outputs": outputs, "scores": scores}

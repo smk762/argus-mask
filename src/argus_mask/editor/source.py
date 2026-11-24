@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 import structlog
 from argus_cortex.limits import BadInput, TooLarge, open_image, read_upload
+from pydantic import ValidationError
 
 from argus_mask.backgrounds import Darkroom, PlateError
 from argus_mask.config import SourceSettings
@@ -182,16 +183,14 @@ class SourceJobs:
             kind = kind_from_record(record, image, policy=self.settings.policy)
         except PortraitError as exc:
             raise SourceError(str(exc)) from exc
-        licence = license_for_checkpoint(_checkpoint_name(record), "" if kind == "personal" else "")
-        if kind == "personal":
-            licence = licence if licence else "personal use"
+        licence = "" if kind == "personal" else _licence(_checkpoint_name(record))
         return self._write_source(
             build_id,
             candidate,
             image,
             kind=kind,
             source=f"argus-darkroom record {record_id}",
-            license=licence if kind != "personal" else "",
+            license=licence,
             record=record,
             data={"way": "pick", "record_id": record_id},
         )
@@ -274,7 +273,7 @@ class SourceJobs:
             recorded = (record.get("image") or {}).get("sha256")
             if recorded != sha:
                 raise SourceError(f"darkroom record {rid}: the upload does not match the record's image sha256")
-            licence = license_for_checkpoint(_checkpoint_name(record), license)
+            licence = _licence(_checkpoint_name(record), license)
             return self._write_source(
                 build_id,
                 candidate,
@@ -569,6 +568,11 @@ class SourceJobs:
         denoise: float,
     ) -> StepResult:
         started = self.clock()
+        # The job may have waited a long time: the portrait and its provenance must still be the ones it was asked for.
+        self._same_source(build_id, candidate, source)
+        picture = portrait_path.read_bytes()
+        if hashlib.sha256(picture).hexdigest() != portrait_sha:
+            raise SourceError(f"{candidate}'s portrait changed since the restyle was asked for: ask again")
         prior = source.data or {}
         prior_kind = str(prior.get("kind") or "personal")
         prior_license = str(prior.get("license") or "")
@@ -580,7 +584,8 @@ class SourceJobs:
             prompt = prompt_for(subject, style)
         except PortraitError:
             prompt = prompt_for("an adult", style)
-        picture = portrait_path.read_bytes()
+        if prior_kind == "consented":
+            self._consented(prior)  # before the person's picture goes anywhere
         body = generate_body(
             prompt,
             seed,
@@ -604,25 +609,9 @@ class SourceJobs:
                 expect_checkpoint=CHECKPOINT,
             )
         except (PlateError, PortraitError, KeyError) as exc:
-            why = str(exc)
-            return self.store.put(
-                build_id,
-                StepResult(
-                    step="source",
-                    candidate=candidate,
-                    checks=[Check(name="provenance", verdict="refused", reason=why[:2000])],
-                    inputs=[Artifact(name="source-portrait", sha256=portrait_sha)],
-                    seeds={"generator": seed},
-                    data={
-                        "way": "restyle",
-                        "style": style,
-                        "source_sha256": portrait_sha,
-                        "prior_kind": prior_kind,
-                    },
-                    started=started,
-                    finished=self.clock(),
-                ),
-            )
+            # The job's failure alone: the source it would have replaced is as good as it was.
+            raise SourceError(f"restyle failed, and the source is as it was: {exc}") from exc
+        self._same_source(build_id, candidate, source)
         # Never raise: personal/consented stay; synthetic only if the restyle also cleared without LoRA.
         if prior_kind in ("personal", "consented"):
             kind = prior_kind
@@ -661,6 +650,8 @@ class SourceJobs:
                 ),
             },
             started=started,
+            # Beside the portrait it was made from, never over it: the step's input stays where it says.
+            file=f"candidates/{candidate}/restyle-{hashlib.sha256(image).hexdigest()[:16]}.png",
             inputs=[
                 Artifact(
                     name="source-portrait",
@@ -686,9 +677,10 @@ class SourceJobs:
         data: dict[str, Any] | None = None,
         started: datetime | None = None,
         inputs: list[Artifact] | None = None,
+        file: str | None = None,
     ) -> StepResult:
         started = started or self.clock()
-        kept_path = f"candidates/{candidate}/portrait.png"
+        kept_path = file or f"candidates/{candidate}/portrait.png"
         portrait = self.store.keep(build_id, PORTRAIT, kept_path, image)
         tools: list[Tool] = []
         generator: dict[str, Any] | None = None
@@ -745,6 +737,26 @@ class SourceJobs:
             ),
         )
 
+    def _same_source(self, build_id: str, candidate: str, source: StepResult) -> None:
+        now = self.store.load(build_id).get("source", candidate)
+        if now is None or now.digest != source.digest:
+            raise SourceError(f"{candidate}'s source changed since the restyle was asked for: ask again")
+
+    def _consented(self, data: dict[str, Any]) -> None:
+        """The consent the source was taken under covers it now, or :class:`SourceError` says why not."""
+        try:
+            prov = Provenance(
+                kind="consented",
+                source=str(data.get("source") or ""),
+                license=str(data.get("license") or "per the release"),
+                subject=str(data.get("subject") or ""),
+                release_sha256=data.get("release_sha256"),
+            )
+        except ValidationError as exc:
+            raise SourceError(f"this portrait may not be used: {exc.errors()[0]['msg']}") from exc
+        if (why := refusal(self.consents.check_face(prov, use="avatar", at=self.clock()))) is not None:
+            raise SourceError(f"this portrait may not be used: {why}")
+
     def _candidate(self, build_id: str, candidate: str) -> None:
         self.store.load(build_id)
         if not is_face_id(candidate):
@@ -763,6 +775,13 @@ class SourceJobs:
             job.ended = job.ended or time.monotonic()
 
         return done
+
+
+def _licence(checkpoint: str, stated: str = "") -> str:
+    try:
+        return license_for_checkpoint(checkpoint, stated)
+    except PortraitError as exc:
+        raise SourceError(str(exc)) from exc
 
 
 def _checkpoint_name(record: dict) -> str:
