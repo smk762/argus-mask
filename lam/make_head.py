@@ -132,6 +132,7 @@ def fit_portrait_shape(image, shape_param, tracked):
     render(start, fit_dir / "start.png")
     render(best, fit_dir / "best.png")
     points = detect([str(fit_dir / "start.png"), str(fit_dir / "best.png")])
+    # No face found scores infinity: ranked last, and null in the report.
     report = {
         "start": fit_shape.misfit(reference, points[0]),
         "best": fit_shape.misfit(reference, points[1]),
@@ -140,10 +141,10 @@ def fit_portrait_shape(image, shape_param, tracked):
         "start_shape": start.tolist(),
         "best_shape": best.tolist(),
     }
-    (fit_dir / "fit.json").write_text(json.dumps(report, indent=1))
+    (fit_dir / "fit.json").write_text(json.dumps(fit_shape.plain(report), indent=1, allow_nan=False))
     for path in fit_dir.glob("try-*.png"):
         path.unlink()
-    print("FIT", json.dumps({k: report[k] for k in ("start", "best")}))
+    print("FIT", json.dumps(fit_shape.plain({k: report[k] for k in ("start", "best")}), allow_nan=False))
     return torch.as_tensor(best, dtype=shape_param.dtype, device=shape_param.device)
 
 
@@ -155,7 +156,7 @@ Dinov2FusionWrapper._build_dinov2 = staticmethod(
 cfg, _ = parse_configs()
 lam = _build_model(cfg).to("cuda").eval()
 
-tracker = FlameTrackingSingleImage(output_dir="output/tracking")  # frontend.py's constructor
+tracker = FlameTrackingSingleImage(output_dir=os.path.join(out_dir, "tracking"))  # frontend.py's constructor
 raw = os.path.join(out_dir, "raw.png")
 Image.open(image_in).convert("RGB").save(raw)
 # Explicit checks, not assert: under python -O the steps themselves would be skipped.

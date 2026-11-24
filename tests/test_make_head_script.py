@@ -18,3 +18,10 @@ def test_motion_enlarge_ratio_matches_the_portrait() -> None:
     text = HEAD.read_text(encoding="utf-8")
     assert "enlarge_ratio=[1.0, 1, 0]" not in text
     assert text.count("enlarge_ratio=[1.0, 1.0]") == 3
+
+
+def test_the_tracker_works_in_the_jobs_own_directory() -> None:
+    """A shared one would hand a head another portrait's crop, matte and shape."""
+    text = HEAD.read_text(encoding="utf-8")
+    assert 'FlameTrackingSingleImage(output_dir=os.path.join(out_dir, "tracking"))' in text
+    assert '"output/tracking"' not in text

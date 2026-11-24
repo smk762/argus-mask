@@ -5,7 +5,12 @@ import { Stage, talkReady } from './stage.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
-  const node = Object.assign(document.createElement(tag), props);
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    // aria-* (and anything that is no property of the element) is an attribute.
+    if (key.includes('-') || !(key in node)) node.setAttribute(key, value);
+    else node[key] = value;
+  }
   node.append(...children);
   return node;
 };
@@ -39,6 +44,8 @@ let catalog = null;   // GET /guided
 let record = null;    // GET /guided/{id} view
 let buildId = null;
 let activeCandidate = null;
+const pending = new Set();  // candidates named here that the record does not have yet
+let previews = [];          // pick previews to start once their cards are in the document
 const stages = new Map();   // candidate -> Stage for pick previews
 
 function stepMeta(name) {
@@ -159,7 +166,9 @@ function candidateState(candidate) {
 function renderCandidateTabs() {
   const bar = $('candidates');
   bar.replaceChildren();
-  const names = Object.keys(record?.candidates || {});
+  const known = Object.keys(record?.candidates || {});
+  for (const name of known) pending.delete(name);
+  const names = [...known, ...pending];
   if (!names.length) {
     activeCandidate = 'c1';
     bar.append(el('span', { className: 'hint', textContent: 'No candidates yet — add a source below as c1.' }));
@@ -181,6 +190,7 @@ function renderCandidateTabs() {
   add.onclick = () => {
     const next = window.prompt('Candidate id', `c${names.length + 1}`);
     if (!next || !/^[a-z0-9][a-z0-9_\-]{0,63}$/.test(next)) return;
+    pending.add(next);
     activeCandidate = next;
     renderWorkspace();
   };
@@ -436,8 +446,7 @@ function pickPanel() {
     card.append(pickBtn);
     grid.append(card);
 
-    // Preview after the card is in the DOM so the stage has a size.
-    void previewCandidate(name, stageBox, poses, !blockers.length);
+    previews.push(() => previewCandidate(name, stageBox, poses, !blockers.length));
   }
   if (!names.length) grid.append(el('p', { className: 'hint', textContent: 'Add a candidate and settle its evals first.' }));
   body.push(grid);
@@ -504,7 +513,8 @@ function scenePanel() {
   void (async () => {
     try {
       const scenes = await json('/scenes');
-      const keep = sceneSel.value;
+      // The recorded scene had no option to select until now; one chosen meanwhile stands.
+      const keep = sceneSel.value || result?.data?.scene || '';
       while (sceneSel.options.length > 1) sceneSel.remove(1);
       for (const s of scenes) {
         sceneSel.append(new Option(
@@ -666,6 +676,7 @@ function renderWorkspace() {
   const steps = $('steps');
   steps.replaceChildren();
   const c = activeCandidate || 'c1';
+  previews = [];
   steps.append(
     sourcePanel(c),
     portraitPanel(c),
@@ -675,6 +686,7 @@ function renderWorkspace() {
     scenePanel(),
     savePanel(),
   );
+  for (const start of previews) void start();  // the cards are in the document now, so a stage has a size
 }
 
 function renderBuildList() {
@@ -702,6 +714,7 @@ function renderBuildList() {
 }
 
 async function openBuild(id) {
+  if (id !== buildId) pending.clear();
   buildId = id;
   history.replaceState(null, '', `?id=${enc(id)}`);
   try {

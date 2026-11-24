@@ -183,3 +183,13 @@ def test_the_editor_fits_a_candidates_rest_set(rig: Rig, tmp_path: Path) -> None
         assert job["state"] == "done" and job["status"] == "passed"
         rest = next(r for r in client.get("/guided/guide").json()["results"] if r["step"] == "rest")
         assert rest["scores"]["rest_misfit_fit"] == 0.04
+
+
+@pytest.mark.parametrize("smile", ["nan", "inf"])
+async def test_weights_that_are_not_finite_fail(rig: Rig, monkeypatch: pytest.MonkeyPatch, smile: str) -> None:
+    """json reads NaN as a number, and NaN is under no floor."""
+    monkeypatch.setenv("FAKE_SMILE", smile)
+    rig.built()
+    job, found = await fit(rig)
+    assert job.state == "failed" and found.standing == "failed"
+    assert "mouthSmileLeft" in found.named("failed") and "weights" not in found.data

@@ -185,3 +185,59 @@ def test_save_cannot_skip_a_refused_portrait(editor) -> None:
     reply = client.post("/guided/guide/save", json={})
     assert reply.status_code == 409
     assert client.get("/guided/guide").json()["face"]["save"]["status"] != "passed"
+
+
+def _face_bytes(face: Path) -> dict[str, bytes]:
+    return {p.relative_to(face).as_posix(): p.read_bytes() for p in face.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("fails", ["replace", "load"])
+def test_a_save_that_cannot_finish_leaves_the_face_as_it_was(
+    editor, monkeypatch: pytest.MonkeyPatch, fails: str
+) -> None:
+    import os
+
+    from argus_mask.editor import save as save_mod
+    from argus_mask.faces import FaceError
+
+    client, store, assets = editor
+    _ready_with_head(store, assets)
+    assert client.post("/guided/guide/save", json={"name": "First"}).status_code == 200
+    before = _face_bytes(assets / "guide")
+    if fails == "replace":
+        replace = os.replace
+
+        def refuse(src: object, dst: object) -> None:
+            if Path(str(dst)) == assets / "guide":
+                raise PermissionError("no")
+            replace(src, dst)
+
+        monkeypatch.setattr(save_mod.os, "replace", refuse)
+        error: type[Exception] = PermissionError
+    else:
+
+        def load(self: FaceStore, face_id: str, **_: object) -> None:
+            raise FaceError("not served")
+
+        monkeypatch.setattr(save_mod.FaceStore, "load", load)
+        error = save_mod.SaveError
+    with pytest.raises(error):
+        _save(store, assets, name="Second")
+    assert _face_bytes(assets / "guide") == before
+    assert not [p for p in assets.iterdir() if p.name.startswith((".install-", ".save-"))]
+
+
+def _save(store: GuidedStore, assets: Path, **over: object) -> StepResult:
+    from argus_mask.backgrounds import PlateStore, SceneChoices
+    from argus_mask.editor.save import save
+    from argus_mask.expressions import Expressions
+
+    scenes = SceneChoices(assets, PlateStore(assets))
+    return save(store, assets_dir=assets, expressions=Expressions(assets), scenes=scenes, build_id="guide", **over)
+
+
+def test_the_first_save_makes_the_assets_root(tmp_path: Path) -> None:
+    store = GuidedStore(tmp_path / "work", clock=ticking())
+    _ready_with_head(store, tmp_path / "work")
+    _save(store, tmp_path / "assets")
+    assert (tmp_path / "assets" / "guide" / "manifest.json").is_file()

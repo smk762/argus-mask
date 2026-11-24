@@ -649,3 +649,34 @@ def test_the_real_script_names_lams_container_only_when_asked() -> None:
     script = (Path(__file__).resolve().parent.parent / "lam" / "make_heads.sh").read_text(encoding="utf-8")
     named = [line for line in script.splitlines() if "LAM_CONTAINER" in line and not line.startswith("#")]
     assert len(named) == 1 and '--gpus all ${LAM_CONTAINER:+--name "$LAM_CONTAINER"}' in named[0]
+
+
+async def test_a_result_the_record_refuses_leaves_the_earlier_heads_files(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.candidate()
+    _job, first = await build(rig)
+    kept = {a.file: rig.store.path("guide", a.file).read_bytes() for a in first.outputs}
+    make_splat_zip(rig.fake / "ready.zip", folder="another")
+    (rig.fake / "image").write_text("22" * 32)  # another pipeline: built, not read from the cache
+    builds = rig.builds()
+    collect = builds._collect
+
+    def refused_meanwhile(*args: object) -> dict:
+        found = collect(*args)
+        bad = Check(name="adult", verdict="refused", reason="under 18")
+        rig.store.put("guide", StepResult(step="portrait", candidate="c1", checks=[bad]))
+        return found
+
+    monkeypatch.setattr(builds, "_collect", refused_meanwhile)
+    job = await finished(builds.start("guide", "c1"))
+    assert job.state == "failed" and "cannot run" in job.error
+    assert {f: rig.store.path("guide", f).read_bytes() for f in kept} == kept
+    assert not list(rig.store.directory("guide").rglob("*.part"))
+
+
+async def test_a_cache_that_cannot_be_written_costs_a_rebuild_never_the_head(rig: Rig) -> None:
+    rig.candidate()
+    (rig.store.root / ".cache").write_text("a file, where the cache's directory would be")
+    job, found = await build(rig)
+    assert (job.state, job.error) == ("done", None) and found.standing == "passed"

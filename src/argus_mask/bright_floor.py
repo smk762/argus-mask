@@ -42,22 +42,25 @@ class BrightFloor:
 def measure_plate(picture: bytes | Path, *, threshold: float = BRIGHT_SHARE) -> BrightFloor:
     """Score the behind-bust band of a plate PNG. Raises ``ValueError`` if it is not a readable RGB image."""
     data = picture.read_bytes() if isinstance(picture, Path) else picture
-    with Image.open(BytesIO(data)) as im:
-        rgb = im.convert("RGB")
-        w, h = rgb.size
-        if w < 8 or h < 8:
-            raise ValueError("plate is too small to score")
-        yt, yb, xl, xr = BAND
-        y0, y1 = int(h * yt), max(int(h * yt) + 1, int(h * yb))
-        x0, x1 = int(w * xl), max(int(w * xl) + 1, int(w * xr))
-        # Downsample the band for a cheap scan: every n-th pixel is enough for a share.
-        step = max(1, min((x1 - x0) // 64, (y1 - y0) // 32, 8))
-        samples: list[float] = []
-        px = rgb.load()
-        for y in range(y0, y1, step):
-            for x in range(x0, x1, step):
-                r, g, b = px[x, y][:3]
-                samples.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    try:
+        with Image.open(BytesIO(data)) as im:
+            rgb = im.convert("RGB")
+    except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise ValueError(f"unreadable plate: {exc}") from exc
+    w, h = rgb.size
+    if w < 8 or h < 8:
+        raise ValueError("plate is too small to score")
+    yt, yb, xl, xr = BAND
+    y0, y1 = int(h * yt), max(int(h * yt) + 1, int(h * yb))
+    x0, x1 = int(w * xl), max(int(w * xl) + 1, int(w * xr))
+    # Downsample the band for a cheap scan: every n-th pixel is enough for a share.
+    step = max(1, min((x1 - x0) // 64, (y1 - y0) // 32, 8))
+    samples: list[float] = []
+    px = rgb.load()
+    for y in range(y0, y1, step):
+        for x in range(x0, x1, step):
+            r, g, b = px[x, y][:3]
+            samples.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
     if not samples:
         raise ValueError("plate band is empty")
     samples.sort()

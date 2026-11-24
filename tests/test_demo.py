@@ -124,7 +124,10 @@ def test_the_docs_are_every_public_doc_recorded_by_commit_and_sha256(docs_site: 
     assert set(record["docs"]) == {"README.md", *public}
     assert not private & {Path(p).name.lower() for p in record["docs"]}, "agent and planning files never go out"
     for path, digest in record["docs"].items():
-        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
+        held = subprocess.run(
+            ["git", "-C", str(ROOT), "cat-file", "blob", f"HEAD:{path}"], capture_output=True, check=True
+        )  # noqa: S603, S607
+        assert hashlib.sha256(held.stdout).hexdigest() == digest
     for path, digest in record["images"].items():
         assert hashlib.sha256((out / "docs" / "files" / path).read_bytes()).hexdigest() == digest
     assert json.loads((out / "docs" / "sources.json").read_text(encoding="utf-8")) == record
@@ -243,3 +246,29 @@ def test_the_clip_spec_names_no_private_host() -> None:
     docs = _build().docs_page
     assert "tts_url" not in SPEC
     assert docs.opsec_hits((DEMO / "clips.json").read_text(encoding="utf-8"), []) == []
+
+
+def test_the_docs_are_the_commits_whatever_the_working_tree_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs = _build().docs_page
+    root, out = tmp_path / "repo", tmp_path / "out"
+    root.mkdir()
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    (root / "README.md").write_text("# Committed\n\n![x](a.png)\n")
+    (root / "a.png").write_bytes(b"committed")
+    for args in (["init", "-q"], ["add", "."], ["commit", "-qm", "x"], ["tag", "v0.1.0"]):
+        subprocess.run([*git, *args], check=True)  # noqa: S603
+    (root / "README.md").write_text("# Edited\n\n![x](a.png)\n")
+    (root / "a.png").write_bytes(b"edited")
+    monkeypatch.setattr(docs, "ROOT", root)
+    monkeypatch.setattr(docs, "DOCS", ("README.md",))
+    record = docs.build(out, lambda title, body: body, [], env={})
+    page = (out / "docs" / "index.html").read_text()
+    assert "Committed" in page and "Edited" not in page
+    assert (out / "docs" / "files" / "a.png").read_bytes() == b"committed"
+    assert record["images"] == {"a.png": hashlib.sha256(b"committed").hexdigest()}
+    monkeypatch.setattr(docs, "DOCS", ("README.md", "new.md"))
+    (root / "new.md").write_text("# New\n")
+    with pytest.raises(docs.Refused, match="commit it"):
+        docs.build(out, lambda title, body: body, [], env={})

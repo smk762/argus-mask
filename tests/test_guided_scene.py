@@ -115,3 +115,24 @@ def test_choose_helper_writes_lake_as_passed(tmp_path: Path) -> None:
     kept = choose(store, PlateStore(assets), "guide", scene="lake", shot="close")
     assert kept.standing == "passed"
     assert kept.data == {"scene": "lake", "shot": "close"}
+
+
+def test_a_scene_name_that_is_not_one_is_never_part_of_a_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from argus_mask.backgrounds import PlateStore
+    from argus_mask.editor import scene
+
+    (tmp_path / "scenes").mkdir()
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "plate.png").write_bytes(b"x")
+    monkeypatch.setattr(scene, "VIEWER_SCENES", tmp_path / "scenes")
+    plates = PlateStore(tmp_path / "assets")
+    for name in ("../other", str(tmp_path / "other"), "."):
+        assert scene.plate_png(name, plates) is None
+
+
+def test_a_plate_that_is_no_picture_is_a_value_error() -> None:
+    from argus_mask.bright_floor import measure_plate
+
+    for data in (b"not a picture", LAKE.read_bytes()[:2000], b""):
+        with pytest.raises(ValueError, match="unreadable plate"):
+            measure_plate(data)

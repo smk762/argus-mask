@@ -9,6 +9,7 @@ not the 18-or-over check — that one is on the portrait before any build.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 import uuid
 from collections.abc import Callable
@@ -23,7 +24,6 @@ from argus_mask.age_eval import OLDER_YEARS, AgeReport, score
 from argus_mask.config import AgeSettings
 from argus_mask.editor.curator import AgeReading, CuratorClient, CuratorError
 from argus_mask.editor.guided import Artifact, Check, GuidedError, GuidedStore, NotReady, StepResult, Tool
-from argus_mask.faces import sha256_file
 from argus_mask.models import is_face_id
 
 log = structlog.get_logger(__name__)
@@ -126,7 +126,7 @@ class AgeJobs:
             raise GuidedError(f"{candidate!r} is not a candidate")
         if blocked := record.blockers(STEP, candidate):
             raise NotReady("age cannot run: " + "; ".join(blocked))
-        self._pictures(record.get("build", candidate), build_id, candidate)
+        self._kept(record.get("build", candidate), build_id, candidate)  # hashed when the job runs, off the event loop
         if any(j.live and (j.build_id, j.candidate) == (build_id, candidate) for j in self.jobs.values()):
             raise Busy(f"{candidate}'s age is already being read")
         if (why := self.check()) is not None:
@@ -191,8 +191,7 @@ class AgeJobs:
         build = record.get("build", job.candidate)
         pictures = await asyncio.to_thread(self._pictures, build, job.build_id, job.candidate)
         job.stage = "portrait age"
-        portrait_bytes = await asyncio.to_thread(pictures[PORTRAIT][1].read_bytes)
-        head_bytes = await asyncio.to_thread(pictures[RENDER][1].read_bytes)
+        portrait_bytes, head_bytes = pictures[PORTRAIT][1], pictures[RENDER][1]
         try:
             portrait = await asyncio.to_thread(self._read, "portrait", portrait_bytes)
             job.stage = "head age"
@@ -224,7 +223,7 @@ class AgeJobs:
     def _collect(
         self,
         job: AgeJob,
-        pictures: dict[str, tuple[Artifact, Path]],
+        pictures: dict[str, tuple[Artifact, bytes]],
         report: AgeReport,
         started: datetime,
     ) -> StepResult:
@@ -275,7 +274,8 @@ class AgeJobs:
             finished=self.clock(),
         )
 
-    def _pictures(self, build: Any, build_id: str, candidate: str) -> dict[str, tuple[Artifact, Path]]:
+    def _kept(self, build: Any, build_id: str, candidate: str) -> dict[str, tuple[Artifact, Path]]:
+        """The two pictures the build kept, still where it left them. Not read: cheap enough for a request."""
         if build is None:
             raise GuidedError(f"{candidate} has no build: age reads a head against its portrait")
         found: dict[str, tuple[Artifact, Path]] = {}
@@ -286,11 +286,19 @@ class AgeJobs:
             path = self.store.path(build_id, art.file)
             if not path.is_file():
                 raise GuidedError(f"{candidate}'s {name} is not where its build kept it")
-            if sha256_file(path) != art.sha256:
-                raise GuidedError(f"{candidate}'s {name} changed since its build: run the build again")
-            if path.read_bytes()[:8] != PNG:
-                raise GuidedError(f"{candidate}'s {name} is not a PNG")
             found[name] = (art, path)
+        return found
+
+    def _pictures(self, build: Any, build_id: str, candidate: str) -> dict[str, tuple[Artifact, bytes]]:
+        """The two pictures' bytes, unchanged since the build: read once, so what is checked is what is aged."""
+        found: dict[str, tuple[Artifact, bytes]] = {}
+        for name, (art, path) in self._kept(build, build_id, candidate).items():
+            data = path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != art.sha256:
+                raise GuidedError(f"{candidate}'s {name} changed since its build: run the build again")
+            if data[:8] != PNG:
+                raise GuidedError(f"{candidate}'s {name} is not a PNG")
+            found[name] = (art, data)
         return found
 
 

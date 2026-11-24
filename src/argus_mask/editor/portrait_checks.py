@@ -10,7 +10,8 @@ import io
 from dataclasses import dataclass
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageStat
+import numpy as np
+from PIL import Image, ImageStat
 
 from argus_mask.editor.curator import CURATOR_CHECK_NAMES, FACE_SOURCE_CHECKS, FaceSourceRow
 from argus_mask.editor.guided import Check
@@ -201,7 +202,8 @@ def checks_from_face_source(row: FaceSourceRow | None, *, down: str | None = Non
         return [failed, *others]
     check_name, verdict = mapped
     out: list[Check] = []
-    for name in CURATOR_CHECK_NAMES:
+    # A check curator may refuse that is not one of its usual names (framing) is still its finding.
+    for name in dict.fromkeys((*CURATOR_CHECK_NAMES, check_name)):
         if name == check_name:
             out.append(Check(name=name, verdict=verdict, reason=reason))  # type: ignore[arg-type]
         else:
@@ -209,21 +211,21 @@ def checks_from_face_source(row: FaceSourceRow | None, *, down: str | None = Non
     return out
 
 
+# What each finding costs, by how much it stands in the way. RANK_CAP of one kind never add up to one of the next.
+RANK_COSTS = {"optional": 1.0, "advisory": 20.0, "not_checked": 400.0, "failed": 8_000.0, "refused": 160_000.0}
+RANK_CAP = 19
+
+
 def rank_score(checks: list[Check]) -> float:
-    """Higher is better: refusals sink, advisories cost, passes win. Used to order a batch."""
-    score = 100.0
+    """Higher is better, 100 at best: any refusal sinks below any number of failures, those below checks that could
+    not run, those below advisories. Used to order a batch."""
+    found = dict.fromkeys(RANK_COSTS, 0)
     for check in checks:
-        if check.verdict == "refused":
-            score -= 100.0
-        elif check.verdict == "failed":
-            score -= 80.0
-        elif check.verdict == "not_checked" and check.required:
-            score -= 60.0
-        elif check.verdict == "advisory":
-            score -= 5.0
-        elif check.verdict == "not_checked":
-            score -= 1.0
-    return score
+        if check.verdict == "not_checked" and not check.required:
+            found["optional"] += 1
+        elif check.verdict in found:
+            found[check.verdict] += 1
+    return 100.0 - sum(min(n, RANK_CAP) * RANK_COSTS[kind] for kind, n in found.items())
 
 
 def measure_face(data: bytes, landmarker: Any | None) -> FaceGeometry | None:
@@ -243,12 +245,9 @@ def measure_face(data: bytes, landmarker: Any | None) -> FaceGeometry | None:
             output_face_blendshapes=True,
             output_facial_transformation_matrixes=False,
         )
-        detector = vision.FaceLandmarker.create_from_options(options)
-        rgb = open_rgb(data)
-        import numpy as np  # noqa: PLC0415
-
-        arr = np.asarray(rgb)
-        found = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=arr))
+        arr = np.asarray(open_rgb(data))
+        with vision.FaceLandmarker.create_from_options(options) as detector:  # its graph and threads end with it
+            found = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=arr))
     except Exception:  # noqa: BLE001 - landmarker missing or broken: treat as unavailable
         return None
     faces = found.face_landmarks or []
@@ -319,12 +318,11 @@ def _temple_regions(geometry: FaceGeometry | None) -> list[tuple[float, float, f
 
 
 def _laplacian_var(image: Image.Image) -> float:
-    gray = image.convert("L").filter(ImageFilter.Kernel((3, 3), [-1, -1, -1, -1, 8, -1, -1, -1, -1], scale=1))
-    stat = ImageStat.Stat(gray)
-    # Pillow's sum2/count gives variance via E[x²] - E[x]².
-    if not stat.count or stat.count[0] == 0:
+    """Variance of the 8-neighbour Laplacian, signed: in Pillow's 8-bit filter every response below 0 or over 255 is
+    clipped."""
+    gray = np.asarray(image.convert("L"), dtype=np.float32)
+    if min(gray.shape) < 3:
         return 0.0
-    mean = stat.mean[0]
-    sum2 = stat.sum2[0]
-    n = stat.count[0]
-    return max(0.0, sum2 / n - mean * mean)
+    h, w = gray.shape
+    around = sum(gray[1 + y : h - 1 + y, 1 + x : w - 1 + x] for y in (-1, 0, 1) for x in (-1, 0, 1))
+    return float((9.0 * gray[1:-1, 1:-1] - around).var())

@@ -199,3 +199,17 @@ async def test_a_reply_opened_after_its_generation_was_stopped_is_closed(
     finally:
         release.set()  # the open completes after the stop
     assert await asyncio.to_thread(closed.wait, 5), "the reply opened after the stop was never closed"
+
+
+def test_a_staging_write_that_fails_leaves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = VoiceStore(tmp_path / "voices")
+
+    def full(self: Path, data: bytes) -> int:
+        with self.open("wb") as out:
+            out.write(data[:2])
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_bytes", full)
+    with pytest.raises(OSError, match="No space"):
+        store.stage(b"RIFF clip")
+    assert list(store.staged.iterdir()) == []

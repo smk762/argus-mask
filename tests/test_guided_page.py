@@ -100,7 +100,10 @@ def test_a_guided_file_is_served_only_when_the_record_names_it(editor) -> None:
     ok = client.get("/guided/guide/file/candidates/c1/portrait.png")
     assert ok.status_code == 200 and ok.content == b"PNG-bytes"
     assert client.get("/guided/guide/file/candidates/c1/secret.png").status_code == 404
-    assert client.get("/guided/guide/file/../guide/build.json").status_code in (404, 422)
+    # Encoded, so the client does not resolve the dots before sending: the handler itself must refuse them.
+    for path in ("candidates%2F..%2Fbuild.json", "%2e%2e%2Fguide%2Fbuild.json", "build.json"):
+        refused = client.get(f"/guided/guide/file/{path}")
+        assert refused.status_code == 404 and refused.json()["detail"] == "no such guided file"
 
 
 def test_head_zip_serves_the_built_head(editor) -> None:

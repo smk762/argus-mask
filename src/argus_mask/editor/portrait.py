@@ -7,6 +7,8 @@ Runs curator ``face_source``, retina OCR (via cortex ``OcrClient``), and mask's 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -38,11 +40,16 @@ from argus_mask.models import is_face_id
 log = structlog.get_logger(__name__)
 
 JOBS_KEEP = 20
+WORST_FIRST = ("refused", "failed", "not_checked", "advisory")
 STEP = "portrait"
 
 
 class PortraitError(GuidedError):
     """Portrait checks cannot run now, with the reason."""
+
+
+class Stopped(Exception):
+    """The job was stopped: its thread writes nothing more."""
 
 
 class Busy(GuidedError):
@@ -68,6 +75,7 @@ class PortraitJob:
     asked: float = field(default_factory=time.monotonic)
     ended: float | None = None
     task: asyncio.Task | None = None
+    halt: threading.Event = field(default_factory=threading.Event)  # its thread stops at the next check
 
     @property
     def live(self) -> bool:
@@ -113,7 +121,6 @@ class PortraitJobs:
         self.clock = clock or _utcnow
         self.jobs: dict[str, PortraitJob] = {}
         self._one = asyncio.Lock()
-        self._curator_error: str | None = None
 
     def check(self) -> str | None:
         """Why portrait checks cannot start at all, or None.
@@ -202,10 +209,17 @@ class PortraitJobs:
         try:
             async with self._one:
                 job.state, job.stage = "running", "checking"
-                ranking = await asyncio.to_thread(self._check_batch, job)
+                batch = asyncio.create_task(asyncio.to_thread(self._check_batch, job))
+                try:
+                    ranking = await asyncio.shield(batch)
+                except asyncio.CancelledError:
+                    # Cancelling does not stop a thread: tell it, and let no other batch start until it has ended.
+                    job.halt.set()
+                    await asyncio.gather(batch, return_exceptions=True)
+                    raise
                 job.ranking = ranking
-                worst = min((r["score"] for r in ranking), default=0.0)
-                job.status = "passed" if worst >= 100.0 else ("refused" if worst <= 0.0 else "advisory")
+                found = {r["status"] for r in ranking}
+                job.status = next((s for s in WORST_FIRST if s in found), "passed")
                 job.state, job.stage = "done", "done"
         except asyncio.CancelledError:
             job.state, job.stage = "stopped", "stopped"
@@ -226,39 +240,42 @@ class PortraitJobs:
         record = self.store.load(job.build_id)
         for candidate in job.candidates:
             source = record.get("source", candidate)
-            art, path = self._portrait(source, job.build_id, candidate)
-            images[candidate] = path.read_bytes()
+            images[candidate] = self._portrait(source, job.build_id, candidate)
             sources[candidate] = source  # type: ignore[assignment]
 
-        face_rows = self._face_source(job.build_id, images)
-        ocr_down: str | None = None
+        face_rows, curator_down = self._face_source(job.build_id, images)
+        ocr_down: dict[str, str] = {}  # by candidate: one that could not be read says nothing of the others
         ocr_lines: dict[str, list[str] | None] = {}
         if self.ocr is None:
-            ocr_down = "ARGUS_MASK_OCR_URL is unset: point it at argus-retina-ocr"
+            ocr_down = dict.fromkeys(images, "ARGUS_MASK_OCR_URL is unset: point it at argus-retina-ocr")
             ocr_lines = dict.fromkeys(images, None)
         else:
             for name, data in images.items():
+                if job.halt.is_set():
+                    raise Stopped
                 try:
                     result = self.ocr.read(data, filename=f"{name}.png")
                     ocr_lines[name] = [line.text for line in result.lines if line.score >= self.settings.ocr_min_score]
                 except OcrCheckFailed as exc:
-                    ocr_down = f"OCR failed: {exc}"
+                    ocr_down[name] = f"OCR failed: {exc}"
                     ocr_lines[name] = None
 
         ranking: list[dict] = []
         for candidate, data in images.items():
+            if job.halt.is_set():
+                raise Stopped
             job.stage = f"checking {candidate}"
             geometry = self.measure(data, self.settings.landmarker)
             image = open_rgb(data)
             source = sources[candidate]
             source_data = dict(source.data) if source else {}
             checks = []
-            checks.extend(checks_from_face_source(face_rows.get(candidate), down=self._curator_down(face_rows)))
-            # Mask framing may also refuse; if curator already refused framing, keep both names distinct by
-            # replacing only when curator passed framing.
-            framing = check_framing(image, min_side_px=self.settings.min_side_px, geometry=geometry)
-            checks = [c for c in checks if c.name != "framing"] + [framing]
-            checks.append(check_text(ocr_lines.get(candidate), down=ocr_down))
+            checks.extend(checks_from_face_source(face_rows.get(candidate), down=curator_down))
+            # Curator's refusal of the framing stands: mask's own check speaks only where curator's did not.
+            if not any(c.name == "framing" and c.verdict != "passed" for c in checks):
+                framing = check_framing(image, min_side_px=self.settings.min_side_px, geometry=geometry)
+                checks = [c for c in checks if c.name != "framing"] + [framing]
+            checks.append(check_text(ocr_lines.get(candidate), down=ocr_down.get(candidate)))
             checks.append(check_expression(geometry))
             checks.append(check_lighting(image, geometry))
             checks.append(check_temples(image, geometry))
@@ -289,6 +306,8 @@ class PortraitJobs:
                 started=started,
                 finished=self.clock(),
             )
+            if job.halt.is_set():
+                raise Stopped
             kept = self.store.put(job.build_id, result)
             ranking.append(
                 {
@@ -300,26 +319,19 @@ class PortraitJobs:
             )
         return sorted(ranking, key=lambda r: (-r["score"], r["candidate"]))
 
-    def _curator_down(self, face_rows: dict[str, FaceSourceRow]) -> str | None:
+    def _face_source(self, build_id: str, images: dict[str, bytes]) -> tuple[dict[str, FaceSourceRow], str | None]:
+        """Curator's row per candidate, and why curator could not be asked, if it could not."""
         if self.curator is None:
-            return "ARGUS_MASK_CURATOR_URL is unset: point it at argus-curator"
-        if self._curator_error:
-            return self._curator_error
-        return None
-
-    def _face_source(self, build_id: str, images: dict[str, bytes]) -> dict[str, FaceSourceRow]:
-        self._curator_error = None
-        if self.curator is None:
-            return {}
+            return {}, "ARGUS_MASK_CURATOR_URL is unset: point it at argus-curator"
         try:
             rows = self.curator.face_source(images, folder=f"mask-guided/{build_id}")
         except CuratorError as exc:
             log.warning("curator_face_source_failed", build=build_id, reason=str(exc))
-            self._curator_error = str(exc)
-            return {}
-        return {r.name: r for r in rows}
+            return {}, str(exc)
+        return {r.name: r for r in rows}, None
 
-    def _portrait(self, source: StepResult | None, build_id: str, candidate: str):
+    def _portrait(self, source: StepResult | None, build_id: str, candidate: str) -> bytes:
+        """The portrait the source kept, read once: the bytes checked are the bytes scored."""
         if source is None:
             raise GuidedError(f"{candidate} has no source: run the source step first")
         found = next((a for a in source.outputs if a.name == PORTRAIT and a.file), None)
@@ -328,8 +340,7 @@ class PortraitJobs:
         path = self.store.path(build_id, found.file)
         if not path.is_file():
             raise GuidedError(f"{candidate}'s portrait is not where its source kept it")
-        import hashlib
-
-        if hashlib.sha256(path.read_bytes()).hexdigest() != found.sha256:
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != found.sha256:
             raise GuidedError(f"{candidate}'s portrait changed since its source was recorded")
-        return found, path
+        return data

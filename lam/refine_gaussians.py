@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import zipfile
 from pathlib import Path
 
@@ -97,12 +98,22 @@ def extract_offset_ply(zip_path: Path) -> tuple[str, bytes, list[str]]:
 
 
 def repack_zip(src: Path, ply_name: str, ply_bytes: bytes, dest: Path) -> str:
-    """Copy *src* to *dest* with *ply_name* replaced. Returns sha256 of *dest*."""
+    """Copy *src* to *dest* with *ply_name* replaced. Returns sha256 of *dest*. Refused where *dest* is *src*, or
+    *src* has no *ply_name*; *dest* is written whole or not at all."""
+    if dest.resolve() == src.resolve():
+        raise ValueError(f"{dest} is the archive being refined: write the refined one somewhere else")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
-        for info in zin.infolist():
-            data = ply_bytes if info.filename == ply_name else zin.read(info.filename)
-            zout.writestr(info, data)
+    tmp = dest.with_name(f".{dest.name}.part")
+    try:
+        with zipfile.ZipFile(src) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            if ply_name not in zin.namelist():
+                raise ValueError(f"{src}: no {ply_name} to replace")
+            for info in zin.infolist():
+                data = ply_bytes if info.filename == ply_name else zin.read(info.filename)
+                zout.writestr(info, data)
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
     digest = hashlib.sha256(dest.read_bytes()).hexdigest()
     return digest
 
@@ -271,6 +282,11 @@ STAGES = (
 )
 
 
+def stage_steps(steps: int, scale: float) -> int:
+    """How many steps a stage of *steps* runs at *scale*: at least one."""
+    return max(1, int(steps * scale))
+
+
 def refine(
     names: list[str],
     attrs: dict[str, np.ndarray],
@@ -299,7 +315,7 @@ def refine(
     pos_cap = 0.02 * max(extent, 1e-3)
 
     for stage_name, keys, steps, lr in STAGES:
-        steps = max(1, int(steps * steps_scale))
+        steps = stage_steps(steps, steps_scale)
         params = _as_torch(current, keys)
         # freeze non-stage tensors as plain data
         for k, t in list(params.items()):
@@ -319,6 +335,10 @@ def refine(
                 photo = (rgb - target).abs().mean()
             reg = sum(((params[k] - torch.tensor(start[k], device="cuda")) ** 2).mean() for k in keys)
             loss = photo + pull * reg
+            value = float(loss.detach())
+            if value < best_loss:  # before the step: the parameters this loss is of
+                best_loss = value
+                best_snap = {k: params[k].detach().clone() for k in names}
             loss.backward()
             optim.step()
             if stage_name == "position":
@@ -326,10 +346,6 @@ def refine(
                     for ax in ("x", "y", "z"):
                         base = torch.tensor(start[ax], device="cuda")
                         params[ax].copy_(base + (params[ax] - base).clamp(-pos_cap, pos_cap))
-            value = float(loss.detach())
-            if value < best_loss:
-                best_loss = value
-                best_snap = {k: params[k].detach().clone() for k in names}
             if step == 0 or step + 1 == steps or (step + 1) % 20 == 0:
                 history.append(
                     {
@@ -350,7 +366,7 @@ def refine(
         "seed": seed,
         "size": size,
         "pull": pull,
-        "stages": [{"name": s[0], "keys": list(s[1]), "steps": int(s[2] * steps_scale), "lr": s[3]} for s in STAGES],
+        "stages": [{"name": s[0], "keys": list(s[1]), "steps": stage_steps(s[2], steps_scale), "lr": s[3]} for s in STAGES],
         "history": history,
         "start_pull": pull_loss(current, start, REQUIRED),
         "inputs": "portrait + LAM offset.ply only; photometric L1 + L2 pull; no extra network",
@@ -379,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repack", action="store_true", help="write a refined head.zip beside the outputs")
     args = parser.parse_args(argv)
 
+    dest = args.out / args.zip.name
+    if args.repack and dest.resolve() == args.zip.resolve():  # before any work
+        parser.error(f"--out {args.out} holds the archive being refined: choose another directory")
     ply_name, ply_bytes, _ = extract_offset_ply(args.zip)
     names, attrs = read_ply(ply_bytes)
     rt = ply_round_trip(ply_bytes)
@@ -417,7 +436,6 @@ def main(argv: list[str] | None = None) -> int:
     record["portrait"] = str(args.portrait)
     record["gaussian_count"] = len(attrs[names[0]])
     if args.repack:
-        dest = args.out / args.zip.name
         record["zip_sha256"] = repack_zip(args.zip, ply_name, out_ply, dest)
         record["refined_zip"] = str(dest)
     (args.out / "refine.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

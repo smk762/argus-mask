@@ -49,6 +49,15 @@ def misfit(reference: np.ndarray, candidate: np.ndarray) -> dict[str, float]:
     return out
 
 
+def plain(value):
+    """*value* as JSON can carry it: a number that is not finite becomes None, at any depth."""
+    if isinstance(value, dict):
+        return {k: plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [plain(v) for v in value]
+    return None if isinstance(value, float) and not np.isfinite(value) else value
+
+
 def search(
     start: np.ndarray,
     score: Callable[[list[np.ndarray]], list[float]],

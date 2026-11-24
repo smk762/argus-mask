@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
-import socket
-import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -22,13 +19,12 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import uvicorn
 
-from argus_mask.config import Settings, SpeechSettings
+from argus_mask.config import SpeechSettings
 from argus_mask.editor.guided import Artifact, Check, GuidedError, GuidedStore, NotReady, StepResult, Tool
+from argus_mask.editor.scripts import HeadServer, browsers_env, run_script
 from argus_mask.faces import MANIFEST_NAME, build_manifest, sha256_file
 from argus_mask.models import Provenance, is_face_id
-from argus_mask.server.app import create_app
 from argus_mask.speech_eval import (
     LipMetrics,
     SpeechReport,
@@ -229,16 +225,18 @@ class SpeechJobs:
             (face_dir / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
             self._stage_rest(serve, rest_data)
             job.stage = "serving the head"
-            url, server = await asyncio.to_thread(self._serve, serve)
+            server = HeadServer(serve)
+            if not await asyncio.to_thread(server.start):
+                raise SpeechError("the speech server did not start")
             job.stage = "drawing the take"
-            ran = await self._script(job, url, FACE, out)
+            ran = await self._script(job, server.url, FACE, out)
             cand = self._metrics_from_file(out)
-            ref = await asyncio.to_thread(self._reference_metrics)
+            ref = await self._reference_metrics(job)
             report = score(cand, ref)
             return await asyncio.to_thread(self._collect, job, head_art, report, ran, started)
         finally:
             if server is not None:
-                server.should_exit = True
+                await asyncio.to_thread(server.stop)
             await asyncio.to_thread(shutil.rmtree, work, True)
 
     def _stage_rest(self, serve: Path, rest_data: dict) -> None:
@@ -329,24 +327,7 @@ class SpeechJobs:
         rest_data = dict(rest.data) if rest is not None and isinstance(rest.data, dict) else {}
         return head, path, rest_data
 
-    def _serve(self, assets: Path) -> tuple[str, uvicorn.Server]:
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-        sock.close()
-        app = create_app(Settings(assets_dir=assets, driver="energy"))
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 15
-        while not server.started and time.monotonic() < deadline:
-            time.sleep(0.02)
-        if not server.started:
-            raise SpeechError("the speech server did not start")
-        return f"http://127.0.0.1:{port}", server
-
-    def _reference_metrics(self) -> LipMetrics:
+    async def _reference_metrics(self, job: SpeechJob) -> LipMetrics:
         """Measure splat-01 when it is under assets; else #161's after baseline."""
         ref_id = self.settings.reference
         root = self.assets
@@ -358,67 +339,18 @@ class SpeechJobs:
         try:
             work.mkdir(parents=True)
             # Point the short-lived server at the real assets so splat-01 loads as itself.
-            url, server = self._serve(root)
-            return self._run_script_sync(url, ref_id, out)
+            server = HeadServer(root)
+            if not await asyncio.to_thread(server.start):
+                raise SpeechError("the speech server did not start")
+            await self._script(job, server.url, ref_id, out)
+            return self._metrics_from_file(out)
         except Exception as exc:  # noqa: BLE001
             log.warning("speech_reference_failed", face=ref_id, reason=str(exc))
             return reference_baseline()
         finally:
             if server is not None:
-                server.should_exit = True
-            shutil.rmtree(work, True)
-
-    def _run_script_sync(self, url: str, face: str, out: Path) -> LipMetrics:
-        s = self.settings
-        assert s.script is not None and s.take is not None and s.landmarker is not None  # noqa: S101
-        import subprocess
-
-        argv = [
-            s.uv,
-            "run",
-            "--with",
-            "pillow",
-            "--with",
-            "playwright",
-            "--with",
-            "mediapipe==0.10.14",
-            "--with",
-            "numpy",
-            "python",
-            str(s.script),
-            "--url",
-            url,
-            "--face",
-            face,
-            "--take",
-            str(s.take),
-            "--model",
-            str(s.landmarker),
-            "--out",
-            str(out),
-            "--size",
-            str(s.size),
-            "--stride",
-            str(s.stride),
-        ]
-        env = {
-            **os.environ,
-            "PLAYWRIGHT_BROWSERS_PATH": os.environ.get(
-                "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".cache" / "ms-playwright")
-            ),
-        }
-        proc = subprocess.run(  # noqa: S603
-            argv,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(s.script.parent),
-            timeout=s.timeout_s,
-            check=False,
-        )
-        if proc.returncode != 0 or not out.is_file():
-            raise SpeechError((proc.stdout or proc.stderr or f"measure_speech exited {proc.returncode}")[-2000:])
-        return self._metrics_from_file(out)
+                await asyncio.to_thread(server.stop)
+            await asyncio.to_thread(shutil.rmtree, work, True)
 
     async def _script(self, job: SpeechJob, url: str, face: str, out: Path) -> dict[str, Any]:
         s = self.settings
@@ -451,30 +383,14 @@ class SpeechJobs:
             "--stride",
             str(s.stride),
         ]
-        env = {
-            **os.environ,
-            "PLAYWRIGHT_BROWSERS_PATH": os.environ.get(
-                "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".cache" / "ms-playwright")
-            ),
-        }
         began = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.DEVNULL,
-            env=env,
-            cwd=str(s.script.parent),
-        )
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=s.timeout_s)
+            code, text = await run_script(argv, cwd=s.script.parent, timeout_s=s.timeout_s, env=browsers_env())
         except TimeoutError:
-            proc.kill()
             raise SpeechError(f"speech took more than {s.timeout_s:g} s") from None
-        text = (stdout or b"").decode(errors="replace")
-        if proc.returncode != 0 or not out.is_file():
-            raise SpeechError(text.strip()[-2000:] or f"measure_speech exited {proc.returncode}")
-        return {"code": proc.returncode, "seconds": round(time.monotonic() - began, 1), "log": text[-2000:]}
+        if code != 0 or not out.is_file():
+            raise SpeechError(text.strip()[-2000:] or f"measure_speech exited {code}")
+        return {"code": code, "seconds": round(time.monotonic() - began, 1), "log": text[-2000:]}
 
     @staticmethod
     def _metrics_from_file(path: Path) -> LipMetrics:

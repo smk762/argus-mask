@@ -630,3 +630,103 @@ await tick();
 console.log(JSON.stringify({{ errors, revoked, disposed }}));
 """)
     assert out == {"errors": ["no plate", "no clip.json"], "revoked": ["blob:1", "blob:2"], "disposed": ["model"]}
+
+
+# ---- the guided builder (guided.js) -------------------------------------------------------------------
+
+GUIDED = (PAGE / "guided.js").read_text(encoding="utf-8")
+GUIDED_DOM = """
+Node.prototype.setAttribute = function (k, v) { (this.attrs ||= {})[k] = String(v); };
+Object.assign(Node.prototype, { className: '', onclick: null, onsubmit: null, onchange: null, disabled: false, type: '',
+  id: '', htmlFor: '', role: '' });
+class Option extends Node { constructor(text, value) { super('option'); this.textContent = text; this.value = value; } }
+// A select holds only a value one of its options has, as a real one does.
+const plain = document.createElement;
+document.createElement = (tag) => {
+  const node = plain(tag);
+  if (tag !== 'select') return node;
+  let chosen = null;
+  Object.defineProperty(node, 'value', {
+    get() { return chosen === null ? (node.options[0]?.value ?? '') : chosen; },
+    set(v) { chosen = node.options.some((o) => o.value === v) ? v : ''; },
+  });
+  node.remove = (i) => node.children.splice(i, 1);
+  return node;
+};
+const status = () => {};
+const enc = encodeURIComponent;
+const badge = () => el('span');
+let catalog = null; let buildId = 'guide'; const stages = new Map();
+"""
+
+
+def _guided(*names: str) -> str:
+    """guided.js's el() and *names*, with the state they share."""
+    el = GUIDED[GUIDED.index("const $ = ") : GUIDED.index("const enc = ")]
+    state = "".join(
+        line + "\n"
+        for line in GUIDED.splitlines()
+        if line.startswith(("let record", "let activeCandidate", "const pending", "let previews"))
+    )
+    functions = "\n".join(_function(GUIDED, f"function {n}(") for n in names)
+    return GUIDED_DOM + el + state + functions
+
+
+def test_the_guided_pages_aria_reaches_the_dom() -> None:
+    out = _node(f"""
+{_guided()}
+const tab = el('button', {{ type: 'button', className: 'on', 'aria-selected': 'true', maxlength: 5 }}, 'c1');
+console.log(JSON.stringify({{ attrs: tab.attrs || {{}}, type: tab.type, className: tab.className }}));
+""")
+    assert out == {"attrs": {"aria-selected": "true", "maxlength": "5"}, "type": "button", "className": "on"}
+
+
+def test_a_second_candidate_can_be_added_before_it_has_a_source() -> None:
+    out = _node(f"""
+{_guided("renderCandidateTabs")}
+const window = {{ prompt: () => 'c2' }};
+const renderWorkspace = () => renderCandidateTabs();
+record = {{ candidates: {{ c1: {{}} }} }};
+activeCandidate = 'c1';
+renderCandidateTabs();
+const tabs = () => $('candidates').children.map((b) => b.textContent);
+$('candidates').children.at(-1).onclick();
+const added = {{ active: activeCandidate, tabs: tabs() }};
+record.candidates.c2 = {{}};       // its source arrived
+renderCandidateTabs();
+console.log(JSON.stringify({{ added, after: {{ active: activeCandidate, tabs: tabs() }} }}));
+""")
+    assert out["added"] == {"active": "c2", "tabs": ["c1", "c2", "+ candidate"]}
+    assert out["after"] == out["added"]
+
+
+def test_the_recorded_backdrop_is_the_one_the_form_shows() -> None:
+    out = _node(f"""
+{_guided("scenePanel", "stepShell")}
+const stepMeta = () => ({{ about: '' }}); const checksList = () => null; const scoresLine = () => null;
+const resultOf = (step) => (step === 'scene' ? {{ data: {{ scene: 'garden', shot: 'wide' }} }} : null);
+const json = async () => [{{ name: 'ftl', title: 'F', built_in: true }}, {{ name: 'garden', title: 'G', built_in: true }}];
+record = {{ face: {{}}, candidates: {{}} }};
+const section = scenePanel();
+await tick(); await tick();
+const find = (id) => section.all((n) => n.id === id)[0];
+console.log(JSON.stringify({{ scene: find('scene-name').value, shot: find('scene-shot').value }}));
+""")
+    assert out == {"scene": "garden", "shot": "wide"}
+
+
+def test_a_pick_preview_starts_once_its_card_is_in_the_document() -> None:
+    out = _node(f"""
+{_guided("pickPanel", "stepShell", "renderWorkspace")}
+const stepMeta = () => ({{ about: '' }}); const candidateState = () => ({{ steps: {{}} }}); const resultOf = () => null;
+const EVAL_STEPS = []; const renderCandidateTabs = () => {{}};
+const sourcePanel = () => el('p'); const portraitPanel = sourcePanel; const buildPanel = sourcePanel;
+const evalPanel = sourcePanel; const scenePanel = sourcePanel; const savePanel = sourcePanel;
+const shown = [];
+const previewCandidate = async (name, host) => {{ shown.push([name, $('steps').all((n) => n === host).length]); }};
+record = {{ id: 'guide', face: {{}}, candidates: {{ c1: {{ pick: [] }}, c2: {{ pick: [] }} }} }};
+renderWorkspace();
+renderWorkspace();
+console.log(JSON.stringify(shown));
+""")
+    assert out == [["c1", 1], ["c2", 1], ["c1", 1], ["c2", 1]]

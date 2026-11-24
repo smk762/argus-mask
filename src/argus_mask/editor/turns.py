@@ -8,10 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
-import socket
-import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -21,13 +18,12 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import uvicorn
 
-from argus_mask.config import Settings, TurnsSettings
+from argus_mask.config import TurnsSettings
 from argus_mask.editor.guided import Artifact, Check, GuidedError, GuidedStore, NotReady, StepResult, Tool
+from argus_mask.editor.scripts import HeadServer, browsers_env, run_script
 from argus_mask.faces import MANIFEST_NAME, build_manifest, sha256_file
 from argus_mask.models import Limits, Provenance, is_face_id
-from argus_mask.server.app import create_app
 from argus_mask.turns import DEFAULT_GAP, PoseScore, TurnReport, measure_limits, synthetic_pose
 
 log = structlog.get_logger(__name__)
@@ -210,9 +206,11 @@ class TurnsJobs:
             )
             (face_dir / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
             job.stage = "serving the head"
-            url, server = await asyncio.to_thread(self._serve, serve)
+            server = HeadServer(serve)
+            if not await asyncio.to_thread(server.start):
+                raise TurnsError("the turns server did not start")
             job.stage = "drawing poses"
-            ran = await self._script(job, url, out)
+            ran = await self._script(job, server.url, out)
             raw = json.loads(out.read_text(encoding="utf-8"))
             report = TurnReport(
                 scores=tuple(
@@ -231,7 +229,7 @@ class TurnsJobs:
             return await asyncio.to_thread(self._collect, job, head_art, report, raw, started, ran)
         finally:
             if server is not None:
-                server.should_exit = True
+                await asyncio.to_thread(server.stop)
             await asyncio.to_thread(shutil.rmtree, work, True)
 
     def _collect(
@@ -253,7 +251,7 @@ class TurnsJobs:
                     verdict="advisory",
                     reason=(
                         f"{worst.label} gaps (score {worst.gap:.2f} at {worst.region}): "
-                        f"limits yaw={report.limits.yaw:g}° pitch_up={report.limits.pitch_up:g}°"
+                        f"limits yaw={_degrees(report.limits.yaw)} pitch_up={_degrees(report.limits.pitch_up)}"
                     ),
                     measure={
                         "yaw": float(report.limits.yaw or 0),
@@ -308,23 +306,6 @@ class TurnsJobs:
             raise GuidedError(f"{candidate}'s head changed since its build was recorded")
         return head, path
 
-    def _serve(self, assets: Path) -> tuple[str, uvicorn.Server]:
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-        sock.close()
-        app = create_app(Settings(assets_dir=assets, driver="energy"))
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 15
-        while not server.started and time.monotonic() < deadline:
-            time.sleep(0.02)
-        if not server.started:
-            raise TurnsError("the turns server did not start")
-        return f"http://127.0.0.1:{port}", server
-
     async def _script(self, job: TurnsJob, url: str, out: Path) -> dict[str, Any]:
         s = self.settings
         assert s.script is not None  # noqa: S101
@@ -348,30 +329,18 @@ class TurnsJobs:
             "--threshold",
             str(s.threshold),
         ]
-        env = {
-            **os.environ,
-            "PLAYWRIGHT_BROWSERS_PATH": os.environ.get(
-                "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".cache" / "ms-playwright")
-            ),
-        }
         began = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.DEVNULL,
-            env=env,
-            cwd=str(s.script.parent),
-        )
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=s.timeout_s)
+            code, text = await run_script(argv, cwd=s.script.parent, timeout_s=s.timeout_s, env=browsers_env())
         except TimeoutError:
-            proc.kill()
             raise TurnsError(f"turns took more than {s.timeout_s:g} s") from None
-        text = (stdout or b"").decode(errors="replace")
-        if proc.returncode != 0 or not out.is_file():
-            raise TurnsError(text.strip()[-2000:] or f"measure_turns exited {proc.returncode}")
-        return {"code": proc.returncode, "seconds": round(time.monotonic() - began, 1), "log": text[-2000:]}
+        if code != 0 or not out.is_file():
+            raise TurnsError(text.strip()[-2000:] or f"measure_turns exited {code}")
+        return {"code": code, "seconds": round(time.monotonic() - began, 1), "log": text[-2000:]}
+
+
+def _degrees(limit: float | None) -> str:
+    return "none" if limit is None else f"{limit:g}°"
 
 
 def analyze_synthetic(weak: bool = False) -> Callable[[str, str, Path], TurnReport]:

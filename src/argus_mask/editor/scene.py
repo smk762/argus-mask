@@ -8,6 +8,7 @@ to measure.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +17,7 @@ import structlog
 from argus_mask.backgrounds import BUILT_IN_SCENES, SHOTS, VIEWER_SCENES, PlateError, PlateStore
 from argus_mask.bright_floor import BRIGHT_SHARE, BrightFloor, measure_path
 from argus_mask.editor.guided import Check, GuidedError, GuidedStore, NotReady, StepResult
+from argus_mask.models import SCENE_NAME_PATTERN
 
 log = structlog.get_logger(__name__)
 
@@ -29,6 +31,8 @@ class SceneError(GuidedError):
 
 def plate_png(name: str, plates: PlateStore) -> Path | None:
     """Where a named scene's plate PNG lives, or None if it has none (procedural / unknown)."""
+    if not re.fullmatch(SCENE_NAME_PATTERN, name):  # before it is part of any path
+        return None
     built = VIEWER_SCENES / name / "plate.png"
     if built.is_file():
         return built

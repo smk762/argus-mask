@@ -95,8 +95,12 @@ class VoiceStore:
         except FileNotFoundError:
             # a temp name of its own: two requests staging the same clip each write and replace their own
             tmp = path.with_name(f"{sha}.{uuid.uuid4().hex}.part")
-            tmp.write_bytes(data)
-            tmp.replace(path)
+            try:
+                tmp.write_bytes(data)
+                tmp.replace(path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)  # never evicted: nothing lists a .part
+                raise
         # Another request may evict (or be evicting) the same files: one gone between listing and stat is skipped.
         dated = []
         for p in self.staged.glob("*.wav"):

@@ -38,6 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ARGUS_GPU_COORDINATOR`, empty, now described as the setting for a host with no broker (`lease`: the host lock
   file). `compose.yaml` still passes both through for a host that sets them.
 
+### Fixed
+
+- **Guided heads.** A portrait's framing refusal from curator counts; one unreadable picture no longer blocks the
+  others' text check; a refused portrait always ranks below one that was not; sharpness is measured signed (the
+  threshold stays). Uploads to curator have a folder of their own per run (curator never overwrites, so a portrait
+  checked again could be scored as it was before) and are deleted afterwards where curator allows it.
+- **Guided restyle** checks consent again, refuses a source that changed while it waited, keeps the portrait it was
+  made from, and leaves the source as it was when it fails.
+- **Guided builds.** A build's files replace the earlier head's only with the result that the record takes; a cache
+  that cannot be written never fails the head. Saving puts the earlier face back if the new one cannot be installed
+  or served.
+- Stopping a likeness, rest, turns or speech job ends everything it started (container, browser, server), and
+  stopping portrait checks writes nothing more.
+- **Guided page.** A second candidate can be added, the recorded backdrop is shown, pick previews have a size, and
+  labels reach assistive technology.
+- `lam/`: the tracker works in the job's own directory; the Gaussian refine (a spike) keeps the parameters its loss is of
+  and never writes over the archive it reads.
+- The hosted demo's docs are read from the commit they name, not the working tree.
+
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

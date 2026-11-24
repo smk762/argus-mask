@@ -106,3 +106,27 @@ def test_editor_turns_route(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert job["state"] == "done"
         assert float(job["limits"]["yaw"]) >= 18
+
+
+def test_a_head_with_no_limit_one_way_still_gets_its_advisory(tmp_path: Path) -> None:
+    from argus_mask.models import Limits
+    from argus_mask.turns import PoseScore, TurnReport
+
+    store = GuidedStore(tmp_path / "assets")
+    _seed_build(store)
+    report = TurnReport(
+        scores=(PoseScore(label="down", yaw=0, pitch=12, gap=0.9, region="crown"),),
+        limits=Limits(pitch_down=8.0),
+        threshold=DEFAULT_GAP,
+    )
+
+    async def run():  # noqa: ANN202
+        jobs = TurnsJobs(store, TurnsSettings(script=None), analyze=lambda *_: report)
+        job = jobs.start("guide", "c1")
+        await asyncio.wait({job.task}, timeout=10)
+        return job
+
+    job = asyncio.run(run())
+    assert (job.state, job.error) == ("done", None)
+    (check,) = store.load("guide").get("turns", "c1").checks
+    assert check.verdict == "advisory" and "yaw=none pitch_up=none" in check.reason
