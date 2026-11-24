@@ -19,8 +19,12 @@ import math
 import os
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import torch
 
 # offset.ply is head-local (centroid near the origin); the viewer lifts it onto FLAME. The spike camera
 # aims at the Gaussian centroid with FOV matching the viewer's long lens.
