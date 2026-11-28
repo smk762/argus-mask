@@ -350,3 +350,31 @@ def test_a_member_whose_stream_is_broken_is_refused_not_raised(tmp_path) -> None
     model.write_bytes(bytes(data))
     with pytest.raises(FaceError, match="does not unpack"):
         inspect_splat(model)
+
+
+def test_scans_at_once_inspect_an_archive_once(tmp_path, monkeypatch) -> None:
+    """The server and editor scan from request threads: two at once inspect the archive once, and both see it."""
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    from argus_mask import faces  # noqa: PLC0415
+    from tests.helpers import make_splat_face  # noqa: PLC0415
+
+    make_splat_face(tmp_path)
+    calls = []
+
+    def slow(path):  # noqa: ANN001, ANN202
+        calls.append(path)
+        time.sleep(0.2)  # long enough for the other scan to arrive while this one inspects
+        return inspect_splat(path)
+
+    monkeypatch.setattr(faces, "inspect_splat", slow)
+    store = FaceStore(tmp_path)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(store.scan())) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
+    assert [[m.id for m in accepted] for accepted, _ in results] == [["splat-head"], ["splat-head"]]

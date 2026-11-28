@@ -151,7 +151,7 @@ from argus_mask.editor.voices import (
 )
 from argus_mask.expressions import BUILTIN as EXPRESSION_BUILTIN
 from argus_mask.expressions import DEFAULT_SET, ExpressionError, Expressions, check_set
-from argus_mask.faces import MEDIA_TYPES, AliasError, Aliases, FaceError, FaceStore
+from argus_mask.faces import AliasError, Aliases, FaceError, FaceStore
 from argus_mask.gpu import VOICE_MAKE
 from argus_mask.gpu import coordinator as gpu_coordinator
 from argus_mask.gpu import lease as gpu_lease
@@ -162,12 +162,11 @@ from argus_mask.models import (
     MASK_VERSION,
     FaceManifest,
     LookAlike,
-    ModelFile,
     is_face_id,
     is_safe_name,
 )
 from argus_mask.portraits import DEFAULT_STYLE, TEMPLATES
-from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, read_body
+from argus_mask.server.app import VIEWER_DIR, add_scene_routes, install_guards, model_response, read_body
 from argus_mask.voice import analyse, assess
 
 log = structlog.get_logger(__name__)
@@ -566,9 +565,6 @@ def create_editor_app(
     @app.get("/face/{face_id}", response_model=FaceManifest)
     def face(face_id: str, where: str | None = Query(None, alias="from")) -> FaceManifest:
         return find_face(face_id, where)[0]
-
-    def model_response(model: ModelFile, path: Path) -> FileResponse:
-        return FileResponse(path, media_type=MEDIA_TYPES[model.format], headers={"ETag": f'"{model.sha256}"'})
 
     @app.get("/face/{face_id}/model")
     def face_model(
@@ -1373,7 +1369,7 @@ def create_editor_app(
                         "name": f"{alias} → {face}",
                         "kind": "alias",
                         "face": face,  # the face it names: the page shows that face's still
-                        "cleared": cleared.get(face, True),
+                        "cleared": cleared.get(face, False),  # a face not listed is not known to be cleared
                     }
                     for alias, face in (health.get("aliases") or {}).items()
                 ],
@@ -1623,6 +1619,8 @@ def create_editor_app(
                 engine, reason = None, str(exc)
             if found is None and reason is None:
                 reason = "this service does not list its voices"
+            elif found == [] and reason is None:  # XTTS answers its list with an error while its model loads
+                reason = "no voices listed yet: it may still be loading"
             return {
                 "tts_url": tts,
                 "engine": engine,
