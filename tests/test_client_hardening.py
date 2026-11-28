@@ -241,3 +241,53 @@ def test_a_garbled_http_voices_reply_is_no_answer_not_a_crash() -> None:
     finally:
         listener.close()
         thread.join(5)
+
+
+@contextmanager
+def _tts_that_loads(busy_answers: int) -> Iterator[tuple[str, list[str]]]:
+    """An HTTP TTS whose ``/speakers`` answers 503 *busy_answers* times before it lists one speaker."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    asked: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            asked.append(self.path)
+            loading = self.path == "/speakers" and asked.count("/speakers") <= busy_answers
+            body = {"error": "Model still loading"} if loading else {"speakers": [{"id": "Ana", "name": "Ana"}]}
+            if self.path == "/clones":
+                body = {"clones": []}
+            raw = json.dumps(body).encode()
+            self.send_response(503 if loading else 200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/synthesise", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_tts_still_loading_its_model_is_asked_again_not_listed_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(client, "VOICES_LOADING_POLL_S", 0.01)
+    with _tts_that_loads(busy_answers=2) as (url, asked):
+        voices = client._http_voices(url)
+    assert [v["name"] for v in voices or []] == ["speaker:Ana"]
+    assert asked.count("/speakers") == 3
+
+
+def test_a_tts_that_never_finishes_loading_says_so_instead_of_listing_no_voices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client, "VOICES_LOADING_POLL_S", 0.01)
+    monkeypatch.setattr(client, "VOICES_LOADING_WAIT_S", 0.05)
+    with _tts_that_loads(busy_answers=10**6) as (url, _), pytest.raises(ClientError, match="still loading"):
+        client._http_voices(url)

@@ -403,6 +403,10 @@ def open_wyoming(tts_url: str, body: dict) -> WyomingReply:
 
 
 VOICES_TIMEOUT_S = 5.0  # for the whole describe, not each read
+# A TTS that unloads its model when idle (argus-echo's XTTS) answers 503 while it loads again, and the
+# ask itself starts the load: it is asked again for this long before the list is given up on.
+VOICES_LOADING_WAIT_S = 30.0
+VOICES_LOADING_POLL_S = 1.0
 
 
 def http_base(tts_url: str) -> str | None:
@@ -509,18 +513,30 @@ def _http_voices(tts_url: str) -> list[dict] | None:
     ``GET …/clones`` (stored clones). Named as the Wyoming bridge names them, and as ``voiced`` maps
     them back: a numbered speaker by its id, a named one (XTTS's studio speakers) as ``speaker:<id>``,
     a clone as ``clone:<id>``. None if the service answers neither.
+
+    A 503 is "not ready yet", not "no voices": the service is asked again for up to
+    ``VOICES_LOADING_WAIT_S``, then :class:`ClientError` says it is still loading. Reading it as an
+    empty answer listed a loading XTTS with no speakers at all.
     """
     base = http_base(tts_url)
     if base is None:
         return None  # not the /synthesise contract: no known place to ask
+    deadline = time.monotonic() + VOICES_LOADING_WAIT_S
 
     def get(path: str) -> dict | None:
-        try:
-            with urllib.request.urlopen(base + path, timeout=VOICES_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only
-                body = json.loads(reply.read())
-                return body if isinstance(body, dict) else None
-        except (OSError, ValueError, http.client.HTTPException):  # a garbled reply is no answer, not a crash
-            return None
+        while True:
+            try:
+                with urllib.request.urlopen(base + path, timeout=VOICES_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only
+                    body = json.loads(reply.read())
+                    return body if isinstance(body, dict) else None
+            except urllib.error.HTTPError as exc:
+                if exc.code != 503:
+                    return None
+                if time.monotonic() + VOICES_LOADING_POLL_S > deadline:
+                    raise ClientError(f"the TTS service at {base} is still loading: try again shortly") from exc
+                time.sleep(VOICES_LOADING_POLL_S)
+            except (OSError, ValueError, http.client.HTTPException):  # a garbled reply is no answer, not a crash
+                return None
 
     speakers, clones = get("/speakers"), get("/clones")
     if speakers is None and clones is None:

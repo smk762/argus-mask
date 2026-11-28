@@ -194,6 +194,8 @@ async function loadVoices() {
   voicesFor = tts;
   configured ??= json('/voices/all').then((r) => r.services || [], () => []);
   const all = await configured;
+  // A service that could not list its voices this time (still loading, down) is asked again on the next call.
+  if (!all.length || all.some((s) => s.reason)) configured = null;
   let typed = null;
   if (tts && !all.some((s) => s.tts_url === tts)) {
     typed = { tts_url: tts, engine: null, listed: false, voices: [] };
