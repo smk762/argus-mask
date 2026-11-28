@@ -242,20 +242,26 @@ let state = {{ tts_voice: '' }};
 const updateCli = () => {{}};
 const replies = {{}};
 const json = (url) => (replies[url] = later());
-let voicesFor = null; let listed = []; let face = '';
-const OTHER = '\\u0001other';
+let voicesFor = null; let face = '';
+let configured = null; let typedService = null; let services = [];
+const OTHER = '\\u0001other'; const AT = '\\u0002';
 const faceVoice = () => null;
 {_function(source, "function wantedVoice(")}
 {_function(source, "function selectVoice(")}
+{_function(source, "function followVoice(")}
 {_function(source, "function fillVoices(")}
 {_function(source, "async function loadVoices(")}
+const splitValue = (v) => (v.includes(AT) ? [v.slice(0, v.indexOf(AT)), v.slice(v.indexOf(AT) + 1)] : ['', v]);
+const host = (url) => url;
 $('tts').value = 'http://a'; const a = loadVoices();
 $('tts').value = 'http://b'; const b = loadVoices();
+replies['/voices/all'].resolve({{ services: [] }});
+await new Promise((r) => setTimeout(r, 0));
 replies['/voices?tts=' + encodeURIComponent('http://b')].resolve({{ listed: true, voices: [{{ name: 'from-b' }}] }}); await b;
 replies['/voices?tts=' + encodeURIComponent('http://a')].resolve({{ listed: true, voices: [{{ name: 'from-a' }}] }}); await a;
 console.log(JSON.stringify($('voice').options.map((o) => o.value)));
 """)
-    assert out == ["", "from-b", "\u0001other"]
+    assert out == ["", "http://b\u0002from-b", "\u0001other"]
 
 
 def test_overlapping_reviews_show_one_face_throughout() -> None:

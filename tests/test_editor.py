@@ -1004,10 +1004,11 @@ def broadcasting(rig):
     make_face(rig["assets"], "stock-01")
 
     @contextmanager
-    def run(tts_url: str = "", *, read_only: bool = False):
+    def run(tts_url: str = "", *, read_only: bool = False, tts_services: tuple[str, ...] = ()):
         with live_server(create_app(Settings(assets_dir=rig["assets"], read_only=read_only))) as url:
             ed = replace(rig["editor"], server_url=url)
-            with TestClient(create_editor_app(Settings(assets_dir=rig["assets"], tts_url=tts_url), ed)) as c:
+            cfg = Settings(assets_dir=rig["assets"], tts_url=tts_url, tts_services=tts_services)
+            with TestClient(create_editor_app(cfg, ed)) as c:
                 yield c, url
 
     return run
@@ -1213,6 +1214,32 @@ def test_a_named_speaker_is_listed_as_one_and_goes_back_as_one(broadcasting) -> 
         [voice] = c.get("/voices").json()["voices"]
         assert voice["name"] == "speaker:Rosemary Okafor"
         assert voiced({}, voice["name"], tts) == {"speaker": "Rosemary Okafor"}
+
+
+def test_every_configured_service_offers_its_voices(broadcasting) -> None:
+    """Broadcast picks from every model at once: each service's voices, labelled by the engine it names."""
+    from tests.helpers import fake_tts  # noqa: PLC0415
+
+    miso = {"speakers": {"speakers": [{"id": "0", "name": "Speaker 0"}]}, "health": {"engine": "miso"}}
+    xtts = {
+        "speakers": {"speakers": [{"id": "Rosemary Okafor", "name": "Rosemary Okafor"}]},
+        "health": {"engine": "xtts-v2"},
+    }
+    down = "http://127.0.0.1:9/synthesise/stream"
+    with (
+        fake_tts(tone(0.1), voices=miso) as (miso_url, _),
+        fake_tts(tone(0.1), voices=xtts) as (xtts_url, _),
+        broadcasting(miso_url, tts_services=(xtts_url, down, miso_url)) as (c, _),
+    ):
+        services = c.get("/voices/all").json()["services"]
+        assert [s["tts_url"] for s in services] == [miso_url, xtts_url, down]  # the default first, each once
+        assert [s["engine"] for s in services] == ["miso", "xtts-v2", None]
+        assert [s["default"] for s in services] == [True, False, False]
+        assert [v["name"] for v in services[1]["voices"]] == ["speaker:Rosemary Okafor"]
+        assert services[2]["listed"] is False and services[2]["voices"] == [] and services[2]["reason"]
+        # A configured service is the editor's own choice, not a host the caller names: no origin check for it.
+        evil = {"Origin": "http://evil.example"}
+        assert c.get("/voices", params={"tts": xtts_url}, headers=evil).json()["listed"] is True
 
 
 # ---- recording a broadcast ---------------------------------------------------------------------------

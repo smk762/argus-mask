@@ -417,6 +417,21 @@ def http_base(tts_url: str) -> str | None:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path[: match.start()], "", ""))
 
 
+def tts_engine(tts_url: str) -> str | None:
+    """The engine an HTTP ``/synthesise`` service names in its ``/health`` (``miso``, ``xtts-v2``), or None when it
+    names none, is not that contract, or does not answer: a label for its voices, never a check."""
+    base = http_base(tts_url)
+    if base is None:
+        return None
+    try:
+        with urllib.request.urlopen(f"{base}/health", timeout=VOICES_TIMEOUT_S) as reply:  # noqa: S310 - http(s) only
+            body = json.loads(reply.read())
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    engine = body.get("engine") if isinstance(body, dict) else None
+    return str(engine)[:40] if isinstance(engine, str) and engine.strip() else None
+
+
 CLONE_TIMEOUT_S = 300.0  # a cold model loads before it clones
 
 

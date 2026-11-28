@@ -43,6 +43,7 @@
 ``GET  /guided/{id}/jobs/{job}``, ``POST /guided/{id}/jobs/{job}/stop``  a guided job's progress; stop it
 ``GET  /broadcast/state``               the server's faces, who watches them, the TTS defaults, running broadcasts
 ``GET  /voices``                        the voices a (Wyoming) TTS service lists: ``?tts=`` its URL
+``GET  /voices/all``                    the voices of every configured TTS service, by service
 ``POST /broadcast/say``, ``/broadcast/push``  say text through TTS, or play a WAV (the body), into a face
 ``GET  /broadcast/{job}``, ``POST /broadcast/{job}/stop``  a broadcast's progress; stop it
 ``GET  /broadcast.html``                the Broadcast page
@@ -1383,7 +1384,7 @@ def create_editor_app(
         """The TTS service a request names, or the configured one. A host the caller names is reached from here,
         so that takes the origin check the writes have: no other site may use the editor to probe the LAN."""
         given = given.strip()
-        if given and given != cfg.tts_url:
+        if given and given not in cfg.voice_services:
             why = origin_refusal(request.scope, request.headers)
             if why is None and request.headers.get("sec-fetch-site") == "cross-site":
                 why = "a cross-site request may not name a TTS service"
@@ -1606,6 +1607,32 @@ def create_editor_app(
         if found is None:
             return {"tts_url": tts, "listed": False, "voices": [], "reason": "this service does not list its voices"}
         return {"tts_url": tts, "listed": True, "voices": found}
+
+    @app.get("/voices/all")
+    async def voices_all() -> dict:
+        """The voices of every configured TTS service (``ARGUS_MASK_TTS_URL`` first, then ``ARGUS_MASK_TTS_SERVICES``
+        and the suite's XTTS), asked at once. Only configured services, so no caller names a host here."""
+
+        async def one(tts: str) -> dict:
+            found, reason = None, None
+            try:
+                found, engine = await asyncio.gather(
+                    asyncio.to_thread(client.tts_voices, tts), asyncio.to_thread(client.tts_engine, tts)
+                )
+            except client.ClientError as exc:
+                engine, reason = None, str(exc)
+            if found is None and reason is None:
+                reason = "this service does not list its voices"
+            return {
+                "tts_url": tts,
+                "engine": engine,
+                "default": tts == cfg.tts_url,
+                "listed": found is not None,
+                "voices": found or [],
+                "reason": reason,
+            }
+
+        return {"services": list(await asyncio.gather(*(one(t) for t in cfg.voice_services)))}
 
     @app.post("/broadcast/say")
     async def broadcast_say(req: Say, request: Request) -> dict:
