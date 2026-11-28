@@ -2,7 +2,8 @@
 
 It is the other end of argus-mask's ``a2f`` driver (``src/argus_mask/drivers/a2f.py``):
 
-* ``GET /health`` -> 200 ``{"ready": bool, "model": str, "reason": str?}``
+* ``GET /health`` -> 200, argus-cortex's ``ServiceHealth`` (``status`` ``ok`` or ``starting``) with the
+  server's own fields beside it: ``{"ready": bool, "model": str, "reason": str?, "busy": bool, ...}``
 * ``WS /drive``, one stream at a time:
 
   - client -> ``{"fps": 30, "sample_rate": 16000}``
@@ -18,7 +19,8 @@ loaded and is reset between streams. Nothing here imports CUDA.
 
 Config (environment): ``A2F_MODEL`` (mark | claire | james), ``A2F_GPU_SOLVER`` (0 | 1),
 ``A2F_PORT`` (8110), ``A2F_HOST`` (0.0.0.0), ``A2F_DATA`` (/data), ``A2F_FPS`` (the frame
-rate the worker is warmed for, 30).
+rate the worker is warmed for, 30). For ``/health``: ``ARGUS_PEER`` (the container's ``argus.peer`` label),
+``ARGUS_BUILD`` (the image's build id) and ``A2F_VERSION`` (the argus-mask version it was built from).
 
 SPDX-License-Identifier: MIT
 """
@@ -38,6 +40,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import websockets
@@ -52,6 +55,13 @@ WORKER_START_TIMEOUT_S = 120.0
 FLUSH_TIMEOUT_S = 60.0
 RETRY_S = 30.0
 MAX_MESSAGE = 2**22  # 4 MiB: about a minute of audio in one chunk
+
+# /health is argus-cortex's ServiceHealth (argus_cortex.service), built here by hand: this image has no
+# argus-cortex. tests/test_a2f_health.py validates health_body() with cortex's own model, so the two cannot drift.
+SERVICE = "argus-mask"
+SERVICE_VERSION = "1.1"
+UNKNOWN_VERSION = "0.0.0+unknown"  # what cortex reports for a package it cannot find
+PEER_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")  # argus_cortex.peers.PEER_NAME_PATTERN
 
 # The regression models, one per character. Revisions are pinned so a changed upstream repo
 # cannot change what a deployment runs. None of these is gated; Audio2Emotion (which is) is
@@ -118,6 +128,63 @@ class Config:
         self.worker = os.environ.get("A2F_WORKER", "a2f-worker")
         self.trtexec = os.environ.get("A2F_TRTEXEC", "trtexec")
         self.trt_version = os.environ.get("A2F_TRT_VERSION", "unknown")
+        self.version = os.environ.get("A2F_VERSION", "").strip()[:100] or UNKNOWN_VERSION
+        self.build = os.environ.get("ARGUS_BUILD", "").strip()[:200] or None
+        self.peer = os.environ.get("ARGUS_PEER", "").strip() or None
+        if self.peer is not None and (len(self.peer) > 100 or not PEER_NAME.match(self.peer)):
+            raise SystemExit(f"ARGUS_PEER={self.peer!r} is not a peer name: lower-case words joined by '-'")
+
+
+def _utc_text(moment: datetime) -> str:
+    utc = moment.astimezone(timezone.utc)  # noqa: UP017 - the image runs Python 3.10, which has no datetime.UTC
+    return utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def health_body(
+    *,
+    ready: bool,
+    reason: str,
+    started_at: datetime,
+    model: str,
+    fps: int,
+    gpu_solver: bool,
+    busy: bool,
+    streams: int,
+    version: str = UNKNOWN_VERSION,
+    build: str | None = None,
+    peer: str | None = None,
+) -> dict:
+    """The ``GET /health`` body: a ``ServiceHealth`` and, beside it, the fields this server has always sent.
+
+    ``status`` is ``ok`` once the model is loaded and ``starting`` until then (downloading, building the engine,
+    loading, or retrying after a failure), with the reason in ``reason``. The HTTP status stays 200 either way:
+    readers that take any answer as "up" (the image's healthcheck, argus-iris's container resident) keep reading
+    a server that is busy building its engine as up, and the suite directory reads ``status`` from the body.
+    """
+    body: dict = {
+        # argus-cortex ServiceHealth
+        "service_version": SERVICE_VERSION,
+        "service": SERVICE,
+        "version": version,
+        "status": "ok" if ready else "starting",
+        "started_at": _utc_text(started_at),
+        "wire": {},
+        "capabilities": [],
+        "checks": {},
+        "read_only": False,
+        "build": build,
+        "peer": peer,
+        # this server's own, read by mask's a2f driver and a2f/check.py
+        "ready": ready,
+        "model": model,
+        "fps": fps,
+        "gpu_solver": gpu_solver,
+        "busy": busy,
+        "streams": streams,
+    }
+    if not ready:
+        body["reason"] = reason
+    return body
 
 
 # ---- first start: the model and its engine ------------------------------------------------
@@ -308,6 +375,7 @@ class Server:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.phase = "starting"
+        self.started_at = datetime.now(timezone.utc)  # noqa: UP017 - the image runs Python 3.10, which has no datetime.UTC
         self.model_json: Path | None = None
         self.worker: Worker | None = None
         self.busy = asyncio.Lock()
@@ -321,17 +389,19 @@ class Server:
         return self.worker is not None and self.worker.process.returncode is None
 
     def health(self) -> dict:
-        body: dict = {
-            "ready": self.ready,
-            "model": self.config.repo.split("/")[-1],
-            "fps": self.worker.fps if self.worker else self.config.fps,
-            "gpu_solver": self.config.gpu_solver,
-            "busy": self.busy.locked(),
-            "streams": self.streams,
-        }
-        if not body["ready"]:
-            body["reason"] = self.phase
-        return body
+        return health_body(
+            ready=self.ready,
+            reason=self.phase,
+            started_at=self.started_at,
+            model=self.config.repo.split("/")[-1],
+            fps=self.worker.fps if self.worker else self.config.fps,
+            gpu_solver=self.config.gpu_solver,
+            busy=self.busy.locked(),
+            streams=self.streams,
+            version=self.config.version,
+            build=self.config.build,
+            peer=self.config.peer,
+        )
 
     async def bring_up(self) -> None:
         """Download, build and load, retrying until it works. ``/health`` says where it is."""

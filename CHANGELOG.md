@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Audio2Face server is a suite peer.** `compose.yaml`'s `a2f` service carries the suite directory labels
+  (`argus.peer: a2f`, `argus.service: argus-mask`, `argus.health`, `argus.port`) and `ARGUS_PEER`, and its
+  `GET /health` is argus-cortex's `ServiceHealth`: `status` `ok` once the model is loaded, `starting` until then,
+  with `version` / `build` from the image's `VERSION` / `GIT_SHA` build args. Every field it had is still there
+  (`ready`, `reason`, `model`, `fps`, `gpu_solver`, `busy`, `streams`) and it still answers 200 while starting, so
+  mask's driver, `a2f/check.py`, the image's healthcheck and argus-iris's container resident read it as before.
+  The image has no argus-cortex; `tests/test_a2f_health.py` validates the body with cortex's model.
 - **Broadcast offers every model's voices.** The voice list holds the voices of every configured TTS service at
   once, grouped by the engine each names in its `/health` (`miso`, `xtts-v2`): `ARGUS_MASK_TTS_URL`'s first, then
   the new `ARGUS_MASK_TTS_SERVICES` (comma-separated) and the suite's XTTS when `ARGUS_XTTS_URL` names it. Picking a

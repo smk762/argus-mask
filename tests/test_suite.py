@@ -205,14 +205,16 @@ def test_the_editor_health_is_a_service_health_and_keeps_its_own_fields(tmp_path
 # ---- compose: the labels argus-iris's directory reads ----------------------------------------------
 
 
-def test_compose_labels_the_server_and_only_the_server() -> None:
+def test_compose_labels_the_server_and_the_audio2face_server() -> None:
+    """Both are suite peers: each /health is a ServiceHealth (a2f's: tests/test_a2f_health.py)."""
     yaml = pytest.importorskip("yaml")
     services = yaml.safe_load((REPO / "compose.yaml").read_text())["services"]
-    assert services["mask"]["labels"] == {
-        "argus.peer": "mask",
-        "argus.service": "argus-mask",
-        "argus.health": "/health",
-        "argus.port": "8109",
-    }
-    assert services["mask"]["environment"]["ARGUS_PEER"] == "mask"
-    assert "labels" not in services["a2f"]
+    for name, port in (("mask", "8109"), ("a2f", "8110")):
+        assert services[name]["labels"] == {
+            "argus.peer": name,
+            "argus.service": "argus-mask",
+            "argus.health": "/health",
+            "argus.port": port,
+        }
+        assert services[name]["environment"]["ARGUS_PEER"] == name
+    assert set(services) == {"mask", "a2f"}  # a new service decides whether it is a peer
