@@ -10,9 +10,7 @@ The server is reached over one WebSocket per stream, ``<url>/drive``:
 * client -> ``{"end": true}``; the server sends its remaining frames, then ``{"end": true}``
 
 Names the server sends that are not ARKit's are ignored; ARKit names it does
-not send stay at zero. ``GET <url>/health`` answers 200 while the server is up, with argus-cortex's
-``ServiceHealth`` (``status`` ``ok`` or ``starting``) and the server's own fields beside it; the driver reads
-``"ready"`` (false: not usable yet, and ``"reason"`` says why) and ``"model"``.
+not send stay at zero. ``GET <url>/health`` answering 200 means it can run.
 """
 
 from __future__ import annotations
