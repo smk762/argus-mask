@@ -11,7 +11,7 @@ Layer a **committed** procedural Three.js accessory on a face (splat or mesh), p
 
 ## Numbers (splat-01, record mode, `life=0`)
 
-Playwright poses the same weights twice at yaw 0° and twice at yaw 18° (`work/accessories-spike/measure.py`):
+Playwright poses the same weights twice at yaw 0° and twice at yaw 18° (`scripts/accessories_spike.py`, writing to `work/accessories-spike/`):
 
 | Pose | sha256[:16] (both passes) | Match |
 |---|---|---|

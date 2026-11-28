@@ -18,6 +18,10 @@ spec.orig.md
 # Voices page: checked clips and each voice's record and clips (argus-mask editor --voices-dir)
 /voices/
 
+# Local scratch: spike outputs (lam/refine-spike.md, docs/accessories-spike.md), probes. Never committed: some
+# hold heads from personal portraits.
+/work/
+
 # The hosted demo's build (make demo)
 /demo/out/
 .env.bak*
