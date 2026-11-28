@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Broadcast offers every model's voices.** The voice list holds the voices of every configured TTS service at
+  once, grouped by the engine each names in its `/health` (`miso`, `xtts-v2`): `ARGUS_MASK_TTS_URL`'s first, then
+  the new `ARGUS_MASK_TTS_SERVICES` (comma-separated) and the suite's XTTS when `ARGUS_XTTS_URL` names it. Picking a
+  voice sets the TTS URL to its service. The editor's `GET /voices/all` lists them by service; a configured
+  service needs no origin check, as the default never did.
 - **`GET /health` is argus-cortex's `ServiceHealth`** on the server and the editor (`install_health`): `service`,
   `version`, `status` (`ok`, or `degraded` when the driver does not answer), `started_at`, `wire`
   (`mask_version`), `checks` (`driver`), `read_only`, and `build` / `peer` from `ARGUS_BUILD` / `ARGUS_PEER`. Every

@@ -52,6 +52,23 @@ def _tts_url() -> str:
     return f"{base}{TTS_STREAM_PATH}" if base else ""
 
 
+def _tts_services() -> tuple[str, ...]:
+    """The other TTS services a voice may be picked from: ``ARGUS_MASK_TTS_SERVICES`` (comma-separated, each as
+    ``ARGUS_MASK_TTS_URL`` is written), then the suite's XTTS engine when ``ARGUS_XTTS_URL`` names it. Each is a
+    stream endpoint or ``wyoming://host:port``; anything else is a :class:`ConfigError`, never skipped."""
+    services = []
+    for url in (u.strip() for u in _env("TTS_SERVICES").split(",")):
+        if not url:
+            continue
+        if not url.startswith(("http://", "https://", "wyoming://")):
+            raise ConfigError(f"ARGUS_MASK_TTS_SERVICES {url!r}: each is an http(s):// or wyoming:// URL")
+        services.append(url)
+    base = _peer(TTS_PEER, None)
+    if base:
+        services.append(f"{base}{TTS_STREAM_PATH}")
+    return tuple(services)
+
+
 @dataclass(frozen=True)
 class Settings:
     assets_dir: Path = Path("assets")
@@ -59,6 +76,8 @@ class Settings:
     a2f_url: str = ""
     tts_url: str = ""
     tts_voice: str = ""
+    # More TTS services whose voices the editor offers beside tts_url's (the default one).
+    tts_services: tuple[str, ...] = field(default_factory=tuple)
     fps: int = DEFAULT_FPS
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
     # Host names (no port) a page may be served from and still write to its own server: a screen opening
@@ -75,6 +94,11 @@ class Settings:
             raise ConfigError(f"ARGUS_MASK_DRIVER {self.driver!r}: choose from {', '.join(DRIVERS)}")
         if not 1 <= self.fps <= 120:
             raise ConfigError(f"ARGUS_MASK_FPS {self.fps}: must be between 1 and 120")
+
+    @property
+    def voice_services(self) -> tuple[str, ...]:
+        """Every TTS service a voice may come from, the default first, each once."""
+        return tuple(dict.fromkeys(u for u in (self.tts_url, *self.tts_services) if u))
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -95,6 +119,7 @@ class Settings:
             a2f_url=_env("A2F_URL"),
             tts_url=_tts_url(),
             tts_voice=_env("TTS_VOICE"),
+            tts_services=_tts_services(),
             fps=fps,
             cors_origins=tuple(o.strip().rstrip("/") for o in _env("CORS_ORIGINS").split(",") if o.strip()),
             trusted_hosts=tuple(h.strip().lower() for h in _env("TRUSTED_HOSTS").split(",") if h.strip()),

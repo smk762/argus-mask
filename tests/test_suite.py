@@ -111,6 +111,24 @@ def test_an_unset_tts_falls_back_to_the_suite_s_xtts_stream(monkeypatch) -> None
         Settings.from_env()
 
 
+def test_more_tts_services_are_offered_beside_the_default_once_each(monkeypatch) -> None:
+    """The editor offers voices from every TTS service it knows: ARGUS_MASK_TTS_SERVICES, then the suite's XTTS."""
+    monkeypatch.setenv("ARGUS_MASK_TTS_URL", "http://miso.test:8034/synthesise/stream")
+    monkeypatch.setenv(
+        "ARGUS_MASK_TTS_SERVICES", " wyoming://piper.test:10200, ,http://miso.test:8034/synthesise/stream"
+    )
+    monkeypatch.setenv("ARGUS_XTTS_URL", "http://suite-xtts.test:8141")
+    settings = Settings.from_env()
+    assert settings.voice_services == (
+        "http://miso.test:8034/synthesise/stream",
+        "wyoming://piper.test:10200",
+        "http://suite-xtts.test:8141/synthesise/stream",
+    )
+    monkeypatch.setenv("ARGUS_MASK_TTS_SERVICES", "piper.test:10200")  # a malformed one is refused, never skipped
+    with pytest.raises(ConfigError, match="ARGUS_MASK_TTS_SERVICES"):
+        Settings.from_env()
+
+
 # ---- the suite file ---------------------------------------------------------------------------------
 
 
