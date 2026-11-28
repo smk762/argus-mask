@@ -540,6 +540,29 @@ def test_the_uploaded_portraits_are_taken_off_curator_again() -> None:
     assert _ask(Opener(select={"rows": rows}, delete=403), "c1")[0].keep_reason == ""
 
 
+def test_a_portrait_curator_did_not_list_is_taken_off_it_too() -> None:
+    """Curator's rows name only some of what was uploaded: the rest are deleted by the names they were uploaded
+    under, or they would stay on curator once the scan is gone."""
+    import json
+
+    rows = [{"rel_path": "f/c1.png", "keep_reason": ""}]
+    opener = Opener(select={"rows": rows})
+    assert [r.keep_reason for r in _ask(opener, "c1", "c2", "c3")] == ["", "face-source:missing", "face-source:missing"]
+    (deleted,) = [json.loads(data) for _, path, data in opener.asked if path.endswith("/delete")]
+    assert deleted == {"rel_paths": ["f/c1.png", "c2.png", "c3.png"]}
+
+
+def test_a_scan_id_is_one_segment_of_every_path_it_goes_into() -> None:
+    opener = Opener(folder={"scan_id": "../s/1"})
+    _ask(opener, "c1")
+    assert [p for _, p, _ in opener.asked[1:]] == [
+        "/scan/folder",
+        "/scan/..%2Fs%2F1/select",
+        "/scan/..%2Fs%2F1/delete",
+        "/scan/..%2Fs%2F1",
+    ]
+
+
 def test_each_run_uploads_to_a_folder_of_its_own() -> None:
     """Curator never overwrites: a name uploaded before to the same folder would be scored as it was then."""
     import json

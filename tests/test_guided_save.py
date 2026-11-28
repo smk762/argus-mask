@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -241,3 +242,14 @@ def test_the_first_save_makes_the_assets_root(tmp_path: Path) -> None:
     _ready_with_head(store, tmp_path / "work")
     _save(store, tmp_path / "assets")
     assert (tmp_path / "assets" / "guide" / "manifest.json").is_file()
+
+
+def test_a_face_saved_over_leaves_no_copy_behind(editor) -> None:
+    """The face before is held only to put back if the new one cannot be served."""
+    client, store, assets = editor
+    _ready_with_head(store, assets)
+    for name in ("First", "Second", "Third"):
+        assert client.post("/guided/guide/save", json={"name": name}).status_code == 200
+    assert json.loads((assets / "guide" / "manifest.json").read_text())["name"] == "Third"
+    trash = assets / ".trash"
+    assert not trash.exists() or not list(trash.iterdir())

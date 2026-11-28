@@ -141,7 +141,8 @@ class SpeechJobs:
             raise GuidedError(f"{candidate!r} is not a candidate")
         if blocked := record.blockers(STEP, candidate):
             raise NotReady("speech cannot run: " + "; ".join(blocked))
-        self._inputs(record, build_id, candidate)
+        # On the event loop: that the head is there, not its hash. The job hashes it, in a thread, before it runs.
+        self._inputs(record, build_id, candidate, verify=False)
         if any(j.live and (j.build_id, j.candidate) == (build_id, candidate) for j in self.jobs.values()):
             raise Busy(f"{candidate}'s speech is already being measured")
         if (why := self.check()) is not None:
@@ -313,7 +314,9 @@ class SpeechJobs:
             finished=self.clock(),
         )
 
-    def _inputs(self, record: Any, build_id: str, candidate: str) -> tuple[Artifact, Path, dict]:
+    def _inputs(
+        self, record: Any, build_id: str, candidate: str, *, verify: bool = True
+    ) -> tuple[Artifact, Path, dict]:
         build = record.get("build", candidate)
         head = next((a for a in (build.outputs if build else []) if a.name == HEAD and a.file), None)
         if head is None:
@@ -321,7 +324,7 @@ class SpeechJobs:
         path = self.store.path(build_id, head.file)
         if not path.is_file():
             raise GuidedError(f"{candidate}'s head is not where its build kept it")
-        if sha256_file(path) != head.sha256:
+        if verify and sha256_file(path) != head.sha256:
             raise GuidedError(f"{candidate}'s head changed since its build was recorded")
         rest = record.get("rest", candidate)
         rest_data = dict(rest.data) if rest is not None and isinstance(rest.data, dict) else {}

@@ -736,3 +736,82 @@ renderWorkspace();
 console.log(JSON.stringify(shown));
 """)
     assert out == [["c1", 1], ["c2", 1], ["c1", 1], ["c2", 1]]
+
+
+GUIDED_JOBS = "".join(line + "\n" for line in GUIDED.splitlines() if line.startswith("const POLL_"))
+
+
+def _guided_async(*names: str) -> str:
+    """guided.js's state and its async functions *names*, with a status line a test can listen to."""
+    functions = "\n".join(_function(GUIDED, f"async function {n}(") for n in names)
+    return _guided().replace("const status = ", "let status = ") + functions
+
+
+def test_a_build_opened_first_never_shows_under_the_one_opened_after() -> None:
+    """Build a's record arrives after b's: it is dropped, and nothing of a's is drawn while b's routes are in use."""
+    out = _node(f"""
+{_guided_async("openBuild", "reload")}
+const history = {{ replaceState() {{}} }};
+const drawn = [];
+const renderBuildList = () => {{}};
+const renderWorkspace = () => drawn.push(record ? record.id : null);
+const replies = {{}};
+const json = (url) => (replies[url] ||= later());
+record = {{ id: 'guide' }};
+const a = openBuild('a');
+const b = openBuild('b');
+replies['/guided/b'].resolve({{ id: 'b' }});
+await b;
+replies['/guided/a'].resolve({{ id: 'a' }});
+await a;
+const opened = {{ buildId, record: record.id, drawn: [...drawn] }};
+// A reload asked for under b, answered after c was opened.
+replies['/guided'] = Promise.resolve({{ builds: [] }});
+delete replies['/guided/b'];
+const again = reload();
+await tick();
+const c = openBuild('c');
+replies['/guided/b'].resolve({{ id: 'b' }});
+await again;
+replies['/guided/c'].resolve({{ id: 'c' }});
+await c;
+console.log(JSON.stringify({{ opened, buildId, record: record.id }}));
+""")
+    assert out["opened"] == {"buildId": "b", "record": "b", "drawn": [None, None, "b"]}
+    assert (out["buildId"], out["record"]) == ("c", "c")
+
+
+def test_a_job_is_followed_until_it_ends_however_long_it_runs() -> None:
+    out = _node(f"""
+{GUIDED_JOBS}{_guided_async("pollJob")}
+const sleep = null;
+let looks = 0; const waits = [];
+const json = async (url) => {{
+  looks += 1;
+  if (looks % 7 === 0) throw new Error('a look that failed');
+  return {{ id: 'j', state: looks < 2000 ? 'running' : 'done', url }};
+}};
+const done = await pollJob({{ id: 'j', state: 'queued' }}, 'guide', async (ms) => {{ waits.push(ms); }});
+console.log(JSON.stringify({{ done, looks, first: waits[0], most: Math.max(...waits) }}));
+""")
+    assert out["done"] == {"id": "j", "state": "done", "url": "/guided/guide/jobs/j"}
+    assert out["looks"] == 2000 and out["first"] == 400 and out["most"] == 5000
+
+
+def test_a_job_lost_sight_of_still_reloads_the_page() -> None:
+    """The server stops answering: the page says the job may still be running and shows what it can."""
+    out = _node(f"""
+{GUIDED_JOBS}{_guided_async("pollJob", "runJob")}
+const said = []; let reloads = 0;
+status = (text, bad) => said.push([text, !!bad]);
+const sleep = async () => {{}};
+const reload = async () => {{ reloads += 1; }};
+const json = async (url) => {{
+  if (url === '/start') return {{ id: 'j', state: 'queued', kind: 'build' }};
+  throw new Error('unreachable');
+}};
+const done = await runJob('/start');
+console.log(JSON.stringify({{ done, reloads, last: said.at(-1) }}));
+""")
+    assert out["done"] is None and out["reloads"] == 1
+    assert out["last"] == ["lost sight of the job, which may still be running: unreachable", True]

@@ -529,3 +529,74 @@ def test_a_checkpoint_of_unknown_licence_is_a_source_error(tmp_path: Path) -> No
             jobs.pick("guide", "c1", "odd")
         with pytest.raises(SourceError, match="licence is not known"):
             jobs.upload("guide", "c1", picture, kind="synthetic", record_id="odd")
+
+
+# ---- a stopped job: its thread goes on to darkroom's reply, and writes nothing with it -------------------
+
+
+class _HeldDarkroom:
+    """Darkroom, held at ``generate`` until the test lets it answer."""
+
+    def __init__(self, real: Darkroom) -> None:
+        import threading
+
+        self.real, self.asked, self.answer = real, threading.Event(), threading.Event()
+
+    def generate(self, body: dict) -> dict:
+        self.asked.set()
+        assert self.answer.wait(30)
+        return self.real.generate(body)
+
+    def image(self, record_id: str) -> bytes:
+        return self.real.image(record_id)
+
+
+def _thread_ends(jobs: SourceJobs, name: str):  # noqa: ANN202
+    """An event set when the job's thread leaves *name*, and what it raised there."""
+    import threading
+
+    ended, raised, inner = threading.Event(), [], getattr(jobs, name)
+
+    def run(*args: object, **kwargs: object) -> object:
+        try:
+            return inner(*args, **kwargs)
+        except Exception as exc:
+            raised.append(exc)
+            raise
+        finally:
+            ended.set()
+
+    setattr(jobs, name, run)
+    return ended, raised
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["restyle", "generate"])
+async def test_a_stopped_job_writes_nothing_once_it_reads_as_stopped(tmp_path: Path, kind: str) -> None:
+    import asyncio
+
+    from argus_mask.editor.source import Stopped
+
+    with fake_portrait_darkroom(image=png(48, 60)) as (url, calls, _s):
+        jobs = _jobs(tmp_path / "assets", url)
+        before = jobs.upload("guide", "c1", png(32, 40), kind="personal")
+        held = jobs.darkroom = _HeldDarkroom(jobs.darkroom)
+        ended, raised = _thread_ends(jobs, "_restyle_one" if kind == "restyle" else "_generate_one")
+        if kind == "restyle":
+            job = jobs.start_restyle("guide", "c1", style="character", seed=9)
+        else:
+            job = jobs.start_generate(
+                "guide", age=30, hair="short dark", clothes="a crew-neck", style="character", seed_text="501-502"
+            )
+        assert await asyncio.to_thread(held.asked.wait, 30)
+        await jobs.stop(job.id)
+        assert job.state == "stopped"
+        record = (jobs.store.root / "guide" / "build.json").read_bytes()
+        held.answer.set()  # darkroom answers the thread nobody waits for
+        assert await asyncio.to_thread(ended.wait, 30)
+    assert calls.count("generate") == 1  # and a stopped batch asks for no further seed
+    assert [type(exc) for exc in raised] == [Stopped]
+    assert (jobs.store.root / "guide" / "build.json").read_bytes() == record
+    assert jobs.store.load("guide").get("source", "c1") == before
+    assert jobs.store.load("guide").candidates() == ["c1"]
+    assert not list((jobs.store.root / "guide").rglob("restyle-*.png"))

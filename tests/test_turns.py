@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 
 from argus_mask.config import EditorSettings, Settings, TurnsSettings
 from argus_mask.editor.app import create_editor_app
-from argus_mask.editor.guided import Check, GuidedStore, StepResult
+from argus_mask.editor.guided import Check, GuidedError, GuidedStore, StepResult
 from argus_mask.editor.turns import TurnsJobs, analyze_synthetic
 from argus_mask.turns import DEFAULT_GAP, measure_limits, synthetic_pose
 
@@ -130,3 +130,31 @@ def test_a_head_with_no_limit_one_way_still_gets_its_advisory(tmp_path: Path) ->
     assert (job.state, job.error) == ("done", None)
     (check,) = store.load("guide").get("turns", "c1").checks
     assert check.verdict == "advisory" and "yaw=none pitch_up=none" in check.reason
+
+
+@pytest.mark.asyncio
+async def test_asking_for_turns_hashes_nothing_on_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """start() runs on the loop: the head is hashed by the job, in a thread, where a changed one still fails it."""
+    import threading
+
+    from argus_mask.editor import turns
+
+    store = GuidedStore(tmp_path / "assets")
+    _seed_build(store)
+    jobs = TurnsJobs(store, TurnsSettings(script=None), analyze=analyze_synthetic(weak=True))
+    loop, on_loop = threading.get_ident(), []
+    sha256_file = turns.sha256_file
+    monkeypatch.setattr(
+        turns, "sha256_file", lambda path: on_loop.append(threading.get_ident() == loop) or sha256_file(path)
+    )
+    store.path("guide", "candidates/c1/head.zip").write_bytes(b"another head")
+    job = jobs.start("guide", "c1")
+    while job.live:
+        await asyncio.sleep(0.02)
+    assert on_loop and not any(on_loop)
+    assert job.state == "failed" and "head changed" in job.error
+    store.path("guide", "candidates/c1/head.zip").unlink()
+    with pytest.raises(GuidedError, match="not where its build kept it"):
+        jobs.start("guide", "c1")

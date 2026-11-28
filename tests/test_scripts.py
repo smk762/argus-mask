@@ -36,6 +36,11 @@ def _alive(pid: int) -> bool:
         return False
 
 
+def _written(path: Path) -> bool:
+    """The stand-in has written its whole number here (it ends each with a newline)."""
+    return path.is_file() and path.read_text().endswith("\n")
+
+
 def _run(kind: str, tmp_path: Path, timeout_s: float):  # noqa: ANN202 - a coroutine, and the error a timeout gives
     files = {n: tmp_path / n for n in ("script.py", "talk.json", "model.task", "portrait.png", "out.json", "uv")}
     for path in files.values():
@@ -61,7 +66,6 @@ async def test_a_script_ends_with_everything_it_started(
 ) -> None:
     monkeypatch.setenv("FAKE", str(tmp_path))
     coro, error = _run(kind, tmp_path, 0.5 if ended == "timed out" else 30)
-    pids: list[int] = []
     try:
         if ended == "timed out":
             with pytest.raises(error, match="took more than"):
@@ -69,10 +73,7 @@ async def test_a_script_ends_with_everything_it_started(
         else:
             task = asyncio.create_task(coro)
             deadline = time.monotonic() + 10
-            while (
-                not ((tmp_path / "pid").is_file() and (tmp_path / "pid").read_text().strip())
-                and time.monotonic() < deadline
-            ):
+            while not all(_written(tmp_path / n) for n in ("child", "pid")) and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
             task.cancel()
             done, _ = await asyncio.wait({task}, timeout=10)
@@ -84,9 +85,12 @@ async def test_a_script_ends_with_everything_it_started(
             await asyncio.sleep(0.02)
         assert not any(map(_alive, pids))
     finally:
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, 9)
+        # Whatever it started, even if the test stopped before reading both. Only what still runs: a pid found gone
+        # may be another process's by now.
+        for name in ("child", "pid"):
+            if _written(tmp_path / name) and _alive(pid := int((tmp_path / name).read_text())):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, 9)
 
 
 def test_a_server_that_does_not_come_up_in_time_is_stopped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

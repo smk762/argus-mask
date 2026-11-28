@@ -38,7 +38,24 @@ JOBS_KEEP = 20
 
 
 def _finite(value: object) -> bool:
-    return isinstance(value, (int, float)) and math.isfinite(value)
+    try:
+        return isinstance(value, (int, float)) and math.isfinite(value)
+    except OverflowError:  # an integer past what a float holds
+        return False
+
+
+def _misshapen(raw: object) -> str | None:
+    """Why what the script wrote is not a rest fit's JSON: it parsed, but an object is not where one is read."""
+    if not isinstance(raw, dict):
+        return f"rest fit wrote a {type(raw).__name__}, not an object"
+    report = raw.get("score")
+    if report is not None and not isinstance(report, dict):
+        return f"rest fit wrote a score that is a {type(report).__name__}, not an object"
+    for label in ("warm", "fit"):
+        part = (report or {}).get(label)
+        if part is not None and not isinstance(part, dict):
+            return f"rest fit wrote a score.{label} that is a {type(part).__name__}, not an object"
+    return None
 
 
 class RestError(GuidedError):
@@ -115,7 +132,8 @@ class RestFits:
             raise GuidedError(f"{candidate!r} is not a candidate")
         if blocked := record.blockers("rest", candidate):
             raise NotReady("rest cannot run: " + "; ".join(blocked))
-        self._inputs(record, build_id, candidate)
+        # On the event loop: that the files are there, not their hashes. The job hashes them, in a thread.
+        self._inputs(record, build_id, candidate, verify=False)
         if any(j.live and (j.build_id, j.candidate) == (build_id, candidate) for j in self.jobs.values()):
             raise Busy(f"{candidate}'s rest set is already being fitted")
         if (why := self.check()) is not None:
@@ -173,6 +191,8 @@ class RestFits:
         record: Any,
         build_id: str,
         candidate: str,  # noqa: ANN401
+        *,
+        verify: bool = True,
     ) -> tuple[tuple[Artifact, Path], tuple[Artifact, Path]]:
         source = record.get("source", candidate)
         build = record.get("build", candidate)
@@ -187,7 +207,7 @@ class RestFits:
             path = self.store.path(build_id, art.file)
             if not path.is_file():
                 raise GuidedError(f"{candidate}'s {label} is not where it was kept")
-            if sha256_file(path) != art.sha256:
+            if verify and sha256_file(path) != art.sha256:
                 raise GuidedError(f"{candidate}'s {label} changed since it was recorded: run that step again")
             paths.append((art, path))
         return paths[0], paths[1]
@@ -328,10 +348,13 @@ class RestFits:
                 started=started,
                 finished=self.store.clock(),
             )
-        weights = raw.get("weights")
+        shape = _misshapen(raw)
+        weights = raw.get("weights") if shape is None else None
         # json reads NaN and Infinity as numbers, and NaN is under no floor.
         unsound = [str(k) for k, v in weights.items() if not _finite(v)] if isinstance(weights, dict) else []
-        if not isinstance(weights, dict) or not weights:
+        if shape is not None:
+            checks.append(Check(name="rest", verdict="failed", reason=shape))
+        elif not isinstance(weights, dict) or not weights:
             checks.append(Check(name="rest", verdict="failed", reason="rest fit wrote no weights"))
         elif unsound:
             why = f"rest fit wrote weights that are not finite numbers: {', '.join(sorted(unsound))}"

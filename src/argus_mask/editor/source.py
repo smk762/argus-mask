@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import io
 import secrets
+import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -65,6 +67,10 @@ class SourceError(GuidedError):
     """A source portrait could not be accepted, with the reason."""
 
 
+class Stopped(SourceError):
+    """The job was stopped: what it had not written yet is not written."""
+
+
 class Busy(GuidedError):
     """A generate or restyle job for this build (or candidate) is already running."""
 
@@ -89,10 +95,26 @@ class SourceJob:
     asked: float = field(default_factory=time.monotonic)
     ended: float | None = None
     task: asyncio.Task | None = None
+    halted: bool = False
+    _gate: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def live(self) -> bool:
         return self.state in ("queued", "running")
+
+    def halt(self) -> None:
+        """Stop the job's thread writing. Cancelling the task does not stop the thread it waits on: that goes on to
+        darkroom's reply. Once this returns, a write under way has finished and no other begins."""
+        with self._gate:
+            self.halted = True
+
+    @contextlib.contextmanager
+    def writing(self) -> Iterator[None]:
+        """Around each write the job's thread makes to the build: refused once the job is stopped."""
+        with self._gate:
+            if self.halted:
+                raise Stopped("the job was stopped")
+            yield
 
     def public(self) -> dict:
         return {
@@ -380,15 +402,17 @@ class SourceJobs:
     async def stop(self, job_id: str) -> SourceJob | None:
         job = self.jobs.get(job_id)
         if job is not None and job.task is not None and not job.task.done():
+            job.halt()  # before it reads as stopped: its thread writes nothing after
             job.task.cancel()
             await asyncio.gather(job.task, return_exceptions=True)
         return job
 
     async def stop_all(self) -> None:
-        tasks = [j.task for j in self.jobs.values() if j.task is not None and not j.task.done()]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        jobs = [j for j in self.jobs.values() if j.task is not None and not j.task.done()]
+        for job in jobs:
+            job.halt()
+            job.task.cancel()
+        await asyncio.gather(*(j.task for j in jobs), return_exceptions=True)
 
     # ---- job bodies -------------------------------------------------------------------------------
 
@@ -406,7 +430,7 @@ class SourceJobs:
                     job.stage = f"seed {seed}"
                     result = await asyncio.to_thread(
                         self._generate_one,
-                        job.build_id,
+                        job,
                         candidate,
                         seed=seed,
                         prompt=prompt,
@@ -424,6 +448,7 @@ class SourceJobs:
                 else:
                     job.state, job.stage, job.error = "failed", last_standing, last_error
         except asyncio.CancelledError:
+            job.halt()  # cancelled by something other than stop(): the thread still must not write
             job.state, job.stage = "stopped", "stopped"
             raise
         except GuidedError as exc:
@@ -436,8 +461,9 @@ class SourceJobs:
         log.info("source_generate", build=job.build_id, state=job.state, candidates=job.candidates)
 
     def _generate_one(
-        self, build_id: str, candidate: str, *, seed: int, prompt: str, style: str, subject: str
+        self, job: SourceJob, candidate: str, *, seed: int, prompt: str, style: str, subject: str
     ) -> StepResult:
+        build_id = job.build_id
         started = self.clock()
         body = generate_body(
             prompt,
@@ -459,56 +485,59 @@ class SourceJobs:
             )
         except (PlateError, PortraitError, KeyError) as exc:
             why = str(exc)
-            return self.store.put(
-                build_id,
-                StepResult(
-                    step="source",
-                    candidate=candidate,
-                    checks=[Check(name="provenance", verdict="refused", reason=why[:2000])],
-                    seeds={"generator": seed},
-                    data={"way": "generate", "style": style, "subject": subject, "prompt": prompt},
-                    started=started,
-                    finished=self.clock(),
-                ),
-            )
+            with job.writing():
+                return self.store.put(
+                    build_id,
+                    StepResult(
+                        step="source",
+                        candidate=candidate,
+                        checks=[Check(name="provenance", verdict="refused", reason=why[:2000])],
+                        seeds={"generator": seed},
+                        data={"way": "generate", "style": style, "subject": subject, "prompt": prompt},
+                        started=started,
+                        finished=self.clock(),
+                    ),
+                )
         if kind != "synthetic":
             why = "the record names a LoRA: the face would be personal, not synthetic"
-            return self.store.put(
+            with job.writing():
+                return self.store.put(
+                    build_id,
+                    StepResult(
+                        step="source",
+                        candidate=candidate,
+                        checks=[Check(name="provenance", verdict="refused", reason=why)],
+                        seeds={"generator": seed},
+                        data={
+                            "way": "generate",
+                            "style": style,
+                            "subject": subject,
+                            "prompt": prompt,
+                            "record_id": record.get("id"),
+                        },
+                        started=started,
+                        finished=self.clock(),
+                    ),
+                )
+        with job.writing():
+            return self._write_source(
                 build_id,
-                StepResult(
-                    step="source",
-                    candidate=candidate,
-                    checks=[Check(name="provenance", verdict="refused", reason=why)],
-                    seeds={"generator": seed},
-                    data={
-                        "way": "generate",
-                        "style": style,
-                        "subject": subject,
-                        "prompt": prompt,
-                        "record_id": record.get("id"),
-                    },
-                    started=started,
-                    finished=self.clock(),
-                ),
+                candidate,
+                image,
+                kind="synthetic",
+                source=f"argus-darkroom record {record['id']}",
+                license=license_for_checkpoint(CHECKPOINT),
+                record=record,
+                seed=seed,
+                data={
+                    "way": "generate",
+                    "style": style,
+                    "subject": subject,
+                    "prompt": prompt,
+                    "record_id": record["id"],
+                },
+                started=started,
             )
-        return self._write_source(
-            build_id,
-            candidate,
-            image,
-            kind="synthetic",
-            source=f"argus-darkroom record {record['id']}",
-            license=license_for_checkpoint(CHECKPOINT),
-            record=record,
-            seed=seed,
-            data={
-                "way": "generate",
-                "style": style,
-                "subject": subject,
-                "prompt": prompt,
-                "record_id": record["id"],
-            },
-            started=started,
-        )
 
     async def _run_restyle(
         self,
@@ -527,7 +556,7 @@ class SourceJobs:
                 job.state, job.stage = "running", "restyling"
                 result = await asyncio.to_thread(
                     self._restyle_one,
-                    job.build_id,
+                    job,
                     job.candidate,
                     source=source,
                     portrait_path=portrait_path,
@@ -544,6 +573,7 @@ class SourceJobs:
                     job.state, job.stage = "failed", result.standing
                     job.error = result.named("failed", "refused", "not_checked")
         except asyncio.CancelledError:
+            job.halt()  # cancelled by something other than stop(): the thread still must not write
             job.state, job.stage = "stopped", "stopped"
             raise
         except GuidedError as exc:
@@ -557,7 +587,7 @@ class SourceJobs:
 
     def _restyle_one(
         self,
-        build_id: str,
+        job: SourceJob,
         candidate: str,
         *,
         source: StepResult,
@@ -567,6 +597,7 @@ class SourceJobs:
         seed: int,
         denoise: float,
     ) -> StepResult:
+        build_id = job.build_id
         started = self.clock()
         # The job may have waited a long time: the portrait and its provenance must still be the ones it was asked for.
         self._same_source(build_id, candidate, source)
@@ -611,7 +642,6 @@ class SourceJobs:
         except (PlateError, PortraitError, KeyError) as exc:
             # The job's failure alone: the source it would have replaced is as good as it was.
             raise SourceError(f"restyle failed, and the source is as it was: {exc}") from exc
-        self._same_source(build_id, candidate, source)
         # Never raise: personal/consented stay; synthetic only if the restyle also cleared without LoRA.
         if prior_kind in ("personal", "consented"):
             kind = prior_kind
@@ -624,42 +654,45 @@ class SourceJobs:
             licence = license_for_checkpoint(CHECKPOINT, prior_license)
         elif kind == "consented":
             licence = prior_license or "per the release"
-        return self._write_source(
-            build_id,
-            candidate,
-            image,
-            kind=kind,
-            source=prior_source if kind != "synthetic" else f"argus-darkroom record {record['id']}",
-            license=licence if kind != "personal" else "",
-            record=record if kind == "synthetic" else None,
-            seed=seed,
-            data={
-                "way": "restyle",
-                "style": style,
-                "source_sha256": portrait_sha,
-                "prior_kind": prior_kind,
-                "record_id": record.get("id"),
-                "denoise": denoise,
-                **(
-                    {
-                        "subject": source.data.get("subject"),
-                        "release_sha256": source.data.get("release_sha256"),
-                    }
-                    if kind == "consented"
-                    else {}
-                ),
-            },
-            started=started,
-            # Beside the portrait it was made from, never over it: the step's input stays where it says.
-            file=f"candidates/{candidate}/restyle-{hashlib.sha256(image).hexdigest()[:16]}.png",
-            inputs=[
-                Artifact(
-                    name="source-portrait",
-                    sha256=portrait_sha,
-                    file=next((a.file for a in source.outputs if a.name == PORTRAIT and a.file), ""),
-                )
-            ],
-        )
+        # The check and the write as one: a job stopped between them writes nothing.
+        with job.writing():
+            self._same_source(build_id, candidate, source)
+            return self._write_source(
+                build_id,
+                candidate,
+                image,
+                kind=kind,
+                source=prior_source if kind != "synthetic" else f"argus-darkroom record {record['id']}",
+                license=licence if kind != "personal" else "",
+                record=record if kind == "synthetic" else None,
+                seed=seed,
+                data={
+                    "way": "restyle",
+                    "style": style,
+                    "source_sha256": portrait_sha,
+                    "prior_kind": prior_kind,
+                    "record_id": record.get("id"),
+                    "denoise": denoise,
+                    **(
+                        {
+                            "subject": source.data.get("subject"),
+                            "release_sha256": source.data.get("release_sha256"),
+                        }
+                        if kind == "consented"
+                        else {}
+                    ),
+                },
+                started=started,
+                # Beside the portrait it was made from, never over it: the step's input stays where it says.
+                file=f"candidates/{candidate}/restyle-{hashlib.sha256(image).hexdigest()[:16]}.png",
+                inputs=[
+                    Artifact(
+                        name="source-portrait",
+                        sha256=portrait_sha,
+                        file=next((a.file for a in source.outputs if a.name == PORTRAIT and a.file), ""),
+                    )
+                ],
+            )
 
     # ---- write the step ---------------------------------------------------------------------------
 

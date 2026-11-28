@@ -100,12 +100,15 @@ class CuratorClient:
         folder = f"{folder or 'mask-guided'}/{uuid.uuid4().hex[:12]}"
         self._upload(folder, images)
         scan_id: str | None = None
-        paths = [f"{name}.png" for name in images]
+        rows: list[dict] = []
         try:
             scan_id = self._scan(folder)
             rows = self._select(scan_id)
-            paths = [r["rel_path"] for r in rows if Path_stem(r["rel_path"]) in images] or paths
         finally:
+            # Every image uploaded, by the path curator gave it; one curator did not list goes by the name it was
+            # uploaded under, or it would stay there with no scan left to delete it by.
+            listed = {Path_stem(r["rel_path"]) for r in rows}
+            paths = [r["rel_path"] for r in rows] + [f"{name}.png" for name in images if name not in listed]
             self._remove(scan_id, paths, folder)
         by_stem = {Path_stem(r["rel_path"]): r for r in rows}
         out: list[FaceSourceRow] = []
@@ -160,7 +163,7 @@ class CuratorClient:
 
     def _select(self, scan_id: str) -> list[dict]:
         body = json.dumps({"face_source": {}, "rank": "identity", "min_score": 0.0}).encode()
-        payload = self._call("POST", f"/scan/{parse.quote(scan_id)}/select", body)
+        payload = self._call("POST", f"/scan/{parse.quote(scan_id, safe='')}/select", body)
         data = _object(payload, "select")
         rows = data.get("rows")
         if not isinstance(rows, list):
