@@ -1216,6 +1216,28 @@ def test_a_named_speaker_is_listed_as_one_and_goes_back_as_one(broadcasting) -> 
         assert voiced({}, voice["name"], tts) == {"speaker": "Rosemary Okafor"}
 
 
+def test_an_alias_to_a_face_not_listed_is_not_taken_as_cleared(rig) -> None:
+    """The server's health and its face list are read apart: an alias naming a face the list lacks is not cleared."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from fastapi import FastAPI  # noqa: PLC0415
+
+    from argus_mask.editor.app import create_editor_app  # noqa: PLC0415
+    from tests.helpers import live_server  # noqa: PLC0415
+
+    server = FastAPI()
+    server.get("/health")(lambda: {"read_only": False, "aliases": {"holly": "gone-1", "kiosk": "stock-01"}})
+    server.get("/faces")(
+        lambda: [{"id": "stock-01", "name": "Stock", "provenance": {"kind": "stock", "cleared": True}}]
+    )
+    with live_server(server) as url:
+        ed = replace(rig["editor"], server_url=url)
+        with TestClient(create_editor_app(Settings(assets_dir=rig["assets"]), ed)) as c:
+            rows = {f["id"]: f for f in c.get("/broadcast/state").json()["faces"]}
+    assert rows["kiosk"]["cleared"] is rows["stock-01"]["cleared"]
+    assert rows["holly"]["cleared"] is False
+
+
 def test_every_configured_service_offers_its_voices(broadcasting) -> None:
     """Broadcast picks from every model at once: each service's voices, labelled by the engine it names."""
     from tests.helpers import fake_tts  # noqa: PLC0415
@@ -1240,6 +1262,10 @@ def test_every_configured_service_offers_its_voices(broadcasting) -> None:
         # A configured service is the editor's own choice, not a host the caller names: no origin check for it.
         evil = {"Origin": "http://evil.example"}
         assert c.get("/voices", params={"tts": xtts_url}, headers=evil).json()["listed"] is True
+    loading = {"speakers": {"error": "Model still loading"}, "health": {"engine": "xtts-v2"}}
+    with fake_tts(tone(0.1), voices=loading) as (cold, _), broadcasting(cold) as (c, _):
+        [service] = c.get("/voices/all").json()["services"]
+        assert service["voices"] == [] and "still be loading" in service["reason"]  # the page asks again
 
 
 # ---- recording a broadcast ---------------------------------------------------------------------------

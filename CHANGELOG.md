@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fixes that missed 0.1.0 and #148**, pushed after their PRs merged and redone against today's code:
+  - An alias to a face the server does not list is no longer shown as cleared on the Broadcast page.
+  - A pack's page link must be https on the MakeHuman community's site, as its thumbnails already must; a
+    catalogue's `javascript:` or off-site link is dropped.
+  - A splat archive is inspected under a lock: two scans at once no longer unpack it twice, or read the cache entry
+    the other dropped (`KeyError`).
+  - `Stage.load` resolves `false` when a later load supersedes it, and the editor stops there instead of naming the
+    stale face.
+  - Broadcast asks a voice service with no voices again every 15 s (XTTS while its model loads), keeping what was
+    picked meanwhile; `GET /voices/all` gives an empty list a reason.
+  - One `model_response`, shared by the server and the editor.
 - **Guided heads.** A portrait's framing refusal from curator counts; one unreadable picture no longer blocks the
   others' text check; a refused portrait always ranks below one that was not; sharpness is measured signed (the
   threshold stays). Uploads to curator have a folder of their own per run (curator never overwrites, so a portrait

@@ -188,7 +188,9 @@ let configured = null;   // Promise of /voices/all's services, asked once
 let typedService = null; // the TTS URL field's service when it is not a configured one
 let services = [];       // the configured services, once asked
 const host = (url) => { try { return new URL(url.replace(/^wyoming:/, 'http:')).host; } catch { return url; } };
-async function loadVoices() {
+const VOICES_RETRY_MS = 15000;
+let voicesRetry = null;  // the one pending ask-again: each finished load replaces it
+async function loadVoices(again = false) {
   const tts = $('tts').value.trim();
   if (tts === voicesFor) return;
   voicesFor = tts;
@@ -202,16 +204,26 @@ async function loadVoices() {
     try { Object.assign(typed, await json(`/voices?tts=${encodeURIComponent(tts)}`)); } catch (err) { typed.reason = err.message; }
   }
   if (voicesFor !== tts) return;   // the TTS changed while this list was asked for: the latest call fills the select
+  const kept = $('voice').value === OTHER ? $('voice-other').value.trim() : $('voice').value;
   services = all;
   typedService = typed;
   fillVoices();
   const count = services.reduce((n, s) => n + s.voices.length, 0) + (typed ? typed.voices.length : 0);
   $('voice').title = `${count} voices from ${services.length + (typed ? 1 : 0)} service(s)`;
-  // A TTS URL typed by hand wins over the voice remembered on another service: that service's default instead.
-  const want = wantedVoice();
-  const wantTts = splitValue(want)[0];
-  selectVoice(wantTts && wantTts !== tts ? '' : want);
+  if (again) selectVoice(kept);   // a retry keeps what was picked or typed meanwhile
+  else {
+    // A TTS URL typed by hand wins over the voice remembered on another service: that service's default instead.
+    const want = wantedVoice();
+    const wantTts = splitValue(want)[0];
+    selectVoice(wantTts && wantTts !== tts ? '' : want);
+  }
   updateCli();
+  // A cold service (XTTS while its model loads) lists no voices yet: ask again until every one has some,
+  // rather than leaving its group empty until a reload.
+  clearTimeout(voicesRetry);
+  if ([...services, ...(typed ? [typed] : [])].some((s) => !s.voices.length)) {
+    voicesRetry = setTimeout(() => { voicesFor = null; configured = null; loadVoices(true); }, VOICES_RETRY_MS);
+  }
 }
 
 function fillVoices() {

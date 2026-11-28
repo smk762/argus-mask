@@ -659,7 +659,9 @@ function meta() {
 async function showFace(faceId) {
   const from = made.get(faceId)?.previewed === false ? 'export' : 'preview';
   const manifest = await json(`/face/${encodeURIComponent(faceId)}?from=${from}`);
-  await stage.load(modelUrl(faceId, manifest, `from=${from}&v=${manifest.model.sha256}`), manifest.framing || {}, manifest.model.format, { limits: manifest.limits });
+  // A face asked for since shows instead: `shown` must name the face on the stage.
+  const url = modelUrl(faceId, manifest, `from=${from}&v=${manifest.model.sha256}`);
+  if (!(await stage.load(url, manifest.framing || {}, manifest.model.format, { limits: manifest.limits }))) return;
   shown = manifest;
   if (!stage.host) stage.attach($('thumb'));
   $('empty').hidden = true;

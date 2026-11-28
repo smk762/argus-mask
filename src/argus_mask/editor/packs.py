@@ -113,13 +113,14 @@ def _asset(raw: object) -> dict | None:
     out = {k: str(raw.get(k) or "")[:200] for k in ("name", "type", "author", "license")}
     thumb = raw.get("thumb")
     # A thumbnail is shown by the browser, straight from the community's site: an https URL there, or none.
-    if isinstance(thumb, str) and (safe := _thumb_url(thumb)):
+    if isinstance(thumb, str) and (safe := _community_url(thumb)):
         out["thumb"] = safe
     return out
 
 
-def _thumb_url(thumb: str) -> str | None:
-    """*thumb* rebuilt from its parts if it is an https URL on the community's site, else None.
+def _community_url(thumb: str) -> str | None:
+    """*thumb* rebuilt from its parts if it is an https URL on the community's site, else None. Used for what the
+    browser loads or links to: a pack's thumbnails and its page (never ``javascript:`` or another site).
 
     The browser parses what is stored, not Python: a backslash (``https://evil\\@x.makehumancommunity.org``
     is evil's to a browser), userinfo, a port, spaces or control characters would let the two disagree on the host.
@@ -166,7 +167,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, Pack]:
             urls=urls,
             bytes=size if isinstance(size, int) and size > 0 else None,
             sha256=sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None,
-            page=str(raw.get("page") or ""),
+            page=(_community_url(page) or "") if isinstance(page := raw.get("page"), str) else "",
             assets=tuple(a for a in map(_asset, _list(raw.get("assets"))) if a is not None),
         )
     return packs

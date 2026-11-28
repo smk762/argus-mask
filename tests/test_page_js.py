@@ -244,7 +244,7 @@ const replies = {{}};
 const json = (url) => (replies[url] = later());
 let voicesFor = null; let face = '';
 let configured = null; let typedService = null; let services = [];
-const OTHER = '\\u0001other'; const AT = '\\u0002';
+const OTHER = '\\u0001other'; const AT = '\\u0002'; const VOICES_RETRY_MS = 15000; let voicesRetry = null;
 const faceVoice = () => null;
 {_function(source, "function wantedVoice(")}
 {_function(source, "function selectVoice(")}
@@ -262,6 +262,49 @@ replies['/voices?tts=' + encodeURIComponent('http://a')].resolve({{ listed: true
 console.log(JSON.stringify($('voice').options.map((o) => o.value)));
 """)
     assert out == ["", "http://b\u0002from-b", "\u0001other"]
+
+
+def test_a_service_with_no_voices_yet_is_asked_again_and_keeps_the_pick() -> None:
+    """XTTS lists none while its model loads: the page asks again later, keeping what was picked meanwhile."""
+    source = (PAGE / "broadcast.js").read_text(encoding="utf-8")
+    out = _node(f"""
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {{}}, ...children) => {{ const n = Object.assign(document.createElement(tag), props); n.append(...children); return n; }};
+const store = {{ get: (k, f) => f, set() {{}} }};
+let state = {{ tts_voice: '' }};
+const updateCli = () => {{}};
+const miso = {{ tts_url: 'http://miso', default: true, voices: [{{ name: '1' }}] }};
+const cold = {{ tts_url: 'http://xtts', voices: [], reason: 'no voices listed yet' }};
+const warm = {{ tts_url: 'http://xtts', voices: [{{ name: 'speaker:Rosemary Okafor' }}] }};
+const answers = [{{ services: [miso, cold] }}, {{ services: [miso, warm] }}];
+let asked = 0;
+const json = async () => answers[asked++];
+const timers = []; globalThis.setTimeout = (fn) => timers.push(fn) ; globalThis.clearTimeout = () => {{}};
+let voicesFor = null; let face = '';
+let configured = null; let typedService = null; let services = [];
+const OTHER = '\\u0001other'; const AT = '\\u0002'; const VOICES_RETRY_MS = 0; let voicesRetry = null;
+const faceVoice = () => null;
+{_function(source, "function wantedVoice(")}
+{_function(source, "function selectVoice(")}
+{_function(source, "function followVoice(")}
+{_function(source, "function fillVoices(")}
+{_function(source, "async function loadVoices(")}
+const splitValue = (v) => (v.includes(AT) ? [v.slice(0, v.indexOf(AT)), v.slice(v.indexOf(AT) + 1)] : ['', v]);
+const host = (url) => url;
+$('tts').value = 'http://miso'; await loadVoices();
+const waiting = $('voice').options.filter((o) => o.disabled).map((o) => o.textContent);
+$('voice').value = 'http://miso' + AT + '1';   // picked while XTTS was still loading
+timers.shift()(); await new Promise((r) => setImmediate(r));
+console.log(JSON.stringify({{ asked, waiting, retries: timers.length, picked: $('voice').value,
+  listed: $('voice').options.map((o) => o.value).includes('http://xtts' + AT + 'speaker:Rosemary Okafor') }}));
+""")
+    assert out == {
+        "asked": 2,
+        "waiting": ["no voices listed yet"],
+        "retries": 0,  # every service has voices now: no more asking
+        "picked": "http://miso\u00021",
+        "listed": True,
+    }
 
 
 def test_overlapping_reviews_show_one_face_throughout() -> None:
