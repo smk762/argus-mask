@@ -104,10 +104,18 @@ ENV PATH=/opt/a2f/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     A2F_DATA=/data \
     A2F_TRT_VERSION=10.13.3.9
+# For /health (argus-cortex's ServiceHealth): the argus-mask version and the git sha this image was built
+# from, when the build passes them (--build-arg VERSION=0.9.0 --build-arg GIT_SHA=$(git rev-parse --short HEAD)).
+# Left empty, /health says version 0.0.0+unknown and no build.
+ARG VERSION=""
+ARG GIT_SHA=""
+ENV A2F_VERSION=$VERSION \
+    ARGUS_BUILD=$GIT_SHA
 VOLUME /data
 
 EXPOSE 8110
-# Healthy means the server answers; whether the model is ready is in the reply's "ready".
+# Healthy means the server answers (always 200); whether the model is ready is in the reply's "status"
+# ("ok" or "starting") and "ready".
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('A2F_PORT', '8110'), timeout=4)"
 CMD ["python3", "/opt/a2f/server.py"]

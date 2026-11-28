@@ -28,6 +28,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 | The same audio, driver and seed give a different take | `test_engine::test_a_clip_gives_the_same_take_every_time`; `must_never::test_the_engine_reads_no_clock_and_no_unseeded_random` (no clock, `uuid` or unseeded RNG in `ENGINE`'s modules) |
 | The viewer reads `Math.random` or the clock in record mode | Partial: `test_record::test_a_real_head_records_the_same_twice`, local only (needs `assets/stock-01` and a browser; skipped in CI). Run it after touching `look.js` or the viewer |
 | Mask falls back from `a2f` to `energy` | `test_push::test_a_down_driver_refuses_with_its_reason_and_never_falls_back`, `test_server::test_a2f_down_refuses_the_source_and_sends_no_energy_frames` |
+| The Audio2Face server's `/health` stops being a `ServiceHealth`, or drops a field mask's driver or `a2f/check.py` reads | `test_a2f_health::test_the_body_is_a_service_health_whether_ready_or_not`, `::test_the_legacy_fields_stay_for_the_driver_and_check`, `::test_the_driver_reads_the_new_body_as_before` |
 | Sound reaches a viewer before the mouth for it | `test_server::test_audio_is_held_until_the_frames_for_it_exist` |
 | A viewer sends more than its status (≤ 1 KB): media, a command | `test_server::test_a_viewer_saying_anything_else_is_ignored` |
 | A socket opens for another site, or a write runs for one | `must_never::test_every_socket_refuses_another_site`, `::test_every_write_refuses_another_site` (every route of both apps, so a new one is caught) |
@@ -72,7 +73,7 @@ Each rule names what checks it. A rule marked **UNENFORCED** has a linked issue 
 - `models.py` is **the API surface**: the wire contract and `render_wire_schema()`. A `gltf` model may carry `splats` (`BoundSplats`, #126 route A): an SPZ and a binding beside it, bound to that build (`mesh_sha256`), with every input's licence; `faces.inspect_bound_splats` checks them.
 - `server/app.py`: `perform()` is the one source path (the source socket, `POST /push`, `POST /speak`).
 - `performance.py` joins resampler, driver, prosody and idle layer; `demo/docs_page.py`'s `ENGINE` lists the modules a take depends on.
-- `drivers/a2f.py`'s docstring is the Audio2Face protocol; `a2f/check.py` checks a running server against it.
+- `drivers/a2f.py`'s docstring is the Audio2Face protocol; `a2f/check.py` checks a running server against it. The server's `/health` is argus-cortex's `ServiceHealth` built by hand in stdlib (`health_body`; the image has no cortex), keeping `ready`, `reason`, `model` and `busy` beside it and answering 200 even while `starting`; `tests/test_a2f_health.py` validates it with cortex's model. Compose labels it `argus.peer: a2f` for the suite directory.
 - `gpu.py`: the leases mask takes for GPU work it asks of others (#125); `gpu-tenant.yaml` declares them for argus-iris. The server registers it with the broker at startup (`registered`, its lifespan); the editor never registers, or its shutdown would sign the server off.
 - `consent.py`: the record and its checks are cortex's (`argus_cortex.consent`); mask owns what the fields mean, so change them in cortex together with #26.
 - `viewer/`: static, no build step. three.js r187, the splat renderer and JSZip are vendored unchanged with their licences. The editor's previews import `look.js`, `motion.js` and `splat.js`.

@@ -47,13 +47,18 @@ There is no authentication. Publish the port on `127.0.0.1` or a private network
 
 ## Protocol
 
-`GET /health` always answers 200 while the server is up:
+`GET /health` always answers 200 while the server is up. The body is argus-cortex's `ServiceHealth`, the suite's one health shape, with the server's own fields beside it:
 
 ```json
-{"ready": true, "model": "Audio2Face-3D-v2.3-Mark", "fps": 30, "gpu_solver": false, "busy": false, "streams": 3}
+{"service_version": "1.1", "service": "argus-mask", "version": "0.9.0", "status": "ok",
+ "started_at": "2026-11-28T10:00:00Z", "wire": {}, "capabilities": [], "checks": {}, "read_only": false,
+ "build": null, "peer": "a2f",
+ "ready": true, "model": "Audio2Face-3D-v2.3-Mark", "fps": 30, "gpu_solver": false, "busy": false, "streams": 3}
 ```
 
-When `ready` is false there is a `reason`: downloading (with file and megabytes), building the engine, loading the model, or the failure it is retrying after.
+`status` is `ok` once the model is loaded and `starting` until then; `ready` says the same as a boolean. When `ready` is false there is a `reason`: downloading (with file and megabytes), building the engine, loading the model, or the failure it is retrying after. It stays 200 while starting (where cortex's `install_health` would answer 503), so the image's healthcheck and argus-iris's container resident, which read any answer as up, see a server building its engine as up; the suite directory reads `status` from the body.
+
+The image has no argus-cortex, so `server.py` builds the body by hand (`health_body`); `tests/test_a2f_health.py` validates it with cortex's `ServiceHealth`. `version` and `build` come from the build args `VERSION` and `GIT_SHA` (`0.0.0+unknown` and null when not passed), `peer` from `ARGUS_PEER`, which `compose.yaml` sets with the `argus.peer: a2f` label that lists the server in the suite directory.
 
 `WS /drive` carries one stream:
 

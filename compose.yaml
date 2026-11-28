@@ -63,7 +63,15 @@ services:
       # For `argus-mask drive` on the host. Mask's container reaches it as http://a2f:8110. For argus-iris to see
       # it (the a2f resident in gpu-tenant.yaml), publish it on an address the broker can reach.
       - "${A2F_PUBLISH:-127.0.0.1:8110}:8110"
+    # A suite peer like mask: argus-iris's node agent lists it in the suite directory by these labels, and reads
+    # its /health (argus-cortex's ServiceHealth, with the server's own ready/reason/busy beside it).
+    labels:
+      argus.peer: a2f
+      argus.service: argus-mask
+      argus.health: /health
+      argus.port: "8110"
     environment:
+      ARGUS_PEER: a2f  # the argus.peer label, for /health: a process cannot read its own labels
       A2F_MODEL: ${A2F_MODEL:-james}
       A2F_GPU_SOLVER: ${A2F_GPU_SOLVER:-0}
     volumes:
