@@ -22,10 +22,12 @@ a half-made face is never listed.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
+import shutil
 import threading
 import uuid
 from collections.abc import Callable
@@ -444,6 +446,15 @@ def _why(exc: Exception) -> str:
 LOCKS = 64
 
 
+def _hold(path: Path, before: Path) -> None:
+    """Keep what is at *path* under *before* too, with *path* never missing meanwhile: a link, or a copy where the
+    filesystem has no links."""
+    try:
+        os.link(path, before)
+    except OSError:
+        shutil.copy2(path, before)
+
+
 class GuidedStore:
     """The guided builds under one assets root: each a directory holding its record and its work files.
 
@@ -528,9 +539,11 @@ class GuidedStore:
             return out
 
     def put(self, build_id: str, result: StepResult, files: dict[str, bytes] | None = None) -> StepResult:
-        """Keep a step's result, and with it the work *files* (by path) it made: none replaces what the build keeps
-        until the record has taken the result."""
+        """Keep a step's result, and with it the work *files* (by path) it made: all or nothing. If a file cannot go
+        into place, or the record cannot be written, the files the build kept are back as they were, under the
+        record that names them."""
         staged: list[tuple[Path, Path]] = []
+        held: list[tuple[Path, Path | None]] = []  # each file put in place, and where the one it replaced is held
         try:
             for file, data in (files or {}).items():
                 path = self.path(build_id, file)
@@ -541,16 +554,34 @@ class GuidedStore:
                 staged.append((tmp, path))
                 tmp.write_bytes(data)
 
-            def how(record: GuidedBuild, now: datetime) -> StepResult:
-                kept = record.put(result, at=now)
-                for tmp, path in staged:
-                    os.replace(tmp, path)
-                return kept
-
-            return self.change(build_id, how)
+            with self._lock(build_id):
+                record = self.load(build_id)
+                kept = record.put(result, at=self.clock())
+                try:
+                    for tmp, path in staged:
+                        before = None
+                        if path.exists():
+                            before = path.with_name(f".{path.name}.{uuid.uuid4().hex}.was")
+                            _hold(path, before)
+                        held.append((path, before))
+                        os.replace(tmp, path)
+                    self._write(self.directory(build_id), record)
+                except BaseException:
+                    for path, before in reversed(held):
+                        with contextlib.suppress(OSError):
+                            if before is None:
+                                path.unlink(missing_ok=True)
+                            else:
+                                os.replace(before, path)
+                    raise
+            return kept
         finally:
             for tmp, _ in staged:
                 tmp.unlink(missing_ok=True)
+            for _, before in held:
+                if before is not None:
+                    with contextlib.suppress(OSError):
+                        before.unlink(missing_ok=True)
 
     @staticmethod
     def artifact(name: str, file: str, data: bytes) -> Artifact:

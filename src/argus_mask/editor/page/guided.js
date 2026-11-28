@@ -129,34 +129,63 @@ async function overrule(step, candidate, check) {
   }
 }
 
-async function pollJob(job) {
+const POLL_MS = 400;        // between looks at a job: at first
+const POLL_MAX_MS = 5000;   // and at most, for one that runs long (a LAM build takes minutes)
+const POLL_ERRORS = 5;      // looks in a row that may fail before the job is lost sight of
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Follow a job until it ends, however long it runs: for *build*, whichever build is open by then. A look that fails
+// is tried again; after POLL_ERRORS in a row the job is lost sight of (it may still be running), and that is thrown.
+async function pollJob(job, build = buildId, wait = sleep) {
   let current = job;
-  for (let i = 0; i < 600; i += 1) {
-    if (!current.live && current.state !== 'queued' && current.state !== 'running') return current;
-    await new Promise((r) => setTimeout(r, 400));
-    current = await json(`/guided/${enc(buildId)}/jobs/${enc(current.id)}`);
-    status(`${current.kind || 'job'}: ${current.state}${current.progress != null ? ` (${current.progress})` : ''}`);
+  let delay = POLL_MS;
+  let errors = 0;
+  while (current.state === 'queued' || current.state === 'running') {
+    await wait(delay);
+    delay = Math.min(POLL_MAX_MS, delay * 1.25);
+    try {
+      current = await json(`/guided/${enc(build)}/jobs/${enc(current.id)}`);
+      errors = 0;
+    } catch (err) {
+      errors += 1;
+      if (errors >= POLL_ERRORS) throw new Error(`lost sight of the job, which may still be running: ${err.message}`);
+      continue;
+    }
+    if (build === buildId) {
+      status(`${current.kind || 'job'}: ${current.state}${current.progress != null ? ` (${current.progress})` : ''}`);
+    }
   }
-  throw new Error('job did not finish in time');
+  return current;
 }
 
 async function runJob(path, body) {
+  const build = buildId;
+  let started;
   try {
-    const started = await json(path, {
+    started = await json(path, {
       method: 'POST',
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
-    status(`Started ${started.kind || 'job'}…`);
-    const done = await pollJob(started);
-    if (done.state === 'done') status(`${done.kind || 'job'} done.`);
-    else status(`${done.kind || 'job'}: ${done.state}${done.error ? ` — ${done.error}` : ''}`, done.state !== 'stopped');
-    await reload();
-    return done;
   } catch (err) {
     status(err.message, true);
     return null;
   }
+  status(`Started ${started.kind || 'job'}…`);
+  let done = null;
+  let lost = null;
+  try {
+    done = await pollJob(started, build);
+  } catch (err) {
+    lost = err;
+  }
+  // Whatever became of the job, the page shows what the server has now.
+  await reload().catch((err) => { lost ||= err; });
+  if (build !== buildId) return done;   // another build is open: its status line is not this job's
+  if (lost) status(lost.message, true);
+  else if (done.state === 'done') status(`${done.kind || 'job'} done.`);
+  else status(`${done.kind || 'job'}: ${done.state}${done.error ? ` — ${done.error}` : ''}`, done.state !== 'stopped');
+  return done;
 }
 
 function candidateState(candidate) {
@@ -713,16 +742,26 @@ function renderBuildList() {
   }
 }
 
+// A build's record is shown only under its own id: a reply that arrives after another build was opened is dropped,
+// or its candidates would be drawn over routes that go to the other build.
 async function openBuild(id) {
-  if (id !== buildId) pending.clear();
+  if (id !== buildId) {
+    pending.clear();
+    record = null;   // the build before is not this one's record while this one loads
+  }
   buildId = id;
   history.replaceState(null, '', `?id=${enc(id)}`);
+  renderBuildList();
+  renderWorkspace();
   try {
-    record = await json(`/guided/${enc(id)}`);
+    const loaded = await json(`/guided/${enc(id)}`);
+    if (id !== buildId) return;
+    record = loaded;
     status(`Loaded ${id}.`);
     renderBuildList();
     renderWorkspace();
   } catch (err) {
+    if (id !== buildId) return;
     record = null;
     status(err.message, true);
     renderWorkspace();
@@ -732,8 +771,11 @@ async function openBuild(id) {
 async function reload() {
   catalog = await json('/guided');
   renderBuildList();
-  if (buildId) {
-    record = await json(`/guided/${enc(buildId)}`);
+  const id = buildId;
+  if (id) {
+    const loaded = await json(`/guided/${enc(id)}`);
+    if (id !== buildId) return;
+    record = loaded;
     renderWorkspace();
   }
 }

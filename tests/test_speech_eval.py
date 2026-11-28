@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 
 from argus_mask.config import EditorSettings, Settings, SpeechSettings
 from argus_mask.editor.app import create_editor_app
-from argus_mask.editor.guided import Check, GuidedStore, StepResult
+from argus_mask.editor.guided import Check, GuidedError, GuidedStore, StepResult
 from argus_mask.editor.speech import SpeechJobs, analyze_synthetic
 from argus_mask.speech_eval import (
     REF_CLOSED,
@@ -169,3 +169,33 @@ def test_editor_speech_route(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert job["state"] == "done"
         assert float(job["scores"]["closed_share"]) >= 0.55
+
+
+@pytest.mark.asyncio
+async def test_asking_for_speech_hashes_nothing_on_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """start() runs on the loop: the head is hashed by the job, in a thread, where a changed one still fails it."""
+    import threading
+
+    from argus_mask.editor import speech
+
+    store = GuidedStore(tmp_path / "assets")
+    _seed(store)
+    jobs = SpeechJobs(
+        store, SpeechSettings(script=None, take=None, landmarker=None), analyze=analyze_synthetic(stutter=False)
+    )
+    loop, on_loop = threading.get_ident(), []
+    sha256_file = speech.sha256_file
+    monkeypatch.setattr(
+        speech, "sha256_file", lambda path: on_loop.append(threading.get_ident() == loop) or sha256_file(path)
+    )
+    store.path("guide", "candidates/c1/head.zip").write_bytes(b"another head")
+    job = jobs.start("guide", "c1")
+    while job.live:
+        await asyncio.sleep(0.02)
+    assert on_loop and not any(on_loop)
+    assert job.state == "failed" and "head changed" in job.error
+    store.path("guide", "candidates/c1/head.zip").unlink()
+    with pytest.raises(GuidedError, match="not where its build kept it"):
+        jobs.start("guide", "c1")

@@ -117,7 +117,7 @@ def _rest(rest: StepResult | None, face_id: str) -> RestSet | None:
 
 def _install(assets_dir: Path, face_id: str, staged: Path) -> None:
     """Put *staged* in the face's place. If it cannot go there, or is not served once there, the face that was there
-    comes back."""
+    comes back; once the new one is served, the one it replaced is removed."""
     target = assets_dir / face_id
     trash: Path | None = None
     if target.exists():
@@ -137,6 +137,9 @@ def _install(assets_dir: Path, face_id: str, staged: Path) -> None:
         if isinstance(exc, FaceError):
             raise SaveError(str(exc)) from exc
         raise
+    if trash is not None:
+        # Kept only to put back: left there, every save over a face would keep a whole copy of the one before.
+        shutil.rmtree(trash, ignore_errors=True)
 
 
 def save(

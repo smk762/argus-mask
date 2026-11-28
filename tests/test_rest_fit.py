@@ -49,7 +49,7 @@ payload = {
         "fit": {"total": 0.04, "aperture": 0.02, "lip_ratio": 0.01},
     },
 }
-out.write_text(json.dumps(payload))
+out.write_text(os.environ.get("FAKE_WROTE") or json.dumps(payload))
 out.with_suffix(".fit.png").write_bytes(b"\x89PNG\r\n\x1a\nfit")
 print(json.dumps({"name": name, "weights": weights, "score": payload["score"]}))
 """
@@ -193,3 +193,43 @@ async def test_weights_that_are_not_finite_fail(rig: Rig, monkeypatch: pytest.Mo
     job, found = await fit(rig)
     assert job.state == "failed" and found.standing == "failed"
     assert "mouthSmileLeft" in found.named("failed") and "weights" not in found.data
+
+
+@pytest.mark.parametrize(
+    ("wrote", "why"),
+    [
+        ("[1, 2]", "a list, not an object"),
+        ('"done"', "a str, not an object"),
+        ('{"weights": {"mouthSmileLeft": 0.2, "mouthSmileRight": 0.2}, "score": "good"}', "a score that is a str"),
+        ('{"weights": {"mouthSmileLeft": 0.2, "mouthSmileRight": 0.2}, "score": {"fit": [1]}}', "score.fit"),
+        ('{"weights": {"mouthSmileLeft": 1%s, "mouthSmileRight": 0.2}}' % ("0" * 400), "not finite numbers"),
+    ],
+)
+async def test_json_of_the_wrong_shape_fails_the_step_on_the_record(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, wrote: str, why: str
+) -> None:
+    """It parses, but is not a rest fit: the build's record still gets the failed step, with what it ran on."""
+    monkeypatch.setenv("FAKE_WROTE", wrote)
+    rig.built()
+    job, found = await fit(rig)
+    assert job.state == "failed" and found is not None and found.standing == "failed"
+    assert why in found.named("failed") and "weights" not in found.data
+    assert [a.name for a in found.inputs] == ["portrait", "head"] and found.tools and found.run["job"] == job.id
+
+
+async def test_asking_for_a_fit_hashes_nothing_on_the_event_loop(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """start() runs on the loop: the head is hashed by the job, in a thread, where a changed one still fails it."""
+    import threading
+
+    from argus_mask.editor import rest_fit
+
+    rig.built()
+    loop, on_loop = threading.get_ident(), []
+    sha256_file = rest_fit.sha256_file
+    monkeypatch.setattr(
+        rest_fit, "sha256_file", lambda path: on_loop.append(threading.get_ident() == loop) or sha256_file(path)
+    )
+    (rig.store.root / "guide" / "candidates/c1/head.zip").write_bytes(b"another head")
+    job = await finished(rig.fits().start("guide", "c1"))
+    assert on_loop and not any(on_loop)
+    assert job.state == "failed" and "changed since it was recorded" in job.error

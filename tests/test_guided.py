@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from datetime import UTC, datetime, timedelta
@@ -606,3 +607,49 @@ def test_files_land_with_the_result_that_made_them(tmp_path: Path) -> None:
         store.put("guide", StepResult(step="build", candidate="c1"), {"c1/a.png": b"two"})
     assert store.path("guide", "c1/a.png").read_bytes() == b"one"
     assert not list(store.directory("guide").rglob("*.part"))
+
+
+@pytest.mark.parametrize("fails", ["record", "file"])
+def test_a_result_that_cannot_be_kept_leaves_the_files_as_they_were(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: str
+) -> None:
+    """The record cannot be written, or the second file cannot go into place: the files are the ones the record on
+    disk names, and nothing of the attempt is left."""
+    import os
+
+    from argus_mask.editor import guided
+
+    store = GuidedStore(tmp_path)
+    store.create("guide")
+    old = {"candidates/c1/portrait.png": b"old portrait", "candidates/c1/crop.png": b"old crop"}
+    first = result("source", outputs=[store.artifact(Path(f).stem, f, d) for f, d in old.items()])
+    store.put("guide", first, old)
+    before = (store.root / "guide" / "build.json").read_bytes()
+    new = {
+        "candidates/c1/portrait.png": b"new portrait",
+        "candidates/c1/crop.png": b"new crop",
+        "candidates/c1/n": b"n",
+    }
+    second = result("source", outputs=[store.artifact(Path(f).stem, f, d) for f, d in new.items()])
+    with monkeypatch.context() as patch:
+        if fails == "record":
+            patch.setattr(store, "_write", lambda *_: (_ for _ in ()).throw(OSError(28, "No space left on device")))
+        else:
+            replace = os.replace
+
+            def refuse(src: object, dst: object) -> None:
+                if str(src).endswith(".part") and Path(str(dst)).name == "crop.png":
+                    raise PermissionError("no")
+                replace(src, dst)
+
+            patch.setattr(guided.os, "replace", refuse)
+        with pytest.raises(OSError):
+            store.put("guide", second, new)
+    home = store.root / "guide"
+    assert (home / "build.json").read_bytes() == before
+    kept = {p.relative_to(home).as_posix(): p.read_bytes() for p in home.rglob("*") if p.is_file()}
+    assert kept == {**old, "build.json": before}
+    for art in store.load("guide").get("source", "c1").outputs:
+        assert hashlib.sha256(store.path("guide", art.file).read_bytes()).hexdigest() == art.sha256
+    assert store.put("guide", second, new).outputs == second.outputs  # and it can be kept once it can be written
+    assert store.path("guide", "candidates/c1/crop.png").read_bytes() == b"new crop"
